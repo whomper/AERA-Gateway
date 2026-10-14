@@ -34,6 +34,19 @@ Note: `wrp-session.json` in the profile folder overrides command-line image type
 
 Open idea, not applied: `http.DefaultClient` in `fetchImage` has no timeout, so one hung image can block a whole page. Use `&http.Client{Timeout: 10 * time.Second}`.
 
+## Keep both proxies to the Atari
+
+WRP drives a full Chromium and Macproxy fetches any URL, so whoever can reach
+ports 8080 or 5001 can use the Pi to browse your home network. Docker's
+published ports skip ufw, so limit them in Docker's own firewall chain
+(replace `ATARI_IP` with the Falcon's address):
+
+```
+sudo iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdstport 8080 ! -s ATARI_IP -j DROP
+sudo iptables -I DOCKER-USER -p tcp -m conntrack --ctorigdstport 5001 ! -s ATARI_IP -j DROP
+sudo apt install iptables-persistent   # keeps the rules after a reboot
+```
+
 ## Macproxy Classic (rdmark/macproxy_classic) - port 5001
 
 TLS-terminating proxy for the Highwire browser:
@@ -42,4 +55,5 @@ TLS-terminating proxy for the Highwire browser:
 docker run -d --name macproxy --restart unless-stopped -p 5001:5001 rdmark/macproxy:latest
 ```
 
-If Highwire rejects a port number, map to port 80 instead: `-p 80:5001`.
+If Highwire rejects a port number, map to port 80 instead: `-p 80:5001`, and
+use `--ctorigdstport 80` in the rule above.

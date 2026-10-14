@@ -8,11 +8,17 @@ for f in falcon_imap_logproxy.py falcon-imap-logproxy.service hebrew_words.txt; 
   [ -f "$f" ] || { echo "MISSING FILE: $f (copy all files first)"; exit 1; }
 done
 python3 falcon_imap_logproxy.py --version
+# listen on the Pi's home-network address only (the one its default route
+# uses); LISTEN=a.b.c.d overrides it
+LISTEN=${LISTEN:-$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')}
+[ -n "$LISTEN" ] || { echo "Can't find this Pi's network address; run with LISTEN=a.b.c.d"; exit 1; }
+echo "--- troll-proxy will listen on $LISTEN:1143"
 sudo install -d -m 755 /opt/falcon-imap
 sudo install -m 644 falcon_imap_logproxy.py /opt/falcon-imap/
 # never overwrite a word list you have edited
 [ -f /opt/falcon-imap/hebrew_words.txt ] || sudo install -m 644 hebrew_words.txt /opt/falcon-imap/
-sudo install -m 644 falcon-imap-logproxy.service /etc/systemd/system/
+sed "s/@LISTEN@/$LISTEN/" falcon-imap-logproxy.service |
+  sudo tee /etc/systemd/system/falcon-imap-logproxy.service >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable falcon-imap-logproxy.service >/dev/null 2>&1
 sudo systemctl restart falcon-imap-logproxy.service

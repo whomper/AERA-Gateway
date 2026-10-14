@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/falcon-imap/falcon_imap_logproxy.py --listen 192.168.1.10 --port 1143 --rewrite --hebrew-mode glyph --glyph-width 60 --hebrew-words /opt/falcon-imap/hebrew_words.txt
+ExecStart=/usr/bin/python3 /opt/falcon-imap/falcon_imap_logproxy.py --listen @LISTEN@ --port 1143 --rewrite --hebrew-mode glyph --glyph-width 60 --hebrew-words /opt/falcon-imap/hebrew_words.txt
 Restart=on-failure
 RestartSec=5s
 DynamicUser=yes
