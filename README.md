@@ -1,4 +1,4 @@
-# atari_web
+# AERA-Gateway
 
 Raspberry Pi gateway that gives an Atari Falcon (TOS/MagiC, STinG) access to modern email and the modern web.
 
