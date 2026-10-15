@@ -43,6 +43,22 @@ story, service by service, is in [gateway/README.md](gateway/README.md).
 A Pi set up with the apps' own `install.sh` (before the gateways moved
 here) is taken over by `update`: the same services, ports and settings.
 
+## TROLL's proxy is gone
+
+AERA-Gateway no longer has troll-proxy (IMAP for the TROLL mail client on
+port 1143). A Pi that still runs it can let it go:
+
+```
+sudo systemctl disable --now falcon-imap-logproxy
+sudo rm /etc/systemd/system/falcon-imap-logproxy.service
+sudo rm -r /opt/falcon-imap
+sudo systemctl daemon-reload
+```
+
+and, if ufw let the Atari in on 1143, `sudo ufw status numbered` and
+`sudo ufw delete N` for that rule. Postfix on port 25 was there for TROLL
+too; remove it if nothing else uses it.
+
 ## The web
 
 The web proxies for CAB and Highwire (WRP and Macproxy Classic, in
