@@ -1,0 +1,33 @@
+name: Something doesn't work
+description: Report a problem with a gateway on the Pi, or with aera-gateway
+labels: [bug]
+body:
+  - type: dropdown
+    id: service
+    attributes:
+      label: Which gateway
+      options: ["mail (emailgate, for EMail)", "dav (ecalgate, for ECal and EContact)", "ftp (eftpgate, for EFTP)",
+                "claude (ClaudeST's bridge)", "aera-gateway itself (install, update, status, remove)"]
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: aera-gateway status
+      description: What `aera-gateway status` says. Replace your home network's addresses with 192.168.1.x before posting.
+      render: text
+  - type: input
+    id: system
+    attributes:
+      label: The Pi
+      description: Model and system (`cat /etc/os-release`), and the Atari program and version that uses the gateway
+      placeholder: "Pi 4, Raspberry Pi OS bookworm; EMail 1.30 on a Falcon"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you saw; the journal helps (`sudo journalctl -u emailgate -n 30`). Never post passwords or session keys.
+    validations:
+      required: true

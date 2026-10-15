@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9: Raspberry Pi OS bullseye; 3.11: bookworm; 3.12: Ubuntu 24.04
+        python: ["3.9", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: What the tests need (eftpgate's SFTP and FTPS servers)
+        run: pip install paramiko pyftpdlib pyopenssl pyflakes
+      - name: pyflakes
+        run: python -m pyflakes gateway/*.py gateway/aera-gateway
+      - name: The gateways, aeragate and the installer
+        run: python -m unittest discover -s gateway -p 'test_*.py' -v
+
+  systemd:
+    name: On a computer with systemd
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Take over the apps' set-ups, install, remove; the claude recipe
+        run: sudo tests/systemd.sh
