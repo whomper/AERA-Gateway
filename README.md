@@ -23,25 +23,25 @@ On the Pi (Raspberry Pi OS, or any Debian or Ubuntu):
 ```
 git clone https://github.com/whomper/AERA-Gateway
 cd AERA-Gateway
+./update-pi.sh
 sudo gateway/aera-gateway install mail imap.gmail.com smtp.gmail.com pop.gmail.com
 sudo gateway/aera-gateway install dav
 sudo gateway/aera-gateway install ftp
 sudo gateway/aera-gateway install claude --network --atari 192.168.1.20
 ```
 
-Install only the ones you need; each prints what to type into its Atari
-program. Then, now and then:
+`./update-pi.sh` takes this copy to AERA-Gateway's latest release. Install
+only the ones you need; each prints what to type into its Atari program.
+Then, now and then, the same:
 
 ```
 ./update-pi.sh
 ```
 
-It pulls this copy and ClaudeST's (in `../ClaudeST`, cloned the first
-time; `--claudest DIR` names another) and runs
-`sudo gateway/aera-gateway update --from ../ClaudeST`: every gateway on
-the Pi brought up to date, ClaudeST's bridge from ClaudeST's latest code,
-all settings, keys and chats kept. (`git pull && sudo gateway/aera-gateway
-update` does the same with the bridge from ClaudeST's latest release.)
+It takes this copy to the latest release and runs
+`sudo gateway/aera-gateway update`: every gateway on the Pi brought up to
+date, ClaudeST's bridge from ClaudeST's latest release, all settings,
+keys and chats kept. The Pi runs releases only, never work in progress.
 
 `gateway/aera-gateway status` says what runs where, and
 `sudo gateway/aera-gateway remove SERVICE` takes one away. The whole
@@ -84,7 +84,7 @@ gateway/      what runs on the Pi; the apps carry a copy of this folder
   eftpgate.py     ftp: plain FTP in, FTPS or SFTP out
   install.sh      the apps' old way in, handed on to aera-gateway
   test_*.py       their tests
-update-pi.sh      the Pi brought up to date: this copy and ClaudeST's pulled, then aera-gateway update
+update-pi.sh      the Pi brought up to date: this copy at the latest release, then aera-gateway update
 tests/systemd.sh  aera-gateway for real, on a computer with systemd
 web-proxy/    notes and WRP's patch for the web proxies
 ```
@@ -99,6 +99,15 @@ copy (a git subtree of this repository's `gateway` branch, brought up to
 date with their `tools/sync-gateway.sh`), so their tests run against the
 gateway they were made with. Change the gateways here, never in a copy.
 The `gateway` branch is `git subtree split --prefix=gateway` of `main`.
+
+## Releases
+
+The Pi gets formal releases only, vX.Y, made from `main` by the Release
+workflow (Actions > Release > Run workflow, with the notes): it reads
+`VERSION` in `gateway/aera-gateway`, runs CI's tests, and tags `main`. A
+release that doesn't work is never deleted or reused: revert on `main`,
+raise `VERSION`, release the next number, and say in the bad release's
+notes that it is withdrawn and which one to use.
 
 ## Tests
 

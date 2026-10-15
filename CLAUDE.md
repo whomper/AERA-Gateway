@@ -44,6 +44,16 @@ installer (`gateway/aera-gateway`), which also sets up ClaudeST's bridge
   and `python3 -m unittest discover -s gateway -p 'test_*.py'` (pip install
   paramiko pyftpdlib pyopenssl). CI runs `tests/systemd.sh` for real; run it
   yourself only on a throwaway computer.
+- **Only formal releases leave the build machine.** Erez gets vX.Y
+  releases made by the Release workflow from `main`, nothing else: no
+  test builds, no dev builds, no builds from a branch. Work lands on
+  `main`; to try a fix on real hardware, release it. If a release doesn't
+  work, roll back with a release: revert on `main`, release the next
+  number, and say in the bad release's notes that it is withdrawn and
+  which one to use. Here a release is `VERSION` in `gateway/aera-gateway`
+  and Actions > Release > Run workflow; the Pi follows the latest one
+  (`update-pi.sh`), and ClaudeST's bridge comes from ClaudeST's latest
+  release.
 - **Never commit:** real addresses from the owner's network (use
   `192.168.1.x`, `PI_IP`, `ATARI_IP`), passwords, session keys.
 - British English, as in the app READMEs.

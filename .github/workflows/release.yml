@@ -1,0 +1,66 @@
+name: Release
+
+# AERA-Gateway as a GitHub Release, vX.Y from VERSION in gateway/aera-gateway:
+# Actions > Release > Run workflow, on main, with the notes. It runs CI's
+# tests (the unit tests and tests/systemd.sh) and then tags main's commit.
+# A release that doesn't work is never deleted or reused: revert on main,
+# bump VERSION, release the next number, and say in the bad one's notes
+# that it is withdrawn and which one to use.
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: "What is new (Markdown): the release's notes"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  which:
+    name: Which release
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        run: |
+          if [ "$GITHUB_REF_NAME" != main ]; then
+            echo "::error::run it on main"
+            exit 1
+          fi
+          V=$(sed -n 's/^VERSION = "\([0-9]*\.[0-9]*\)".*/\1/p' gateway/aera-gateway)
+          if [ -z "$V" ]; then
+            echo "::error::gateway/aera-gateway has no VERSION = \"X.Y\""
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
+            echo "::error::v$V is out already: raise VERSION in gateway/aera-gateway and commit first"
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+  tests:
+    needs: which
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Publish
+    needs: [which, tests]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ inputs.notes }}
+          V: ${{ needs.which.outputs.version }}
+        run: |
+          printf '%s\n' "$NOTES" > "$RUNNER_TEMP/notes.md"
+          gh release create "v$V" --target "$GITHUB_SHA" --title "AERA-Gateway $V" \
+            --notes-file "$RUNNER_TEMP/notes.md"
