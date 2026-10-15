@@ -33,8 +33,15 @@ Install only the ones you need; each prints what to type into its Atari
 program. Then, now and then:
 
 ```
-git pull && sudo gateway/aera-gateway update
+./update-pi.sh
 ```
+
+It pulls this copy and ClaudeST's (in `../ClaudeST`, cloned the first
+time; `--claudest DIR` names another) and runs
+`sudo gateway/aera-gateway update --from ../ClaudeST`: every gateway on
+the Pi brought up to date, ClaudeST's bridge from ClaudeST's latest code,
+all settings, keys and chats kept. (`git pull && sudo gateway/aera-gateway
+update` does the same with the bridge from ClaudeST's latest release.)
 
 `gateway/aera-gateway status` says what runs where, and
 `sudo gateway/aera-gateway remove SERVICE` takes one away. The whole
@@ -77,6 +84,7 @@ gateway/      what runs on the Pi; the apps carry a copy of this folder
   eftpgate.py     ftp: plain FTP in, FTPS or SFTP out
   install.sh      the apps' old way in, handed on to aera-gateway
   test_*.py       their tests
+update-pi.sh      the Pi brought up to date: this copy and ClaudeST's pulled, then aera-gateway update
 tests/systemd.sh  aera-gateway for real, on a computer with systemd
 web-proxy/    notes and WRP's patch for the web proxies
 ```
