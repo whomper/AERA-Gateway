@@ -20,6 +20,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 import paramiko
 from OpenSSL import SSL
@@ -316,6 +317,21 @@ class SFTPTests(Base):
         f.retrlines("LIST /pub", lines.append)
         self.assertTrue(any(l.startswith("-rw") and l.endswith(" demo.bin") for l in lines), lines)
         f.quit()
+
+    def test_one_look_up_and_the_answer_is_used(self):
+        # the server's name is looked up once, checked, and connected to
+        real = socket.getaddrinfo
+        asked = []
+
+        def gai(host, *a, **k):
+            if host.endswith(".example"):
+                asked.append(host)
+            return real("127.0.0.1", *a, **k)
+        with mock.patch("socket.getaddrinfo", gai):
+            f = self.atari(self.port, "sftp:atari@sftp.example:%d" % self.sport)
+            self.assertIn("SFTP to sftp.example", f.said)
+            f.quit()
+        self.assertEqual(asked, ["sftp.example"])
 
     def test_wrong_password(self):
         with self.assertRaises(ftplib.error_perm) as e:

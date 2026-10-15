@@ -25,8 +25,9 @@ SSH host keys remembered the first time and checked every time after),
 and text files' line ends for SFTP servers.
 
 Standard Python 3, plus paramiko for SFTP (Raspberry Pi OS:
-python3-paramiko). gateway/install.sh sets it up as a service. Falcon
-mode doesn't need it for FTPS: the Falcon does TLS itself.
+python3-paramiko), and aeragate.py next to it. `aera-gateway install ftp`
+sets it up as a service. Falcon mode doesn't need it for FTPS: the Falcon
+does TLS itself.
 
     eftpgate.py [--port 2121] [--allow 192.168.1.50] [--allow-local]
                 [--state /var/lib/eftpgate] [-v]
@@ -35,7 +36,6 @@ mode doesn't need it for FTPS: the Falcon does TLS itself.
 import argparse
 import datetime
 import ftplib
-import ipaddress
 import os
 import posixpath
 import re
@@ -43,18 +43,16 @@ import socket
 import socketserver
 import ssl
 import stat as statmod
-import sys
-import threading
 import time
 
-VERSION = "1.0"
-LOG_LOCK = threading.Lock()
+import aeragate
+
+VERSION = "1.1"
 VERBOSE = False
 
 
 def log(*a):
-    with LOG_LOCK:
-        print("eftpgate:", *a, file=sys.stderr, flush=True)
+    aeragate.say("eftpgate:", *a)
 
 
 def vlog(*a):
@@ -178,14 +176,14 @@ class Backend:
 class SFTPBackend(Backend):
     text_newlines = True
 
-    def __init__(self, host, port, user, password, known_hosts):
+    def __init__(self, host, port, user, password, known_hosts, addrs):
         try:
             import paramiko
         except ImportError:
             raise GateError(530, "SFTP needs paramiko on the Pi: sudo apt install python3-paramiko")
         self.paramiko = paramiko
         try:
-            sock = socket.create_connection((host, port), timeout=20)
+            sock = aeragate.dial(addrs, 20)
         except OSError as e:
             raise GateError(530, "can't reach %s:%d: %s" % (host, port, e.strerror or e))
         t = paramiko.Transport(sock)
@@ -331,6 +329,29 @@ class ReusingFTP_TLS(ftplib.FTP_TLS):
     connection's TLS session: vsftpd (require_ssl_reuse), FileZilla
     Server and others refuse data connections that don't"""
 
+    addrs = None            # the server's addresses, as aeragate.lookup() checked them
+
+    def dial(self):
+        """the control connection, to the address that was checked rather
+        than to a second look-up of the name (data connections go to the
+        address this one reached)"""
+        if self.addrs:
+            return aeragate.dial(self.addrs, self.timeout)
+        return socket.create_connection((self.host, self.port), self.timeout)
+
+    def connect(self, host="", port=0, timeout=-999, source_address=None):
+        if host:
+            self.host = host
+        if port:
+            self.port = port
+        if timeout != -999:
+            self.timeout = timeout
+        self.sock = self.dial()
+        self.af = self.sock.family
+        self.file = self.sock.makefile("r", encoding=self.encoding)
+        self.welcome = self.getresp()
+        return self.welcome
+
     def ntransfercmd(self, cmd, rest=None):
         conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
         if self._prot_p:
@@ -349,7 +370,7 @@ class ImplicitFTP_TLS(ReusingFTP_TLS):
             self.port = port
         if timeout != -999:
             self.timeout = timeout
-        self.sock = socket.create_connection((self.host, self.port), self.timeout)
+        self.sock = self.dial()
         self.af = self.sock.family
         self.sock = self.context.wrap_socket(self.sock, server_hostname=self.host)
         self.file = self.sock.makefile("r", encoding=self.encoding)
@@ -358,10 +379,11 @@ class ImplicitFTP_TLS(ReusingFTP_TLS):
 
 
 class FTPSBackend(Backend):
-    def __init__(self, host, port, user, password, implicit, cafile=None):
-        ctx = ssl.create_default_context(cafile=cafile)
+    def __init__(self, host, port, user, password, implicit, cafile=None, addrs=None):
+        ctx = aeragate.tls_context(cafile)
         cls = ImplicitFTP_TLS if implicit else ReusingFTP_TLS
         f = cls(context=ctx, timeout=30, encoding="utf-8")
+        f.addrs = addrs
         try:
             f.connect(host, port)
             if implicit:
@@ -532,14 +554,7 @@ def parse_login(spec):
     return proto, user, host, port
 
 
-def private(ip):
-    try:
-        a = ipaddress.ip_address(ip)
-    except ValueError:
-        return False
-    if a.version == 6 and a.ipv4_mapped:
-        a = a.ipv4_mapped
-    return a.is_private or a.is_loopback or a.is_link_local
+private = aeragate.is_private
 
 
 class Session(socketserver.StreamRequestHandler):
@@ -639,15 +654,16 @@ class Session(socketserver.StreamRequestHandler):
         proto, user, host, port = self.spec
         cfg = self.server.cfg
         try:
-            addrs = {a[4][0] for a in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)}
+            addrs = aeragate.lookup(host, port, cfg.allow_local)
         except socket.gaierror:
             raise GateError(530, "can't find %s" % host)
-        if not cfg.allow_local and any(private(a) for a in addrs):
+        except aeragate.HomeNetwork:
             raise GateError(530, "%s is on the home network: start eftpgate with --allow-local to reach it" % host)
         if proto == "sftp":
-            self.back = SFTPBackend(host, port, user, arg, cfg.known_hosts)
+            self.back = SFTPBackend(host, port, user, arg, cfg.known_hosts, addrs)
         else:
-            self.back = FTPSBackend(host, port, user or "anonymous", arg, proto == "ftps-implicit", cfg.cafile)
+            self.back = FTPSBackend(host, port, user or "anonymous", arg, proto == "ftps-implicit", cfg.cafile,
+                                    addrs)
         self.cwd = self.back.home() or "/"
         log("%s: logged in to %s (%s)" % (self.peer, host, self.back.describe()))
         self.reply(230, "logged in to %s: %s" % (host, self.back.describe()))
@@ -954,9 +970,7 @@ class Config:
         self.pasv_ports = (int(lo), int(hi or lo)) if lo else (0, 0)
 
     def allowed(self, ip):
-        if self.allow:
-            return ip in self.allow or (ip.startswith("::ffff:") and ip[7:] in self.allow)
-        return private(ip)
+        return aeragate.client_ok(ip, self.allow)
 
 
 class Server(socketserver.ThreadingTCPServer):
@@ -964,8 +978,8 @@ class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
 
 
-def main(argv=None):
-    global VERBOSE
+def parser():
+    """the command line (aera-gateway reads a service's settings with it)"""
     ap = argparse.ArgumentParser(description="the Raspberry Pi gateway for EFTP: plain FTP in, FTPS or SFTP out")
     ap.add_argument("--port", type=int, default=2121)
     ap.add_argument("--bind", default="0.0.0.0")
@@ -977,7 +991,12 @@ def main(argv=None):
                     "instead of the Pi's own, e.g. a NAS's self-made CA")
     ap.add_argument("--pasv-ports", help="data ports to use, e.g. 30000-30100 (default: any)")
     ap.add_argument("-v", action="store_true", help="log every command")
-    a = ap.parse_args(argv)
+    return ap
+
+
+def main(argv=None):
+    global VERBOSE
+    a = parser().parse_args(argv)
     VERBOSE = a.v
     srv = Server((a.bind, a.port), Session)
     srv.cfg = Config(a)
