@@ -741,10 +741,14 @@ CLAUDE_SESSION_KEY=
             for f in ("bridge/claude_bridge.py", "bridge/requirements.txt", "pi/claude-st.service"):
                 if not os.path.isfile(os.path.join(d, f)):
                     raise Failed("%s isn't a ClaudeST copy: there is no %s" % (d, f))
-            rev = subprocess.run(["git", "-C", d, "describe", "--tags", "--always", "--dirty"],
-                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                 universal_newlines=True).stdout.strip()
-            return d, "ClaudeST %s from %s" % (rev or "(not a git checkout)", d)
+            # root reading a user's checkout: git would refuse it as "dubious ownership"
+            try:
+                rev = subprocess.run(["git", "-c", "safe.directory=*", "-C", d, "describe", "--tags", "--always",
+                                      "--dirty"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                     universal_newlines=True).stdout.strip()
+            except OSError:
+                rev = ""
+            return d, "ClaudeST %sfrom %s" % (rev + " " if rev else "", d)
         tag = o.tag
         try:
             if not tag:
