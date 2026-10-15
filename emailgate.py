@@ -22,35 +22,24 @@ Only addresses on the private networks (192.168.x.x, 10.x.x.x,
 through is never written down: -v logs who connected where, not what was
 said (the passwords go through too).
 
-Only standard Python 3 is needed (Raspberry Pi OS has it).
-gateway/install.sh sets it up as a service.
+Only standard Python 3 is needed (Raspberry Pi OS has it), and
+aeragate.py next to it. `aera-gateway install mail` sets it up as a
+service.
 
     emailgate.py [--ports 143,587,110] [--allow 192.168.1.50] [-v]
                  IMAP_SERVER SMTP_SERVER[:587] [POP3_SERVER]
 """
 
 import argparse
-import ipaddress
-import select
 import socket
 import ssl
-import sys
 import threading
 
-VERSION = "1.0"
+import aeragate
 
-PRIVATE = [ipaddress.ip_network(n) for n in
-           ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16")]
+VERSION = "1.1"
 
-
-def is_private(addr):
-    try:
-        ip = ipaddress.ip_address(addr)
-    except ValueError:
-        return False
-    if ip.version == 6 and ip.ipv4_mapped:
-        ip = ip.ipv4_mapped
-    return any(ip in n for n in PRIVATE) or ip.is_loopback
+is_private = aeragate.is_private
 
 
 class Config:
@@ -62,14 +51,11 @@ class Config:
 
 def log(msg):
     if Config.verbose:
-        sys.stderr.write(msg + "\n")
-        sys.stderr.flush()
+        aeragate.say(msg)
 
 
 def client_ok(addr):
-    if Config.allow:
-        return addr in Config.allow
-    return is_private(addr)
+    return aeragate.client_ok(addr, Config.allow)
 
 
 # what each protocol says to the Atari when the gateway can't help: it
@@ -80,9 +66,7 @@ def refusal(proto, text):
 
 
 def tls_context():
-    ctx = ssl.create_default_context()
-    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    return ctx
+    return aeragate.tls_context()
 
 
 def read_reply(f):
@@ -102,7 +86,7 @@ def read_reply(f):
 
 def connect(host, port, starttls=False):
     """the provider, over TLS; and with STARTTLS (SMTP), its greeting"""
-    raw = socket.create_connection((host, port), timeout=Config.timeout)
+    raw = aeragate.connect(host, port, Config.timeout)
     try:
         greeting = b""
         if starttls:
@@ -126,36 +110,9 @@ def connect(host, port, starttls=False):
         raise
 
 
-def send_all(sock, data):
-    view = memoryview(data)
-    while view:
-        try:
-            n = sock.send(view)
-            view = view[n:]
-        except (ssl.SSLWantWriteError, BlockingIOError):
-            select.select([], [sock], [], Config.timeout)
-        except ssl.SSLWantReadError:
-            select.select([sock], [], [], Config.timeout)
-
-
 def relay(atari, server):
     """both ways, until one side closes or nothing is said for Config.idle"""
-    atari.setblocking(False)
-    server.setblocking(False)
-    while True:
-        ready = [server] if server.pending() else \
-            select.select([atari, server], [], [], Config.idle)[0]
-        if not ready:
-            return "idle"
-        for s in ready:
-            other = server if s is atari else atari
-            try:
-                data = s.recv(65536)
-            except (ssl.SSLWantReadError, ssl.SSLWantWriteError, BlockingIOError):
-                continue
-            if not data:
-                return "closed"
-            send_all(other, data)
+    return aeragate.relay(atari, server, Config.idle, Config.timeout)
 
 
 def serve(proto, upstream, atari, addr):
@@ -214,7 +171,8 @@ def server_arg(s, port):
     return s, port
 
 
-def main(argv=None):
+def parser():
+    """the command line (aera-gateway reads a service's settings with it)"""
     ap = argparse.ArgumentParser(description="mail gateway for EMail on the Atari: plain on the "
                                  "home network, TLS to the provider")
     ap.add_argument("imap", help="the IMAP server (port 993, TLS)")
@@ -226,7 +184,11 @@ def main(argv=None):
     ap.add_argument("--allow", action="append", default=[],
                     help="only this Atari's address may use the gateway (may repeat)")
     ap.add_argument("-v", "--verbose", action="store_true")
-    a = ap.parse_args(argv)
+    return ap
+
+
+def main(argv=None):
+    a = parser().parse_args(argv)
     Config.allow = a.allow
     Config.verbose = a.verbose
     ports = [int(p) for p in a.ports.split(",")] + [110, 110]
@@ -235,7 +197,7 @@ def main(argv=None):
                ("smtp", ports[1], smtp + (smtp[1] == 587,))]      # 587: STARTTLS
     if a.pop3:
         targets.append(("pop3", ports[2], server_arg(a.pop3, 995) + (False,)))
-    sys.stderr.write("emailgate %s: %s; %s\n" % (
+    aeragate.say("emailgate %s: %s; %s" % (
         VERSION, ", ".join("%s on %d" % (p, n) for p, n, _ in targets),
         "only " + ", ".join(a.allow) if a.allow else "private-network addresses only"))
     threads = [listen(proto, a.bind, port, up)[1] for proto, port, up in targets]

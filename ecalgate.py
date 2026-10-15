@@ -23,8 +23,9 @@ hard:
     Public feeds of holidays or sports can run to megabytes; trimmed,
     they fit in an ST's memory.
 
-Only standard Python 3 is needed (Raspberry Pi OS has it). gateway/install.sh
-sets it up as a service. Falcon mode doesn't use it: the Falcon does TLS itself.
+Only standard Python 3 is needed (Raspberry Pi OS has it), and aeragate.py
+next to it. `aera-gateway install dav` sets it up as a service. Falcon mode
+doesn't use it: the Falcon does TLS itself.
 
     ecalgate.py [--port 8180] [--allow 192.168.1.50] [--allow-local] [-v]
 """
@@ -33,18 +34,18 @@ import argparse
 import datetime
 import gzip
 import http.client
-import ipaddress
 import os
 import re
 import socket
 import ssl
-import sys
 import threading
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
-VERSION = "1.0"
+import aeragate
+
+VERSION = "1.1"
 
 HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-connection", "proxy-authorization",
@@ -158,16 +159,7 @@ def trim_ics(text, window):
 
 # ---------------------------------------------------------------- the proxy
 
-PRIVATE = [ipaddress.ip_network(n) for n in
-           ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16")]
-
-
-def is_private(addr):
-    try:
-        ip = ipaddress.ip_address(addr)
-    except ValueError:
-        return False
-    return any(ip in n for n in PRIVATE) or ip.is_loopback
+is_private = aeragate.is_private
 
 
 class Config:
@@ -176,6 +168,13 @@ class Config:
     verbose = False
     timeout = 60
     insecure = False        # tests only: don't check certificates
+
+
+def _dial(address, timeout=None, source_address=None):
+    """http.client's connection to a server, made to the address that was
+    checked: without --allow-local, never one on the home network, even if
+    the name's answer changes between a look-up and the next"""
+    return aeragate.connect(address[0], address[1], timeout, Config.allow_local)
 
 
 def _proxy(scheme):
@@ -199,7 +198,7 @@ class Upstream(threading.local):
         c = self.conns.get(key)
         if c is None:
             if scheme == "https":
-                ctx = ssl.create_default_context()
+                ctx = aeragate.tls_context()
                 if Config.insecure:
                     ctx.check_hostname = False
                     ctx.verify_mode = ssl.CERT_NONE
@@ -209,8 +208,10 @@ class Upstream(threading.local):
                     c.set_tunnel(host, port)
                 else:
                     c = http.client.HTTPSConnection(host, port, timeout=Config.timeout, context=ctx)
+                    c._create_connection = _dial
             else:
                 c = http.client.HTTPConnection(host, port, timeout=Config.timeout)
+                c._create_connection = _dial
             self.conns[key] = c
         return c
 
@@ -227,9 +228,21 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "ecalgate/" + VERSION
 
+    where = "-"             # the server a request goes to, for the log
+
     def log_message(self, fmt, *args):
         if Config.verbose:
-            sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
+            aeragate.say("%s %s" % (self.address_string(), fmt % args))
+
+    def log_request(self, code="-", size="-"):
+        # the request line has the whole address, and a private calendar
+        # feed's address is its password: note() logs the server only
+        pass
+
+    def note(self, status, size, more=""):
+        if Config.verbose:
+            aeragate.say("%s %s %s -> %d, %d bytes%s" % (
+                self.address_string(), self.command, self.where, status, size, more))
 
     def handle(self):
         try:
@@ -251,16 +264,15 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in (extra or []):
             self.send_header(k, v)
         self.end_headers()
+        self.note(status, len(body), ": " + text.strip() if status >= 400 and isinstance(text, str) else "")
         if self.command != "HEAD":
             self.wfile.write(body)
 
     def client_ok(self):
-        addr = self.client_address[0]
-        if Config.allow:
-            return addr in Config.allow
-        return is_private(addr)
+        return aeragate.client_ok(self.client_address[0], Config.allow)
 
     def proxy(self):
+        self.where = "-"
         if not self.client_ok():
             self.reply(403, "ecalgate: this address may not use the gateway\n")
             return
@@ -274,15 +286,7 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(400, "ecalgate: expected a request like GET https://host/path\n")
             return
         port = u.port or (443 if u.scheme == "https" else 80)
-        if not Config.allow_local and not _proxy(u.scheme):
-            try:
-                addrs = {a[4][0] for a in socket.getaddrinfo(u.hostname, port, proto=socket.IPPROTO_TCP)}
-            except OSError:
-                self.reply(502, "ecalgate: can't find %s\n" % u.hostname)
-                return
-            if any(is_private(a) for a in addrs):
-                self.reply(403, "ecalgate: won't connect to the local network (%s)\n" % u.hostname)
-                return
+        self.where = "%s://%s:%d" % (u.scheme, u.hostname, port)
         path = u.path or "/"
         if u.query:
             path += "?" + u.query
@@ -300,6 +304,14 @@ class Handler(BaseHTTPRequestHandler):
             except ssl.SSLCertVerificationError as e:
                 UP.drop(u.scheme, u.hostname, port)
                 self.reply(502, "ecalgate: %s has an untrusted certificate (%s)\n" % (u.hostname, e.verify_message))
+                return
+            except aeragate.HomeNetwork:
+                UP.drop(u.scheme, u.hostname, port)
+                self.reply(403, "ecalgate: won't connect to the local network (%s)\n" % u.hostname)
+                return
+            except socket.gaierror:
+                UP.drop(u.scheme, u.hostname, port)
+                self.reply(502, "ecalgate: can't find %s\n" % u.hostname)
                 return
             except (http.client.RemoteDisconnected, BrokenPipeError, ConnectionResetError,
                     http.client.CannotSendRequest, http.client.ResponseNotReady):
@@ -335,15 +347,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
+        self.note(resp.status, len(data), " (trimmed from %d)" % before if len(data) != before else "")
         if self.command != "HEAD":
             self.wfile.write(data)
-        if Config.verbose:
-            sys.stderr.write("  %s %s -> %d, %d bytes%s\n" % (
-                self.command, self.path[:80], resp.status, len(data),
-                " (trimmed from %d)" % before if len(data) != before else ""))
 
 
-def main(argv=None):
+def parser():
+    """the command line (aera-gateway reads a service's settings with it)"""
     ap = argparse.ArgumentParser(description="HTTPS gateway for ECal on the Atari")
     ap.add_argument("--port", type=int, default=8180)
     ap.add_argument("--bind", default="0.0.0.0")
@@ -353,14 +363,18 @@ def main(argv=None):
                     help="also forward to servers on the local network (a Radicale or Nextcloud at home)")
     ap.add_argument("--insecure", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("-v", "--verbose", action="store_true")
-    a = ap.parse_args(argv)
+    return ap
+
+
+def main(argv=None):
+    a = parser().parse_args(argv)
     Config.allow = a.allow
     Config.allow_local = a.allow_local
     Config.verbose = a.verbose
     Config.insecure = a.insecure
     srv = ThreadingHTTPServer((a.bind, a.port), Handler)
     srv.daemon_threads = True
-    sys.stderr.write("ecalgate %s listening on %s:%d\n" % (VERSION, a.bind, a.port))
+    aeragate.say("ecalgate %s listening on %s:%d" % (VERSION, a.bind, a.port))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

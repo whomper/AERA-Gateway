@@ -2,13 +2,17 @@
 # Copyright (C) 2026 AERA | Erez Yaary
 """Tests for ecalgate: the feed trimming, and the proxy against a local server."""
 
+import contextlib
 import gzip
 import http.client
+import io
 import os
+import socket
 import sys
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(__file__))
 import ecalgate  # noqa: E402
@@ -184,6 +188,52 @@ class ProxyTest(unittest.TestCase):
             self.assertEqual(r.status, 403)
         finally:
             ecalgate.Config.allow_local = True
+
+
+    def test_log_names_the_server_not_the_path(self):
+        # a private feed's address is its password: the log has the host only
+        log = io.StringIO()
+        ecalgate.Config.verbose = True
+        try:
+            with contextlib.redirect_stderr(log):
+                c = self.conn()
+                c.request("GET", self.base + "/feed.ics?token=s3cret-feed-token")
+                c.getresponse().read()
+        finally:
+            ecalgate.Config.verbose = False
+        self.assertIn("GET %s -> 201" % self.base, log.getvalue())     # the test server: 201 for anything else
+        self.assertNotIn("s3cret", log.getvalue())
+        self.assertNotIn("feed.ics", log.getvalue())
+
+    def test_one_look_up_and_the_answer_is_used(self):
+        # the server's name is looked up once, checked, and connected to: a
+        # name that answers "public" to a check and "home" to the connection
+        # (DNS rebinding) can't lead the gateway home
+        real = socket.getaddrinfo
+        asked = []
+
+        def gai(host, *a, **k):
+            if host.endswith(".example"):
+                asked.append(host)
+            return real("127.0.0.1", *a, **k)
+        port = self.up.server_address[1]
+        with mock.patch("socket.getaddrinfo", gai):
+            c = self.conn()
+            c.request("GET", "http://calendar.example:%d/moved" % port)
+            r = c.getresponse()
+            r.read()
+            self.assertEqual(r.status, 301)
+            self.assertEqual(asked, ["calendar.example"])
+            ecalgate.Config.allow_local = False
+            try:
+                c = self.conn()
+                c.request("GET", "http://other.example:%d/moved" % port)
+                r = c.getresponse()
+                self.assertIn(b"won't connect to the local network (other.example)", r.read())
+                self.assertEqual(r.status, 403)
+            finally:
+                ecalgate.Config.allow_local = True
+        self.assertEqual(asked, ["calendar.example", "other.example"])
 
 
 if __name__ == "__main__":
