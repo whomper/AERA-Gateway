@@ -43,6 +43,7 @@ import time
 import urllib.request
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+PROG = sys.argv[0] if sys.argv[0].endswith("aera-gateway") else "aera-gateway"   # as typed, for advice
 OPT = "/opt/aera-gateway"                   # the gateways' code on the Pi
 UNITS = "/etc/systemd/system"
 OLD_BIN = "/usr/local/bin"                  # where the apps' own install.sh put them
@@ -919,14 +920,14 @@ def status(pi, src=HERE):
         who = "only " + ", ".join(ns.allow) if ns.allow else "home network"
         say("  %-7s %-10s %-9s port %s; %s; %s" % (svc.key, svc.name, state, ports, who, svc.describe(ns)))
         if os.path.dirname(script) != OPT:
-            say("          set up by the app's own install.sh: sudo ./aera-gateway update takes it over")
+            say("          set up by the app's own install.sh: sudo %s update takes it over" % PROG)
             stale = True
     if any(svc.installed(pi) for svc in GATEWAYS) and not stale:
         differ = [f for f in FILES if pi.read("%s/%s" % (OPT, f)) != open(os.path.join(src, f)).read()]
         if differ:
-            say("This copy's %s differ from the ones running: sudo ./aera-gateway update" % ", ".join(differ))
+            say("This copy's %s differ from the ones running: sudo %s update" % (", ".join(differ), PROG))
     if pi.exists(Mail.STUNNEL):
-        say("EMail 1.x's stunnel set-up is still there: sudo ./aera-gateway install mail IMAP SMTP replaces it")
+        say("EMail 1.x's stunnel set-up is still there: sudo %s install mail IMAP SMTP replaces it" % PROG)
 
 
 def update(pi, o, src=HERE):
