@@ -258,13 +258,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def reply(self, status, text, ctype="text/plain; charset=utf-8", extra=None):
         body = text.encode("utf-8") if isinstance(text, str) else text
+        self.note(status, len(body), ": " + text.strip() if status >= 400 and isinstance(text, str) else "")
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         for k, v in (extra or []):
             self.send_header(k, v)
         self.end_headers()
-        self.note(status, len(body), ": " + text.strip() if status >= 400 and isinstance(text, str) else "")
         if self.command != "HEAD":
             self.wfile.write(body)
 
@@ -340,6 +340,7 @@ class Handler(BaseHTTPRequestHandler):
         before = len(data)
         if window and resp.status == 200 and ("calendar" in ctype.lower() or data[:15].upper().startswith(b"BEGIN:VCALENDAR")):
             data = trim_ics(data.decode("utf-8", "replace"), window).encode("utf-8")
+        self.note(resp.status, len(data), " (trimmed from %d)" % before if len(data) != before else "")
         self.send_response(resp.status, resp.reason)
         for k, v in resp.getheaders():
             if k.lower() in HOP_BY_HOP or k.lower() in ("content-encoding", "set-cookie"):
@@ -347,7 +348,6 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.note(resp.status, len(data), " (trimmed from %d)" % before if len(data) != before else "")
         if self.command != "HEAD":
             self.wfile.write(data)
 
