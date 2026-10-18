@@ -20,6 +20,13 @@ installer (`gateway/aera-gateway`), which also sets up ClaudeST's bridge
 - ClaudeST's bridge stays in ClaudeST; the `claude` recipe sets it up as
   ClaudeST's `pi/install.sh` did, and `tests/systemd.sh` checks that.
 
+## Talking with Erez
+
+Write to him only when he has to decide something, with a short context:
+no progress or in-between messages. Analysis is the information, your
+assessment and what he should do. (Messages to the hub and the app
+sessions stay as they are.)
+
 ## Rules
 
 - **The apps carry `gateway/` as a read-only copy**: a subtree of the
