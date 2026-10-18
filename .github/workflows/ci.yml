@@ -16,8 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.9: Raspberry Pi OS bullseye; 3.11: bookworm; 3.12: Ubuntu 24.04
-        python: ["3.9", "3.11", "3.12"]
+        # 3.9: Raspberry Pi OS bullseye; 3.11: bookworm; 3.12: Ubuntu 24.04; 3.13: trixie
+        python: ["3.9", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

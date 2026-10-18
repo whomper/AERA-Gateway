@@ -97,7 +97,7 @@ ok "fresh installs"
 echo "== claude: the recipe leaves what ClaudeST's pi/install.sh left"
 snap() {
   mkdir -p "$1"
-  cp /etc/claude-st/claude-st.env "$1/env"
+  grep -v '^#' /etc/claude-st/claude-st.env > "$1/env"    # the settings; the notes name today's commands
   stat -c '%a %U:%G' /etc/claude-st/claude-st.env > "$1/env.stat"
   cp /etc/systemd/system/claude-st.service "$1/unit"
   stat -c '%a' /etc/systemd/system/claude-st.service > "$1/unit.stat"

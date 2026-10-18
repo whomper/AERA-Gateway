@@ -18,9 +18,11 @@ In the instructions, `PI_IP` is the Pi's address on your home network and
 
 ## Getting started
 
-On the Pi (Raspberry Pi OS, or any Debian or Ubuntu):
+On the Pi (Raspberry Pi OS bullseye or newer, or any Debian or Ubuntu
+with Python 3.9 or newer), in your home folder:
 
 ```
+sudo apt install -y git                   Raspberry Pi OS Lite comes without it
 git clone https://github.com/whomper/AERA-Gateway
 cd AERA-Gateway
 ./update-pi.sh
@@ -31,7 +33,21 @@ sudo gateway/aera-gateway install claude --network --atari 192.168.1.20
 ```
 
 `./update-pi.sh` takes this copy to AERA-Gateway's latest release. Install
-only the ones you need; each prints what to type into its Atari program.
+only the ones you need, with your own mail provider's servers and your
+Atari's address; each prints what to type into its Atari program:
+
+| Atari program      | Where                                  | What                                          |
+|--------------------|----------------------------------------|-----------------------------------------------|
+| EMail              | Options > Accounts                     | server `PI_IP`; IMAP 143 (or POP3 110), SMTP 587 |
+| ECal, EContact     | Settings > Connection                  | Pi gateway `PI_IP`, port 8180                 |
+| EFTP               | Options > Settings > Secure            | Pi gateway `PI_IP`, port 2121                 |
+| ClaudeST           | Options > Settings > Network           | `PI_IP`, port 2323                            |
+
+Use the Pi's address, not its name: plain TOS with STinG can't always
+look names up on the home network. On a Falcon or TT, EMail, ECal,
+EContact and EFTP can make the secure connections themselves (their
+Falcon mode) and need the Pi only for SFTP.
+
 Then, now and then, the same:
 
 ```
@@ -45,7 +61,9 @@ keys and chats kept. The Pi runs releases only, never work in progress.
 
 `gateway/aera-gateway status` says what runs where, and
 `sudo gateway/aera-gateway remove SERVICE` takes one away. The whole
-story, service by service, is in [gateway/README.md](gateway/README.md).
+story, service by service, is in [gateway/README.md](gateway/README.md),
+and [When something doesn't work](gateway/README.md#when-something-doesnt-work)
+is there too.
 
 A Pi set up with the apps' own `install.sh` (before the gateways moved
 here) is taken over by `update`: the same services, ports and settings.
@@ -117,8 +135,8 @@ python3 -m unittest discover -s gateway -p 'test_*.py'
 sudo tests/systemd.sh          on a spare computer with systemd: it installs and removes services
 ```
 
-CI runs both on every push, the first with Python 3.9, 3.11 and 3.12
-(Raspberry Pi OS bullseye and bookworm, Ubuntu 24.04).
+CI runs both on every push, the first with Python 3.9, 3.11, 3.12 and 3.13
+(Raspberry Pi OS bullseye, bookworm and trixie, Ubuntu 24.04).
 
 ## Licence
 
