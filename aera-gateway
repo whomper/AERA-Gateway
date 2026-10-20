@@ -8,6 +8,7 @@ says how they are.
   sudo ./aera-gateway install mail IMAP SMTP[:587] [POP3]   EMail's (emailgate)
   sudo ./aera-gateway install dav                           ECal's and EContact's (ecalgate)
   sudo ./aera-gateway install ftp                           EFTP's (eftpgate)
+  sudo ./aera-gateway install web                           EWeb's (webgate)
   sudo ./aera-gateway install claude --network --atari ATARI_IP
                                                             ClaudeST's bridge (claude-st)
   sudo ./aera-gateway update        every one installed, from this copy, settings kept
@@ -51,7 +52,7 @@ PROG = sys.argv[0] if sys.argv[0].endswith("aera-gateway") else "aera-gateway"  
 OPT = "/opt/aera-gateway"                   # the gateways' code on the Pi
 UNITS = "/etc/systemd/system"
 OLD_BIN = "/usr/local/bin"                  # where the apps' own install.sh put them
-FILES = ("aeragate.py", "emailgate.py", "ecalgate.py", "eftpgate.py")
+FILES = ("aeragate.py", "emailgate.py", "ecalgate.py", "eftpgate.py", "webgate.py")
 HOME_NETS = ("192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8")
 CLAUDEST = "whomper/ClaudeST"
 
@@ -640,7 +641,65 @@ class Ftp(Gateway):
             "Then give your FTPS and SFTP sites their real server names in File > Sites."])
 
 
-GATEWAYS = [Mail(), Dav(), Ftp()]
+class Web(Gateway):
+    key, name, script = "web", "webgate", "webgate.py"
+    title = "EWeb gateway for the Atari (HTTP and HTTPS)"
+    removed = "webgate removed."
+
+    def options(self, ap):
+        super().options(ap)
+        ap.add_argument("--port", type=int, help="the port on the Pi (8280 is the default)")
+        ap.add_argument("--allow-local", action="store_true", default=None,
+                        help="also reach servers on the home network (a router's or a NAS's pages)")
+        ap.add_argument("--no-allow-local", dest="allow_local", action="store_false")
+        ap.add_argument("--cafile", metavar="CA.PEM",
+                        help="check servers against this CA instead of the Pi's roots")
+        ap.add_argument("--no-cafile", dest="cafile", action="store_const", const="")
+        ap.add_argument("-v", "--verbose", action="store_true", default=None,
+                        help="log every request (the server, never the address's path)")
+        ap.add_argument("--no-verbose", dest="verbose", action="store_false")
+
+    def apply(self, ns, o):
+        super().apply(ns, o)
+        if o.port is not None:
+            ns.port = o.port
+        if o.allow_local is not None:
+            ns.allow_local = o.allow_local
+        if o.cafile is not None:
+            if o.cafile and not os.path.isfile(o.cafile):
+                raise Usage("--cafile: there is no %s" % o.cafile)
+            ns.cafile = os.path.abspath(o.cafile) if o.cafile else None
+        if o.verbose is not None:
+            ns.verbose = o.verbose
+
+    def args(self, ns):
+        out = ["--port", str(ns.port)] + super().args(ns)
+        out += ["--allow-local"] if ns.allow_local else []
+        out += ["--cafile", ns.cafile] if ns.cafile else []
+        # the Pi's browser: not offered yet, but kept if it was set by hand
+        out += ["--browser"] if ns.browser else []
+        out += ["--browser-port", str(ns.browser_port)] if ns.browser_port != ns.default["browser_port"] else []
+        out += ["--insecure"] if ns.insecure else []
+        out += ["-v"] if ns.verbose else []
+        return out + ns.extra
+
+    def ports(self, ns):
+        return [str(ns.port)]
+
+    def describe(self, ns):
+        return "servers at home %s%s" % ("allowed" if ns.allow_local else "refused",
+                                         ", CA " + ns.cafile if ns.cafile else "")
+
+    def tell(self, ns, ip):
+        return "\n".join([
+            "",
+            "webgate is running. In EWeb on the Atari, its gateway (GATEWAY= in EWEB.INF):",
+            "   %s:%s" % (ip, ns.port),
+            "",
+            "Check it from any browser on your network: http://%s:%s/" % (ip, ns.port)])
+
+
+GATEWAYS = [Mail(), Dav(), Ftp(), Web()]
 
 
 def put_files(pi, src):
@@ -985,7 +1044,7 @@ CLAUDE = Claude()
 SERVICES = {g.key: g for g in GATEWAYS + [CLAUDE]}
 NAMES = {"email": "mail", "emailgate": "mail", "cal": "dav", "ecal": "dav", "econtact": "dav",
          "contacts": "dav", "ecalgate": "dav", "eftp": "ftp", "eftpgate": "ftp",
-         "claudest": "claude", "claude-st": "claude"}
+         "claudest": "claude", "claude-st": "claude", "eweb": "web", "webgate": "web"}
 
 
 def service(name):
