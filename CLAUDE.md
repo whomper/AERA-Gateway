@@ -16,7 +16,8 @@ installer (`gateway/aera-gateway`), which also sets up ClaudeST's bridge
   bridge in ClaudeST): ask it before changing those, and send it the
   change to review.
 - **A port never moves without the owning app's OK**: the Ataris have
-  them in their settings (143/587/110, 8180, 2121 and 30000-30099, 2323).
+  them in their settings (143/587/110, 8180, 2121 and 30000-30099, 8280,
+  2323; 8281 is webgate's extension's, on 127.0.0.1 only).
 - ClaudeST's bridge stays in ClaudeST; the `claude` recipe sets it up as
   ClaudeST's `pi/install.sh` did, and `tests/systemd.sh` checks that.
 
@@ -50,7 +51,9 @@ sessions stay as they are.)
 - **Before pushing:** `python3 -m pyflakes gateway/*.py gateway/aera-gateway`
   and `python3 -m unittest discover -s gateway -p 'test_*.py'` (pip install
   paramiko pyftpdlib pyopenssl). CI runs `tests/systemd.sh` for real; run it
-  yourself only on a throwaway computer.
+  yourself only on a throwaway computer. A change to the docs alone
+  (README, docs/, CLAUDE.md) takes the short path: pushed once it reads
+  right, without the test runs (guidelines 1.2).
 - **Only formal releases leave the build machine.** Erez gets vX.Y
   releases made by the Release workflow from `main`, nothing else: no
   test builds, no dev builds, no builds from a branch. Work lands on
