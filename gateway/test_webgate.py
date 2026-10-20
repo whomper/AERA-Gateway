@@ -180,6 +180,7 @@ class LiveTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         webgate.Config.browser = True
+        webgate.Config.allow_local = True       # example.com without a name server here
         webgate.Config.snapshot_wait = 5
         webgate.Config.live_settle = 0
         cls.tmp = tempfile.mkdtemp()
@@ -205,6 +206,7 @@ class LiveTest(unittest.TestCase):
         os.environ["PATH"] = cls.path
         shutil.rmtree(cls.tmp)
         webgate.Config.browser = False
+        webgate.Config.allow_local = False
         webgate.Config.snapshot_wait = 60
         webgate.Config.live_settle = 1.0
 
@@ -254,6 +256,22 @@ class LiveTest(unittest.TestCase):
         self.assertIn('<input type=image name=at', page)
         self.assertIn('action="http://webgate/live/click"', page)
 
+    def test_live_refuses_files_and_home(self):
+        r, data, w = self.ask("http://webgate/live?url=file%3A%2F%2F%2Fetc%2F", turn=False)
+        self.assertEqual(r.status, 400)
+        webgate.Config.allow_local = False
+        try:
+            r, data, w = self.ask("http://webgate/live?url=http%3A%2F%2F10.0.0.1%2F", turn=False)
+        finally:
+            webgate.Config.allow_local = True
+        self.assertEqual(r.status, 403)
+
+    def test_config_for_the_extension(self):
+        c = http.client.HTTPConnection("127.0.0.1", self.ext.server_address[1], timeout=10)
+        self.addCleanup(c.close)
+        c.request("GET", "/config")
+        self.assertEqual(json.loads(c.getresponse().read()), {"allow_local": True})
+
     def test_shot(self):
         r, data, w = self.ask("http://webgate/live/shot.jpg?n=1")
         self.assertEqual(w["shot"], webgate.Config.live_width)
@@ -291,6 +309,7 @@ class SnapshotTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         webgate.Config.browser = True
+        webgate.Config.allow_local = True       # example.com without a name server here
         webgate.Config.snapshot_wait = 5
         cls.ext = ThreadingHTTPServer(("127.0.0.1", 0), webgate.ExtHandler)
         cls.ext.daemon_threads = True
@@ -305,6 +324,7 @@ class SnapshotTest(unittest.TestCase):
             s.shutdown()
             s.server_close()
         webgate.Config.browser = False
+        webgate.Config.allow_local = False
         webgate.Config.snapshot_wait = 60
 
     def extension(self, answer=True):
@@ -347,6 +367,17 @@ class SnapshotTest(unittest.TestCase):
         t.join()
         self.assertEqual(r.status, 504)
         self.assertTrue(data.startswith(b"webgate: the browser didn't finish example.com"))
+
+    def test_home_network_refused(self):
+        """7.3 holds for the browser: an address in the home network is
+        refused before the browser sees it (no extension turn here)"""
+        webgate.Config.allow_local = False
+        try:
+            r, data = self.ask("http://192.168.1.1/", {"X-Gateway-Snapshot": "1"})
+        finally:
+            webgate.Config.allow_local = True
+        self.assertEqual(r.status, 403)
+        self.assertTrue(data.startswith(b"webgate: won't connect to the local network (192.168.1.1)"))
 
     def test_no_browser(self):
         webgate.Config.browser = False

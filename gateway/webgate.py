@@ -31,7 +31,12 @@ once the page has settled after its scripts ran, its extension
 as a picture, the fields as filled, a <base> so EWeb fetches the
 stylesheets and pictures through webgate as usual. X-Gateway-Snapshot-URL
 says where the browser ended up. The extension talks to webgate on
-127.0.0.1:8281 only. One page at a time: the browser has one tab.
+127.0.0.1:8281 only. One page at a time: the browser has one tab. The
+proxy's rules hold for the browser too: webgate gives it only http and
+https addresses outside the home network (unless --allow-local), and the
+extension blocks every request into the home network that its address
+shows (addresses, single names, .local and the like), so that a link
+followed in live view can't lead there either.
 
 Live view (--browser), for what a snapshot can't do (a CAPTCHA, a login
 made by scripts): EWeb opens http://webgate/live (webgate keeps the name
@@ -210,6 +215,10 @@ class ExtHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path.startswith("/config"):
+            # what the extension blocks: the home network, unless --allow-local
+            self.answer(200, json.dumps({"allow_local": Config.allow_local}).encode())
+            return
         if self.path.startswith("/next"):
             w = BRIDGE.next()
             if w is None:
@@ -426,6 +435,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         url = a.get("url", [""])[0]
         title = "the Pi's browser"
+        if url and not self.browser_may_open(url):
+            return
         if url:
             snap = BRIDGE.ask(url, Config.snapshot_wait)
             if snap:
@@ -434,10 +445,32 @@ class Handler(BaseHTTPRequestHandler):
         page = LIVE_PAGE % {"title": html.escape(title), "n": n, "w": Config.live_width}
         self.send_body(200, page.encode("utf-8"), "text/html; charset=utf-8")
 
+    def browser_may_open(self, url):
+        """may the Pi's browser open url? The proxy's rules (7.3): http and
+        https only, nowhere in the home network without --allow-local. When
+        not, the Atari has been answered."""
+        u = urlsplit(url)
+        if u.scheme not in ("http", "https") or not u.hostname:
+            self.reply(400, "webgate: expected a request like GET https://host/path\n")
+            return False
+        if Config.allow_local:
+            return True
+        try:
+            aeragate.lookup(u.hostname, u.port or (443 if u.scheme == "https" else 80), False)
+        except aeragate.HomeNetwork:
+            self.reply(403, "webgate: won't connect to the local network (%s)\n" % u.hostname)
+            return False
+        except (socket.gaierror, UnicodeError, ValueError):
+            self.reply(502, "webgate: can't find %s\n" % u.hostname)
+            return False
+        return True
+
     def snapshot(self, u):
         """the page as the Pi's browser shows it, after its scripts ran"""
         if not Config.browser:
             self.reply(501, "webgate: snapshots need the Pi's browser (webgate --browser)\n")
+            return
+        if not self.browser_may_open(self.path):
             return
         snap = BRIDGE.ask(self.path, Config.snapshot_wait)
         if snap is None:
