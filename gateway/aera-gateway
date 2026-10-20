@@ -693,8 +693,9 @@ class Web(Gateway):
     def tell(self, ns, ip):
         return "\n".join([
             "",
-            "webgate is running. In EWeb on the Atari, its gateway (GATEWAY= in EWEB.INF):",
-            "   %s:%s" % (ip, ns.port),
+            "webgate is running. In EWeb on the Atari, Settings > Secure:",
+            "   Pi gateway:  %s" % ip,
+            "   Port:        %s" % ns.port,
             "",
             "Check it from any browser on your network: http://%s:%s/" % (ip, ns.port)])
 

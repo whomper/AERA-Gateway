@@ -43,7 +43,7 @@ Atari's address; each prints what to type into its Atari program:
 | EMail              | Options > Accounts                     | server `PI_IP`; IMAP 143 (or POP3 110), SMTP 587 |
 | ECal, EContact     | Settings > Connection                  | Pi gateway `PI_IP`, port 8180                 |
 | EFTP               | Options > Settings > Secure            | Pi gateway `PI_IP`, port 2121                 |
-| EWeb               | `GATEWAY=` in `EWEB.INF`               | `PI_IP:8280`                                  |
+| EWeb               | Settings > Secure                      | Pi gateway `PI_IP`, port 8280                 |
 | ClaudeST           | Options > Settings > Network           | `PI_IP`, port 2323                            |
 
 Use the Pi's address, not its name: plain TOS with STinG can't always

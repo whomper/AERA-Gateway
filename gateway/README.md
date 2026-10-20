@@ -211,8 +211,8 @@ answer goes back as it came: the server's gzip or deflate as they are
 cookies and error pages unchanged. When webgate can't help, EWeb's
 "can't open" page shows a line that starts with "webgate:".
 
-In EWeb, the gateway is `GATEWAY=PI_IP:8280` in `EWEB.INF`. Check it from
-any browser on your network: `http://PI_IP:8280/` answers "webgate X.Y
+In EWeb, Settings > Secure: Pi gateway = the Pi's IP address, port 8280.
+Check it from any browser on your network: `http://PI_IP:8280/` answers "webgate X.Y
 is running".
 
 `--allow-local` lets it reach servers on your home network too (a

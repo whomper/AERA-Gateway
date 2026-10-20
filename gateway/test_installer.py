@@ -461,8 +461,9 @@ class DavFtpTest(Base):
         self.assertEqual(self.execstart("webgate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/webgate.py "
                                                     "--port 8280 --allow 192.168.1.50")
         self.assertEqual(self.pi.rules, [("192.168.1.50", "8280")])
-        self.assertIn("GATEWAY= in EWEB.INF", self.out)
-        self.assertIn("192.168.1.10:8280", self.out)
+        self.assertIn("In EWeb on the Atari, Settings > Secure:", self.out)
+        self.assertIn("Pi gateway:  192.168.1.10", self.out)
+        self.assertIn("Port:        8280", self.out)
         self.assertTrue(self.pi.exists("/opt/aera-gateway/webgate.py"))
         self.run_ag("install", "web", "--allow-local", "-v")
         self.assertEqual(self.execstart("webgate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/webgate.py "
