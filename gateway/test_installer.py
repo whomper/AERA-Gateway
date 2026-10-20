@@ -486,7 +486,9 @@ class DavFtpTest(Base):
         self.assertIn(":99 -screen 0 1024x768x24 -nolisten tcp", screen)
         for want in ("--proxy-server=http://127.0.0.1:8281", "--load-extension=/opt/aera-gateway/webgate-ext",
                      "--user-data-dir=/var/lib/webgate/browser", "JoinsNamespaceOf=webgate.service",
-                     "User=webgate", "--kiosk"):
+                     "User=webgate", "--kiosk", '"--proxy-bypass-list=<-loopback>;127.0.0.1:8281"',
+                     '"--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"', "--disable-quic",
+                     "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"):
             self.assertIn(want, browser)
         self.assertTrue(self.pi.exists("/opt/aera-gateway/webgate-ext/manifest.json"))
         self.assertIn(("systemctl", "restart", "webgate-browser.service"), self.pi.cmds)

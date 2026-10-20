@@ -127,6 +127,9 @@ unit_has webgate "^Environment=DISPLAY=:99$"
 [ "$(sudo -u webgate DISPLAY=:99 xdotool getdisplaygeometry)" = "1024 768" ] || fail "no screen for the browser"
 grep -qx -- "--proxy-server=http://127.0.0.1:8281" /var/lib/webgate/chromium-args || fail "the browser doesn't go through webgate"
 grep -qx -- "--load-extension=/opt/aera-gateway/webgate-ext" /var/lib/webgate/chromium-args || fail "no webgate-ext"
+grep -qx -- "--host-resolver-rules=MAP \* ~NOTFOUND, EXCLUDE 127.0.0.1" /var/lib/webgate/chromium-args \
+  || fail "the browser resolves names itself"
+grep -qx -- "--disable-quic" /var/lib/webgate/chromium-args || fail "the browser may use QUIC"
 [ -e /opt/aera-gateway/webgate-ext/manifest.json ] || fail "webgate-ext isn't in /opt"
 python3 - <<'PY'
 import socket, urllib.error, urllib.request

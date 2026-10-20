@@ -254,7 +254,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def proxy(self):
         self.where = "-"
-        if not self.for_browser and not aeragate.client_ok(self.client_address[0], Config.allow):
+        if not (_local(self.client_address[0]) if self.for_browser else
+                aeragate.client_ok(self.client_address[0], Config.allow)):
             self.reply(403, "webgate: this address may not use the gateway\n")
             return
         length = int(self.headers.get("Content-Length") or 0)
@@ -509,6 +510,12 @@ p{margin:4px 0}input[type=image]{border:1px solid #888}</style></head><body>
 """
 
 
+def _local(addr):
+    """the Pi itself (127.0.0.1, ::1): the only one its browser's proxy serves"""
+    ip = aeragate._ip(addr)
+    return ip is not None and ip.is_loopback
+
+
 class ExtHandler(Handler):
     """127.0.0.1 only. webgate-ext talks here (/next, /config, /shot,
     /snapshot), and the Pi's browser goes out through here, as through
@@ -574,7 +581,10 @@ class ExtHandler(Handler):
 
     def do_CONNECT(self):
         """a tunnel for the browser (https, websockets), to the address
-        webgate checked"""
+        webgate checked: one look-up, and the connection to what it said"""
+        if not _local(self.client_address[0]):
+            self.reply(403, "webgate: this address may not use the gateway\n")
+            return
         host, _, port = self.path.rpartition(":")
         host = host.strip("[]")
         if not host or not port.isdigit():
