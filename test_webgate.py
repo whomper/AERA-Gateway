@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -461,6 +462,77 @@ class BrowserProxyTest(unittest.TestCase):
         finally:
             webgate.Config.allow_local = False
             webgate.Config.allow = []
+
+    def resolver(self, *answers):
+        """a stand-in for the name server: each call the next answer"""
+        calls = []
+
+        def getaddrinfo(host, port, *a, **k):
+            calls.append(host)
+            ips = answers[min(len(calls), len(answers)) - 1]
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port)) for ip in ips]
+        return calls, getaddrinfo
+
+    def test_private_addresses_never_dialled(self):
+        webgate.Config.allow_local = False
+        dialled = []
+        with unittest.mock.patch.object(webgate.aeragate, "dial", lambda addrs, *a: dialled.append(addrs)):
+            for host in ("192.168.1.1", "10.0.0.1", "172.16.0.1", "169.254.169.254", "127.0.0.1",
+                         "[::1]", "[::ffff:192.168.1.1]", "0.0.0.0"):
+                c, r = self.connect(host)
+                self.assertEqual(r.status, 403, host)
+                r.read()
+        self.assertEqual(dialled, [])
+
+    def test_names_that_answer_home(self):
+        webgate.Config.allow_local = False
+        for answer in (["192.168.1.10"], ["93.184.216.34", "192.168.1.10"]):     # home, and mixed
+            calls, fake = self.resolver(answer)
+            c1, c2 = self.conn(), self.conn()
+            c1.connect()                # to webgate, before the stand-in answers every name
+            c2.connect()
+            with unittest.mock.patch.object(webgate.aeragate.socket, "getaddrinfo", fake):
+                c1.request("CONNECT", "rebind.example:443")
+                r = c1.getresponse()
+                self.assertEqual(r.status, 403, answer)
+                r.read()
+                c2.request("GET", "http://rebind.example/")
+                r = c2.getresponse()
+                self.assertEqual(r.status, 403, answer)
+                r.read()
+
+    def test_rebinding_one_look_up(self):
+        """public at the check, private a moment later: webgate connects to
+        what it checked, and asks once"""
+        webgate.Config.allow_local = False
+        calls, fake = self.resolver(["93.184.216.34"], ["192.168.1.10"])
+        dialled = []
+        a, b = socket.socketpair()
+        self.addCleanup(a.close)
+
+        def dial(addrs, *rest):
+            dialled.append(addrs)
+            return b
+        s = socket.create_connection(("127.0.0.1", self.ext.server_address[1]), timeout=10)
+        self.addCleanup(s.close)
+        with unittest.mock.patch.object(webgate.aeragate.socket, "getaddrinfo", fake), \
+                unittest.mock.patch.object(webgate.aeragate, "dial", dial):
+            s.sendall(b"CONNECT rebind.example:443 HTTP/1.1\r\nHost: x\r\n\r\n")
+            got = b""
+            while b"\r\n\r\n" not in got:
+                got += s.recv(4096)
+            self.assertTrue(got.startswith(b"HTTP/1.1 200"), got)
+            s.sendall(b"hello")
+            self.assertEqual(a.recv(5), b"hello")
+            a.sendall(b"back")
+            self.assertEqual(s.recv(4), b"back")
+        self.assertEqual(calls, ["rebind.example"])
+        self.assertEqual([sa[0] for _, sa in dialled[0]], ["93.184.216.34"])
+
+    def test_only_the_pi_itself(self):
+        self.assertTrue(webgate._local("127.0.0.1"))
+        self.assertTrue(webgate._local("::1"))
+        self.assertFalse(webgate._local("192.168.1.50"))
 
     def test_extension_still_answered(self):
         c = self.conn()

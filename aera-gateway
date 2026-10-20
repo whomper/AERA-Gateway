@@ -732,6 +732,8 @@ class Web(Gateway):
                 "--user-data-dir=" + self.PROFILE, "--load-extension=" + ext, "--disable-extensions-except=" + ext,
                 # everything through webgate, which connects only where 7.3 lets it
                 "--proxy-server=http://127.0.0.1:%d" % port, "--proxy-bypass-list=<-loopback>;127.0.0.1:%d" % port,
+                # and it resolves nothing itself: names go to webgate as they are
+                "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--disable-quic",
                 "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
                 "--window-position=0,0", "--window-size=1024,768", "about:blank"]
         common = ["User=" + self.name, "Restart=always", "RestartSec=5",
