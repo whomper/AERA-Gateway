@@ -103,6 +103,59 @@ cp -r "$GW/." "$W/EMail/gateway/"
 [ ! -e /opt/aera-gateway ] || fail "/opt/aera-gateway is left after the last one"
 ok "fresh installs"
 
+echo "== web --browser: the Pi's browser, out through webgate only"
+# Ubuntu's Chromium is a snap: a stand-in that notes how it was started
+# (EWeb's own tests drive a real one); Xvfb, xdotool and Pillow are real
+cat > /usr/local/bin/chromium <<'SH'
+#!/bin/sh
+printf '%s\n' "$@" > /var/lib/webgate/chromium-args
+exec sleep infinity
+SH
+chmod 755 /usr/local/bin/chromium
+printf 'MemTotal:         948304 kB\n' > "$W/meminfo"
+mount --bind "$W/meminfo" /proc/meminfo
+if "$GW/aera-gateway" install web --browser; then umount /proc/meminfo; fail "--browser on a 1 GB Pi"; fi
+umount /proc/meminfo
+[ ! -e /etc/systemd/system/webgate.service ] || fail "a refused --browser left webgate"
+"$GW/aera-gateway" install web --browser
+sleep 3
+for s in webgate webgate-screen webgate-browser; do running $s; done
+listens 8280
+listens 8281
+unit_has webgate "--port 8280 --browser$"
+unit_has webgate "^Environment=DISPLAY=:99$"
+[ "$(sudo -u webgate DISPLAY=:99 xdotool getdisplaygeometry)" = "1024 768" ] || fail "no screen for the browser"
+grep -qx -- "--proxy-server=http://127.0.0.1:8281" /var/lib/webgate/chromium-args || fail "the browser doesn't go through webgate"
+grep -qx -- "--load-extension=/opt/aera-gateway/webgate-ext" /var/lib/webgate/chromium-args || fail "no webgate-ext"
+[ -e /opt/aera-gateway/webgate-ext/manifest.json ] || fail "webgate-ext isn't in /opt"
+python3 - <<'PY'
+import socket, urllib.error, urllib.request
+# what the browser asks of webgate: a page at home, and a tunnel to one
+o = urllib.request.build_opener(urllib.request.ProxyHandler({"http": "http://127.0.0.1:8281"}))
+try:
+    o.open("http://127.0.0.1:8180/", timeout=30)
+    raise SystemExit("the browser's proxy let a page at home through")
+except urllib.error.HTTPError as e:
+    assert e.code == 403 and e.read().startswith(b"webgate: won't connect to the local network"), e
+s = socket.create_connection(("127.0.0.1", 8281), timeout=30)
+s.sendall(b"CONNECT localhost:8180 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+answer = s.recv(4096)
+assert answer.startswith(b"HTTP/1.1 403"), answer
+print("ok: the browser's way out keeps to the home-network rule")
+PY
+"$GW/aera-gateway" update
+unit_has webgate "--browser$"
+running webgate-browser
+"$GW/aera-gateway" install web --no-browser
+[ ! -e /etc/systemd/system/webgate-browser.service ] || fail "--no-browser left the browser"
+"$GW/aera-gateway" install web --browser
+"$GW/aera-gateway" remove web
+for u in webgate webgate-screen webgate-browser; do
+  [ ! -e /etc/systemd/system/$u.service ] || fail "remove web left $u"
+done
+rm /usr/local/bin/chromium
+ok "web --browser"
+
 echo "== claude: the recipe leaves what ClaudeST's pi/install.sh left"
 snap() {
   mkdir -p "$1"

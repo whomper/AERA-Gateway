@@ -104,7 +104,7 @@ gateway/      what runs on the Pi; the apps carry a copy of this folder
   ecalgate.py     dav: plain HTTP in proxy form in, HTTPS out, feeds trimmed
   eftpgate.py     ftp: plain FTP in, FTPS or SFTP out
   webgate.py      web: plain HTTP in proxy form in, HTTP or HTTPS out
-  webgate-ext/    webgate's browser extension, for its snapshots (not set up yet)
+  webgate-ext/    webgate's extension for the Pi's browser (install web --browser)
   install.sh      the apps' old way in, handed on to aera-gateway
   test_*.py       their tests
 update-pi.sh      the Pi brought up to date: this copy at the latest release, then aera-gateway update
