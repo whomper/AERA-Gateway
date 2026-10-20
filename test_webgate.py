@@ -7,6 +7,7 @@ import http.client
 import json
 import os
 import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -387,6 +388,84 @@ class SnapshotTest(unittest.TestCase):
             webgate.Config.browser = True
         self.assertEqual(r.status, 501)
         self.assertTrue(data.startswith(b"webgate: snapshots need the Pi's browser"))
+
+
+class BrowserProxyTest(unittest.TestCase):
+    """the Pi's browser goes out through webgate (127.0.0.1:8281): every
+    connection to the address webgate checked, so a name whose answer is
+    at home is refused there too (7.3)"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.up = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        threading.Thread(target=cls.up.serve_forever, daemon=True).start()
+        cls.ext = ThreadingHTTPServer(("127.0.0.1", 0), webgate.ExtHandler)
+        cls.ext.daemon_threads = True
+        threading.Thread(target=cls.ext.serve_forever, daemon=True).start()
+        cls.port = cls.up.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls):
+        for s in (cls.up, cls.ext):
+            s.shutdown()
+            s.server_close()
+        webgate.Config.allow_local = False
+        webgate.Config.allow = []
+
+    def conn(self):
+        c = http.client.HTTPConnection("127.0.0.1", self.ext.server_address[1], timeout=10)
+        self.addCleanup(c.close)
+        return c
+
+    def connect(self, host):
+        c = self.conn()
+        c.request("CONNECT", "%s:%d" % (host, self.port))
+        return c, c.getresponse()
+
+    def test_home_refused(self):
+        webgate.Config.allow_local = False
+        c, r = self.connect("127.0.0.1")
+        self.assertEqual(r.status, 403)
+        self.assertIn(b"webgate: won't connect to the local network (127.0.0.1)", r.read())
+        c, r = self.connect("localhost")       # a name, its answer checked
+        self.assertEqual(r.status, 403)
+        c = self.conn()
+        c.request("GET", "http://127.0.0.1:%d/page" % self.port)
+        r = c.getresponse()
+        self.assertEqual(r.status, 403)
+        r.read()
+
+    def test_tunnel_and_page_with_allow_local(self):
+        webgate.Config.allow_local = True
+        webgate.Config.allow = ["192.168.1.50"]       # the Atari's: not the browser's concern
+        try:
+            s = socket.create_connection(("127.0.0.1", self.ext.server_address[1]), timeout=10)
+            self.addCleanup(s.close)
+            s.sendall(b"CONNECT 127.0.0.1:%d HTTP/1.1\r\nHost: x\r\n\r\n" % self.port)
+            got = b""
+            while b"\r\n\r\n" not in got:
+                got += s.recv(65536)
+            self.assertTrue(got.startswith(b"HTTP/1.1 200"), got)
+            s.sendall(b"GET /echo HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            got = b""
+            while True:
+                d = s.recv(65536)
+                if not d:
+                    break
+                got += d
+            self.assertTrue(got.endswith(b"GET /echo "), got)
+            c = self.conn()
+            c.request("GET", "http://127.0.0.1:%d/page" % self.port)
+            r = c.getresponse()
+            self.assertEqual((r.status, r.read()), (200, PAGE))
+        finally:
+            webgate.Config.allow_local = False
+            webgate.Config.allow = []
+
+    def test_extension_still_answered(self):
+        c = self.conn()
+        c.request("GET", "/config")
+        self.assertEqual(json.loads(c.getresponse().read()), {"allow_local": False})
 
 
 class TlsTest(unittest.TestCase):
