@@ -534,6 +534,35 @@ class BrowserProxyTest(unittest.TestCase):
         self.assertTrue(webgate._local("::1"))
         self.assertFalse(webgate._local("192.168.1.50"))
 
+    def test_pages_kept_off_the_bridge(self):
+        """a page in the Pi's browser can't take the Atari's next page
+        (/next) or hand in a snapshot of its own; the extension can"""
+        for headers in ({"Sec-Fetch-Site": "cross-site"}, {"Sec-Fetch-Site": "same-site"},
+                        {"Origin": "http://evil.example"}, {"Origin": "null"}):
+            c = self.conn()
+            c.request("GET", "/next", headers=headers)
+            self.assertEqual(c.getresponse().status, 403, headers)
+            c = self.conn()
+            c.request("POST", "/snapshot?id=1", body=b"{}", headers=headers)
+            self.assertEqual(c.getresponse().status, 403, headers)
+        webgate.BRIDGE.asked = "7"
+        try:
+            c = self.conn()
+            c.request("POST", "/snapshot?id=7", body=b'{"html": "mine"}',
+                      headers={"Sec-Fetch-Site": "cross-site", "Origin": "http://evil.example"})
+            self.assertEqual(c.getresponse().status, 403)
+            self.assertNotIn("7", webgate.BRIDGE.done)
+            c = self.conn()
+            c.request("POST", "/snapshot?id=7", body=b'{"html": "made"}',
+                      headers={"Sec-Fetch-Site": "none", "Origin": "chrome-extension://abcdef"})
+            self.assertEqual(c.getresponse().status, 200)
+            self.assertEqual(webgate.BRIDGE.done.pop("7"), {"html": "made"})
+        finally:
+            webgate.BRIDGE.asked = None
+        c = self.conn()
+        c.request("GET", "/config", headers={"Sec-Fetch-Site": "none"})
+        self.assertEqual(c.getresponse().status, 200)
+
     def test_extension_still_answered(self):
         c = self.conn()
         c.request("GET", "/config")

@@ -533,9 +533,22 @@ class ExtHandler(Handler):
         self.end_headers()
         self.wfile.write(body)
 
+    def from_a_page(self):
+        """Is this bridge request from a page the browser opened (an <img>,
+        a fetch, a form), not from webgate-ext? Pages can't set these
+        headers, and Chromium always sends Sec-Fetch-Site to 127.0.0.1;
+        the extension's own say "none" and chrome-extension://."""
+        site, origin = self.headers.get("Sec-Fetch-Site"), self.headers.get("Origin")
+        if (site is not None and site != "none") or (origin is not None and not origin.startswith("chrome-extension://")):
+            self.answer(403)
+            return True
+        return False
+
     def do_GET(self):
         if not self.path.startswith("/"):
             self.proxy()            # the browser, going out
+            return
+        if self.from_a_page():
             return
         if self.path.startswith("/config"):
             # what the extension blocks: the home network, unless --allow-local
@@ -553,6 +566,8 @@ class ExtHandler(Handler):
     def do_POST(self):
         if not self.path.startswith("/"):
             self.proxy()
+            return
+        if self.from_a_page():
             return
         n = int(self.headers.get("Content-Length") or 0)
         data = self.rfile.read(n) if n else b""
