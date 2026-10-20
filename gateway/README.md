@@ -11,6 +11,7 @@ Atari (ECal,     --plain HTTP, proxy form--> Pi  ecalgate  --HTTPS--> caldav.icl
        EContact)
 Atari (EFTP)     --plain FTP-->              Pi  eftpgate  --FTPS-->  ftp.example.org
                                                            --SFTP-->  my.server.net
+Atari (EWeb)     --plain HTTP, proxy form--> Pi  webgate   --HTTPS--> any web site
 Atari (ClaudeST) --STinG or a serial cable-> Pi  claude-st --HTTPS--> claude.ai
 ```
 
@@ -24,11 +25,12 @@ of them.
 | `mail`   | EMail               | `emailgate.py`             | 143 IMAP, 587 SMTP, 110 POP3             |
 | `dav`    | ECal and EContact   | `ecalgate.py`              | 8180                                     |
 | `ftp`    | EFTP                | `eftpgate.py`              | 2121, and 30000-30099 for data           |
+| `web`    | EWeb                | `webgate.py`               | 8280                                     |
 | `claude` | ClaudeST            | ClaudeST's bridge          | 2323 (or a serial cable)                 |
 
 This folder is AERA-Gateway's
 ([whomper/AERA-Gateway](https://github.com/whomper/AERA-Gateway)). EMail,
-ECal, EContact, EFTP and ClaudeST carry a copy of it, as they carry
+ECal, EContact, EFTP, EWeb and ClaudeST carry a copy of it, as they carry
 `common/` from AERA-Atari: change it in AERA-Gateway, never in a copy.
 
 ## Setting it up
@@ -43,13 +45,14 @@ cd AERA-Gateway
 sudo gateway/aera-gateway install mail imap.gmail.com smtp.gmail.com pop.gmail.com
 sudo gateway/aera-gateway install dav
 sudo gateway/aera-gateway install ftp
+sudo gateway/aera-gateway install web
 sudo gateway/aera-gateway install claude --network --atari 192.168.1.20
 ```
 
 (only the ones you need). Set the Pi up from AERA-Gateway's own copy, as
 here: `./update-pi.sh` keeps it at the latest release; the copies of this
 folder inside the apps are for their tests. Each gateway runs as a
-service of its own (`emailgate`, `ecalgate`, `eftpgate`, `claude-st`)
+service of its own (`emailgate`, `ecalgate`, `eftpgate`, `webgate`, `claude-st`)
 under a user of its own with no access to the rest of the Pi, starts now
 and at every boot, and `install` prints what to type into the Atari
 program.
@@ -193,6 +196,36 @@ certificate comes from its own CA: copy the CA's certificate to the Pi
 and give `--cafile /path/to/ca.pem`. `-v` logs every command (never the
 passwords).
 
+## web: EWeb's gateway
+
+```
+sudo gateway/aera-gateway install web
+```
+
+EWeb's ST edition can't make secure connections at a usable speed, and
+some sites take only TLS 1.3, so EWeb sends every request to the Pi in
+plain HTTP, in proxy form (`GET https://host/path HTTP/1.1`), and
+webgate makes it, checking the server's certificate (TLS 1.2 or 1.3). The
+answer goes back as it came: the server's gzip or deflate as they are
+(only those are asked for), a long answer a piece at a time, redirects,
+cookies and error pages unchanged. When webgate can't help, EWeb's
+"can't open" page shows a line that starts with "webgate:".
+
+In EWeb, the gateway is `GATEWAY=PI_IP:8280` in `EWEB.INF`. Check it from
+any browser on your network: `http://PI_IP:8280/` answers "webgate X.Y
+is running".
+
+`--allow-local` lets it reach servers on your home network too (a
+router's or a NAS's pages); `--port N` gives it another port; `--cafile`
+checks servers against your own CA; `-v` logs every request (the
+server, never the address's path). Like ecalgate, it follows
+`HTTPS_PROXY` (`sudo systemctl edit webgate`).
+
+webgate can also hand a page to a browser on the Pi and send EWeb the
+page as it stands after its scripts ran (`--browser`, with
+`webgate-ext/`). `install web` doesn't set that up yet: it needs Chromium
+on the Pi.
+
 ## claude: ClaudeST's bridge
 
 The bridge is ClaudeST's own (it changes with `CLAUDEST.PRG`);
@@ -227,7 +260,7 @@ ports. Then its journal, which says who connected, where to, and why it
 ended:
 
 ```
-sudo journalctl -u emailgate -n 30        or ecalgate, eftpgate, claude-st; -f to watch
+sudo journalctl -u emailgate -n 30        or ecalgate, eftpgate, webgate, claude-st; -f to watch
 ```
 
 - **The Atari can't connect at all.** Ping the Pi from the Atari. Check
@@ -241,14 +274,16 @@ sudo journalctl -u emailgate -n 30        or ecalgate, eftpgate, claude-st; -f t
   it: `sudo ss -ltnp '( sport = :N )'`. Stop that program, or give the
   gateway other ports (`--ports`, `--port`) and type those into the
   Atari program.
-- **EMail says "emailgate: ...".** The Pi couldn't reach your provider,
-  or its certificate didn't check out: the line says which. Check the
-  server names in `status`, and that the Pi itself is online.
+- **EMail says "emailgate: ...", or EWeb "webgate: ...".** The Pi
+  couldn't reach the server, or its certificate didn't check out: the
+  line says which. Check the server names in `status`, and that the Pi
+  itself is online.
 - **The provider refuses the login.** That is between EMail and your
   provider: most want an app password (see mail above).
 - **ECal or EContact can't reach a server at home** (a Radicale, a
   Nextcloud): `sudo gateway/aera-gateway install dav --allow-local`. The
-  same for EFTP and a NAS: `install ftp --allow-local`.
+  same for EFTP and a NAS (`install ftp --allow-local`), and for EWeb
+  and your router's pages (`install web --allow-local`).
 - **EFTP: an SFTP server is refused because its key changed.** If the
   server was really reinstalled, remove its line from
   `/var/lib/eftpgate/known_hosts`.
@@ -270,10 +305,11 @@ ports on your router.
   were forwarded. If others share your network, `--allow ATARI_IP` limits
   a gateway to your Atari (several: `--allow IP1,IP2`; `--allow any` for
   the home network again).
-- ecalgate and eftpgate connect onwards anywhere the Atari asks, except
-  your own network: without `--allow-local` they refuse a server whose
-  address is at home, and they connect to the address they checked, so a
-  name can't change its answer in between and lead them home.
+- ecalgate, eftpgate and webgate connect onwards anywhere the Atari
+  asks, except your own network: without `--allow-local` they refuse a
+  server whose address is at home, and they connect to the address they
+  checked, so a name can't change its answer in between and lead them
+  home.
 - They use TLS 1.2 or newer and check every server's certificate and
   name.
 - Their journals (`sudo journalctl -u emailgate`) say who connected where
@@ -306,6 +342,9 @@ python3 -m unittest discover -s gateway -p 'test_*.py'
   vouches for, the wrong name, a provider that can't be reached.
 - `test_ecalgate.py`: trimming, compression, chunked answers, redirects,
   the home-network rule, a log without paths.
+- `test_webgate.py`: the proxy against a local server (compression,
+  chunked answers, redirects, cookies, the home-network rule), and
+  snapshots and live view with stand-ins for the browser.
 - `test_eftpgate.py`: an SFTP and an FTPS server on this computer, and a
   plain FTP client (and EFTP's own FTP core, when built) talking to
   eftpgate as the Atari does.

@@ -2,7 +2,7 @@
 
 The Raspberry Pi side of the AERA Atari programs: the gateways that give
 an Atari (ST, STE, TT, Falcon; TOS or MagiC, STinG) modern mail,
-calendars, contacts, file transfer and Claude, and one program,
+calendars, contacts, file transfer, the web and Claude, and one program,
 `aera-gateway`, that sets them up, keeps them up to date and says how
 they are.
 
@@ -11,6 +11,7 @@ they are.
 | `mail`   | EMail               | 143 IMAP, 587 SMTP, 110 POP3         | TLS to your mail provider             |
 | `dav`    | ECal and EContact   | 8180                                 | HTTPS to CalDAV, CardDAV and feeds    |
 | `ftp`    | EFTP                | 2121, and 30000-30099 for data       | FTPS or SFTP to the server            |
+| `web`    | EWeb                | 8280                                 | HTTP and HTTPS to any web server      |
 | `claude` | ClaudeST            | 2323 (or a serial cable)             | HTTPS to claude.ai or the API         |
 
 In the instructions, `PI_IP` is the Pi's address on your home network and
@@ -29,6 +30,7 @@ cd AERA-Gateway
 sudo gateway/aera-gateway install mail imap.gmail.com smtp.gmail.com pop.gmail.com
 sudo gateway/aera-gateway install dav
 sudo gateway/aera-gateway install ftp
+sudo gateway/aera-gateway install web
 sudo gateway/aera-gateway install claude --network --atari 192.168.1.20
 ```
 
@@ -41,6 +43,7 @@ Atari's address; each prints what to type into its Atari program:
 | EMail              | Options > Accounts                     | server `PI_IP`; IMAP 143 (or POP3 110), SMTP 587 |
 | ECal, EContact     | Settings > Connection                  | Pi gateway `PI_IP`, port 8180                 |
 | EFTP               | Options > Settings > Secure            | Pi gateway `PI_IP`, port 2121                 |
+| EWeb               | `GATEWAY=` in `EWEB.INF`               | `PI_IP:8280`                                  |
 | ClaudeST           | Options > Settings > Network           | `PI_IP`, port 2323                            |
 
 Use the Pi's address, not its name: plain TOS with STinG can't always
@@ -86,8 +89,8 @@ too; remove it if nothing else uses it.
 
 ## The web
 
-The web proxies for CAB and Highwire (WRP and Macproxy Classic, in
-Docker) are set up by hand: [web-proxy/README.md](web-proxy/README.md)
+EWeb goes through `web` (webgate). The web proxies for CAB and Highwire
+(WRP and Macproxy Classic, in Docker) are set up by hand: [web-proxy/README.md](web-proxy/README.md)
 has the steps, WRP's patch and the firewall rules that keep them to the
 Atari.
 
@@ -100,6 +103,8 @@ gateway/      what runs on the Pi; the apps carry a copy of this folder
   emailgate.py    mail: plain IMAP, SMTP and POP3 in, TLS out
   ecalgate.py     dav: plain HTTP in proxy form in, HTTPS out, feeds trimmed
   eftpgate.py     ftp: plain FTP in, FTPS or SFTP out
+  webgate.py      web: plain HTTP in proxy form in, HTTP or HTTPS out
+  webgate-ext/    webgate's browser extension, for its snapshots (not set up yet)
   install.sh      the apps' old way in, handed on to aera-gateway
   test_*.py       their tests
 update-pi.sh      the Pi brought up to date: this copy at the latest release, then aera-gateway update
@@ -112,7 +117,7 @@ ClaudeST's bridge is ClaudeST's own (it changes with `CLAUDEST.PRG`):
 
 ## The apps' copies
 
-EMail, ECal, EContact, EFTP and ClaudeST carry `gateway/` as a read-only
+EMail, ECal, EContact, EFTP, EWeb and ClaudeST carry `gateway/` as a read-only
 copy (a git subtree of this repository's `gateway` branch, brought up to
 date with their `tools/sync-gateway.sh`), so their tests run against the
 gateway they were made with. Change the gateways here, never in a copy.
@@ -151,6 +156,7 @@ Part of the AERA Atari family: [ECal](https://github.com/whomper/ECal),
 [EContact](https://github.com/whomper/EContact),
 [EMail](https://github.com/whomper/EMail),
 [EFTP](https://github.com/whomper/EFTP),
+[EWeb](https://github.com/whomper/EWeb),
 [EHypView](https://github.com/whomper/EHypView),
 [ClaudeST](https://github.com/whomper/ClaudeST) and
 [AERA-Atari](https://github.com/whomper/AERA-Atari).

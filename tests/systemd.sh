@@ -83,8 +83,15 @@ echo "== Removing, and installing afresh"
 "$GW/aera-gateway" install mail imap.invalid smtp.invalid pop.invalid
 "$GW/aera-gateway" install dav
 "$GW/aera-gateway" install ftp --allow 127.0.0.1 -v
-for s in emailgate ecalgate eftpgate; do running $s; done
-for p in 143 587 110 8180 2121; do listens $p; done
+"$GW/aera-gateway" install web
+for s in emailgate ecalgate eftpgate webgate; do running $s; done
+for p in 143 587 110 8180 2121 8280; do listens $p; done
+python3 - <<'PY'
+import urllib.request
+page = urllib.request.urlopen("http://127.0.0.1:8280/", timeout=30).read().decode()
+assert page.startswith("webgate ") and "is running" in page, page
+print("ok: webgate answers")
+PY
 unit_has eftpgate "--port 2121 --pasv-ports 30000-30099 --allow 127.0.0.1 -v$"
 # the old way in, from an app's copy of gateway/
 cp -r "$GW/." "$W/EMail/gateway/"
@@ -92,6 +99,8 @@ cp -r "$GW/." "$W/EMail/gateway/"
 [ ! -e /etc/systemd/system/emailgate.service ] || fail "EMail's install.sh --remove left emailgate"
 "$GW/aera-gateway" remove dav
 "$GW/aera-gateway" remove ftp
+"$GW/aera-gateway" remove web
+[ ! -e /opt/aera-gateway ] || fail "/opt/aera-gateway is left after the last one"
 ok "fresh installs"
 
 echo "== claude: the recipe leaves what ClaudeST's pi/install.sh left"

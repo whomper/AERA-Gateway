@@ -455,6 +455,29 @@ class DavFtpTest(Base):
         self.assertEqual(self.pi.rules, [("192.168.1.50", "2121"), ("192.168.1.50", "30000:30099")])
         self.assertIn("Options > Settings > Secure", self.out)
 
+    def test_web(self):
+        self.pi.ufw = True
+        self.assertEqual(self.run_ag("install", "eweb", "--allow", "192.168.1.50"), 0, self.err)
+        self.assertEqual(self.execstart("webgate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/webgate.py "
+                                                    "--port 8280 --allow 192.168.1.50")
+        self.assertEqual(self.pi.rules, [("192.168.1.50", "8280")])
+        self.assertIn("GATEWAY= in EWEB.INF", self.out)
+        self.assertIn("192.168.1.10:8280", self.out)
+        self.assertTrue(self.pi.exists("/opt/aera-gateway/webgate.py"))
+        self.run_ag("install", "web", "--allow-local", "-v")
+        self.assertEqual(self.execstart("webgate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/webgate.py "
+                                                    "--port 8280 --allow 192.168.1.50 --allow-local -v")
+
+    def test_web_keeps_the_browser(self):
+        # --browser isn't offered yet; one set by hand stays through an update
+        self.assertEqual(self.run_ag("install", "web"), 0, self.err)
+        unit = self.unit("webgate").replace("webgate.py --port 8280", "webgate.py --port 8280 --browser")
+        self.pi.write(ag.unit_path("webgate"), unit + "Environment=DISPLAY=:1\n")
+        self.assertEqual(self.run_ag("update"), 0, self.err)
+        self.assertEqual(self.execstart("webgate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/webgate.py "
+                                                    "--port 8280 --browser")
+        self.assertIn("Environment=DISPLAY=:1", self.unit("webgate"))
+
     def test_cafile_must_exist(self):
         self.assertEqual(self.run_ag("install", "ftp", "--cafile", "/no/such/ca.pem"), 2)
 
