@@ -583,6 +583,37 @@ class ClaudeTest(Base):
             fh.write("[Service]\nExecStart=/opt/claude-st/venv/bin/python ...\n")
         self.conf = ag.Claude.CONF
 
+    def test_install_all(self):
+        rc = self.run_ag("install", "all", "--allow", "192.168.1.50", "--from", self.src,
+                         "--mail", "imap.mail.me.com", "smtp.mail.me.com:587")
+        self.assertEqual(rc, 0, self.err)
+        for name in ("emailgate", "ecalgate", "eftpgate", "webgate"):
+            self.assertIn("--allow 192.168.1.50", self.execstart(name), name)
+        self.assertIn("imap.mail.me.com smtp.mail.me.com:587", self.execstart("emailgate"))
+        self.assertIn("--tcp 0.0.0.0:2323 --allow 192.168.1.50", self.pi.read(self.conf))
+        self.assertIn("Installed: mail, dav, ftp, web, claude", self.out)
+        # again, without --mail or --allow: everything kept as it is
+        self.assertEqual(self.run_ag("install", "all", "--from", self.src), 0, self.err)
+        self.assertIn("--allow 192.168.1.50", self.execstart("ecalgate"))
+        self.assertIn("imap.mail.me.com", self.execstart("emailgate"))
+        self.assertIn("--allow 192.168.1.50", self.pi.read(self.conf))
+
+    def test_install_all_keeps_a_serial_cable(self):
+        self.assertEqual(self.run_ag("install", "claude", "--from", self.src, "--serial", "/dev/ttyUSB0"), 0)
+        self.assertEqual(self.run_ag("install", "all", "--allow", "192.168.1.50", "--from", self.src), 0, self.err)
+        self.assertIn("--serial /dev/ttyUSB0", self.pi.read(self.conf))
+
+    def test_install_all_without_mail_and_a_failure(self):
+        self.pi.busy.add("2121")             # ftp's port is taken
+        rc = self.run_ag("install", "all", "--allow", "192.168.1.50", "--from", self.src)
+        self.assertEqual(rc, 1)
+        self.assertIn("Not installed: mail (name your provider's servers", self.out)
+        self.assertIn("Didn't install: ftp", self.err)
+        self.assertIsNone(self.unit("emailgate"))
+        self.assertIsNotNone(self.unit("webgate"))          # the others went on
+        self.assertIsNotNone(self.unit("claude-st"))
+        self.assertEqual(self.run_ag("install", "all", "--mail", "imap.example"), 2)
+
     def test_network(self):
         rc = self.run_ag("install", "claude", "--from", self.src, "--network", "--atari", "192.168.1.20",
                          "--backend", "demo")
