@@ -19,31 +19,31 @@ In the instructions, `PI_IP` is the Pi's address on your home network and
 
 ## Getting started
 
-On the Pi (Raspberry Pi OS bullseye or newer, or any Debian or Ubuntu
-with Python 3.9 or newer), in your home folder:
+On a new Pi (Raspberry Pi OS bullseye or newer, or any Debian or Ubuntu
+with Python 3.9 or newer), one line sets up everything for your Atari
+(`ATARI_IP`), with your mail provider's servers:
 
 ```
-sudo apt install -y git                   Raspberry Pi OS Lite comes without it
-git clone https://github.com/whomper/AERA-Gateway
-cd AERA-Gateway
-./update-pi.sh
-sudo gateway/aera-gateway install mail imap.gmail.com smtp.gmail.com pop.gmail.com
-sudo gateway/aera-gateway install dav
-sudo gateway/aera-gateway install ftp
-sudo gateway/aera-gateway install web
-sudo gateway/aera-gateway install claude --network --atari 192.168.1.20
+sudo apt install -y git && git clone https://github.com/whomper/AERA-Gateway ~/AERA-Gateway && ~/AERA-Gateway/update-pi.sh --allow ATARI_IP --mail imap.gmail.com smtp.gmail.com
 ```
 
-Or all of them in one go, for your Atari (mail only when you name its
-servers; `--browser` for EWeb's snapshots on a Pi with 2 GB or more):
+It takes the copy to AERA-Gateway's latest release and installs mail,
+dav, ftp, web and claude (`aera-gateway install all`): leave out `--mail`
+for no mail, add `--browser` for EWeb's snapshots on a Pi with 2 GB or
+more. One that fails doesn't stop the others. Or one at a time, only the
+ones you need:
 
 ```
-sudo gateway/aera-gateway install all --allow ATARI_IP --mail imap.gmail.com smtp.gmail.com
+sudo aera-gateway install mail imap.gmail.com smtp.gmail.com pop.gmail.com --allow ATARI_IP
+sudo aera-gateway install dav --allow ATARI_IP
+sudo aera-gateway install ftp --allow ATARI_IP
+sudo aera-gateway install web --allow ATARI_IP
+sudo aera-gateway install claude --network --atari ATARI_IP
 ```
 
-`./update-pi.sh` takes this copy to AERA-Gateway's latest release. Install
-only the ones you need, with your own mail provider's servers and your
-Atari's address; each prints what to type into its Atari program:
+(`update-pi.sh` makes `aera-gateway` a command; before it has run once,
+it is `~/AERA-Gateway/gateway/aera-gateway`.) Each prints what to type
+into its Atari program:
 
 | Atari program      | Where                                  | What                                          |
 |--------------------|----------------------------------------|-----------------------------------------------|
@@ -58,19 +58,19 @@ look names up on the home network. On a Falcon or TT, EMail, ECal,
 EContact and EFTP can make the secure connections themselves (their
 Falcon mode) and need the Pi only for SFTP.
 
-Then, now and then, the same:
+Then, now and then:
 
 ```
-./update-pi.sh
+~/AERA-Gateway/update-pi.sh
 ```
 
-It takes this copy to the latest release and runs
-`sudo gateway/aera-gateway update`: every gateway on the Pi brought up to
+It takes the copy to the latest release and runs
+`sudo aera-gateway update`: every gateway on the Pi brought up to
 date, ClaudeST's bridge from ClaudeST's latest release, all settings,
 keys and chats kept. The Pi runs releases only, never work in progress.
 
-`gateway/aera-gateway status` says what runs where, and
-`sudo gateway/aera-gateway remove SERVICE` takes one away. The whole
+`aera-gateway status` says what runs where, and
+`sudo aera-gateway remove SERVICE` takes one away. The whole
 story, service by service, is in [gateway/README.md](gateway/README.md),
 and [When something doesn't work](gateway/README.md#when-something-doesnt-work)
 is there too.

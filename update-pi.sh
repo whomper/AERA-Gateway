@@ -6,12 +6,17 @@
 # brings mail, dav, ftp and ClaudeST's bridge (from ClaudeST's latest
 # release) up to date, every setting, key and chat kept.
 #
-#   ./update-pi.sh        in this AERA-Gateway copy, on the Pi
+#   ~/AERA-Gateway/update-pi.sh
+#   ~/AERA-Gateway/update-pi.sh --allow ATARI_IP [--mail IMAP SMTP[:587] [POP3]] [--browser]
 #
+# With options, it installs every service for that Atari as well
+# (aera-gateway install all; mail only with --mail): on a new Pi,
+#   sudo apt install -y git && git clone https://github.com/whomper/AERA-Gateway ~/AERA-Gateway &&
+#   ~/AERA-Gateway/update-pi.sh --allow ATARI_IP --mail IMAP SMTP
 # A new gateway only replaces the old one once it answers; otherwise the
-# old one comes back. Only what is installed is updated: to add a service,
-# see README.md. The first time, with nothing installed yet, it only moves
-# this copy to the latest release.
+# old one comes back. Without options, only what is installed is updated.
+# It also makes `aera-gateway` a command (/usr/local/bin), so that
+# `sudo aera-gateway status` works from any folder.
 set -euo pipefail
 
 say() { printf '%s\n' "$*"; }
@@ -34,9 +39,9 @@ main() {
   local here changes now latest
   here=$(cd "$(dirname "$0")" && pwd)
   case ${1:-} in
-    "") ;;
-    -h|--help) sed -n '4,14p' "$0"; exit 0 ;;
-    *) die "$1: it takes no options (see --help)" ;;
+    -h|--help) sed -n '4,19p' "$0"; exit 0 ;;
+    ""|--allow|--allow=*|--mail|--browser|--from) ;;
+    *) die "$1: the options are those of aera-gateway install all (see --help)" ;;
   esac
   [ -x "$here/gateway/aera-gateway" ] || die "run me from an AERA-Gateway copy ($here has no gateway/aera-gateway)"
   [ -d "$here/.git" ] || die "$here isn't a git copy of AERA-Gateway (git clone https://github.com/whomper/AERA-Gateway)"
@@ -59,12 +64,16 @@ main() {
     say "== AERA-Gateway: $now -> $latest, the latest release"
   fi
 
-  # from here on, the installer of that release
+  # from here on, the installer of that release; and `aera-gateway`, a
+  # command from any folder (a link: it follows this copy)
+  local as=()
+  [ "$(id -u)" -eq 0 ] || as=(sudo)
+  "${as[@]}" ln -sfn "$here/gateway/aera-gateway" /usr/local/bin/aera-gateway
   say ""
-  if [ "$(id -u)" -eq 0 ]; then
-    "$here/gateway/aera-gateway" update
+  if [ $# -gt 0 ]; then
+    "${as[@]}" "$here/gateway/aera-gateway" install all "$@"
   else
-    sudo "$here/gateway/aera-gateway" update
+    "${as[@]}" "$here/gateway/aera-gateway" update
   fi
   say ""
   "$here/gateway/aera-gateway" status
