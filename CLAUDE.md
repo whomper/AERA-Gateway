@@ -36,7 +36,9 @@ sessions stay as they are.)
   `git subtree split --prefix=gateway -b gateway && git push origin gateway`,
   and tell the app sessions to run `tools/sync-gateway.sh`.
 - **Standard Python 3 only** (3.9, Raspberry Pi OS bullseye, and newer),
-  plus paramiko for eftpgate's SFTP. No other packages on the Pi.
+  plus paramiko for eftpgate's SFTP and Pillow (python3-pil) for
+  webgate's pictures; `install web --browser` adds Chromium, Xvfb and
+  xdotool (Erez's decision, 20 Oct 2026). No other packages on the Pi.
 - **Security (guideline 7.3):** the home network only, or `--allow`; no
   connection back home without `--allow-local`, and only to the address
   that was checked; TLS 1.2 or newer with certificate and name checks.
