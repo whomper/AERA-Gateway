@@ -49,7 +49,11 @@ sudo gateway/aera-gateway install web
 sudo gateway/aera-gateway install claude --network --atari 192.168.1.20
 ```
 
-(only the ones you need). Set the Pi up from AERA-Gateway's own copy, as
+(only the ones you need), or all of them at once for your Atari:
+`sudo gateway/aera-gateway install all --allow ATARI_IP --mail IMAP SMTP[:587] [POP3]`
+(without `--mail`, mail is left out; `--browser` for web's browser; one
+that fails doesn't stop the others; those already installed keep their
+settings). Set the Pi up from AERA-Gateway's own copy, as
 here: `./update-pi.sh` keeps it at the latest release; the copies of this
 folder inside the apps are for their tests. Each gateway runs as a
 service of its own (`emailgate`, `ecalgate`, `eftpgate`, `webgate`, `claude-st`)

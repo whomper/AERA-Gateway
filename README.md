@@ -34,6 +34,13 @@ sudo gateway/aera-gateway install web
 sudo gateway/aera-gateway install claude --network --atari 192.168.1.20
 ```
 
+Or all of them in one go, for your Atari (mail only when you name its
+servers; `--browser` for EWeb's snapshots on a Pi with 2 GB or more):
+
+```
+sudo gateway/aera-gateway install all --allow ATARI_IP --mail imap.gmail.com smtp.gmail.com
+```
+
 `./update-pi.sh` takes this copy to AERA-Gateway's latest release. Install
 only the ones you need, with your own mail provider's servers and your
 Atari's address; each prints what to type into its Atari program:
