@@ -35,7 +35,14 @@ ECal, EContact, EFTP, EWeb and ClaudeST carry a copy of it, as they carry
 
 ## Setting it up
 
-On the Pi, in your home folder:
+On a new Pi, everything for your Atari in one line (mail only with
+`--mail`; `--browser` for web's browser):
+
+```
+sudo apt install -y git && git clone https://github.com/whomper/AERA-Gateway ~/AERA-Gateway && ~/AERA-Gateway/update-pi.sh --allow ATARI_IP --mail imap.gmail.com smtp.gmail.com
+```
+
+Or step by step, in your home folder:
 
 ```
 sudo apt install -y git                   Raspberry Pi OS Lite comes without it
