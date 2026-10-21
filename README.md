@@ -135,7 +135,7 @@ notes that it is withdrawn and which one to use.
 ## Tests
 
 ```
-pip install paramiko pyftpdlib pyopenssl
+pip install paramiko pyftpdlib pyopenssl pillow
 python3 -m unittest discover -s gateway -p 'test_*.py'
 sudo tests/systemd.sh          on a spare computer with systemd: it installs and removes services
 ```
