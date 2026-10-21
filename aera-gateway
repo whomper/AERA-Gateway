@@ -841,7 +841,7 @@ class Web(Gateway):
             "PrivateNetwork=yes", "PrivateTmp=yes", "PrivateDevices=yes",
             "ProtectSystem=strict", "ProtectHome=yes", "ProtectKernelTunables=yes", "ProtectKernelModules=yes",
             "ProtectControlGroups=yes", "NoNewPrivileges=yes", "MemoryDenyWriteExecute=yes",
-            "LockPersonality=yes", "RestrictAddressFamilies=none", "RestrictNamespaces=yes",
+            "LockPersonality=yes", "RestrictAddressFamilies=AF_UNIX", "RestrictNamespaces=yes",
             "SystemCallArchitectures=native", "SystemCallFilter=@system-service",
             "SystemCallFilter=~@network-io @privileged @resources", ""])
         return socket_unit, service

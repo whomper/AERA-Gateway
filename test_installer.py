@@ -535,7 +535,7 @@ class DavFtpTest(Base):
             self.assertIn(want, sock)
         for want in ("ExecStart=/opt/aera-gateway-pens/aerapens", "StandardInput=socket", "DynamicUser=yes",
                      "LimitAS=64M", "LimitCPU=2", "RuntimeMaxSec=5", "PrivateNetwork=yes",
-                     "RestrictAddressFamilies=none"):
+                     "RestrictAddressFamilies=AF_UNIX"):
             self.assertIn(want, svc)
         # the socket before webgate, so that webgate's first look finds aerapens
         cmds = [c for c in self.pi.cmds if c[:2] == ("systemctl", "restart")]
