@@ -115,8 +115,8 @@ class FakePi(ag.Pi):
         elif c[0] == "ls":
             rc = 2
         elif c[0] == "make":            # aerapens' build: a stand-in for what it makes
-            with open(os.path.join(c[c.index("-C") + 1], "aerapens"), "w") as f:
-                f.write("#!/bin/sh\n")
+            with open(os.path.join(c[c.index("-C") + 1], "aerapens"), "wb") as f:
+                f.write(b"\x7fELF\x02\x01\x01\0" + bytes(range(256)))       # a program's bytes, not text
         elif c[:2] == ["python3", "-c"] and c[2].startswith("import "):
             rc = 1 if c[2][7:] in self.no_modules else 0
         if check and rc:
