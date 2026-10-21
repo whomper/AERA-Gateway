@@ -159,6 +159,58 @@ done
 rm /usr/local/bin/chromium
 ok "web --browser"
 
+echo "== web: pictures as the Atari's pens, by aerapens behind its socket"
+"$GW/aera-gateway" install web --allow-local
+systemctl is-active --quiet webgate-pens.socket || fail "aerapens' socket isn't listening"
+[ -x /opt/aera-gateway-pens/aerapens ] || fail "aerapens wasn't built"
+[ -z "$(git -C "$GW/.." status --porcelain --ignored pens)" ] || fail "the build left files in the copy"
+sleep 2
+journalctl -u webgate --no-pager | grep -q "webgate: pictures as pens by aerapens [0-9a-f]\{12\} v" \
+  || { journalctl -u webgate -n 20 --no-pager; fail "webgate didn't find aerapens"; }
+mkdir -p "$W/pics"
+python3 - "$W/pics" <<'PY'
+import sys
+from PIL import Image
+d = sys.argv[1]
+Image.new("RGB", (1200, 800), (200, 120, 40)).save(d + "/photo.jpg", quality=90)
+Image.new("RGB", (5000, 4000), (10, 200, 90)).save(d + "/huge.png")    # 20 MP: over aerapens' 16
+PY
+python3 -m http.server --bind 127.0.0.1 --directory "$W/pics" 8099 >/dev/null 2>&1 &
+PICS=$!
+sleep 1
+python3 - <<'PY'
+import http.client, zlib
+st16 = bytes(range(48))
+def ask(method, url, headers=None, body=None):
+    c = http.client.HTTPConnection("127.0.0.1", 8280, timeout=60)
+    c.request(method, url, body=body, headers=headers or {})
+    r = c.getresponse()
+    return r, r.read()
+r, _ = ask("POST", "http://webgate/palette", body=st16)
+crc = r.getheader("X-Gateway-Palette")
+assert r.status == 204 and crc == "%08x" % zlib.crc32(st16), (r.status, crc)
+want = {"X-Gateway-Picture": "fit=600; size=300x200; pens=16; pal=%s; ed=lj" % crc}
+r, data = ask("GET", "http://127.0.0.1:8099/photo.jpg", want)
+assert r.getheader("Content-Type") == "application/x-aera-pens", (r.getheaders(), data[:80])
+assert r.getheader("X-Gateway-Pens").startswith("aerapens "), r.getheaders()
+assert data[:4] == b"EWPN" and len(data) == 20 + 150 * 200, (data[:20], len(data))
+print("ok: a photo as the Atari's pens, by", r.getheader("X-Gateway-Pens"))
+want["X-Gateway-Picture"] = "fit=600; pens=16; pal=%s; ed=lj" % crc
+r, data = ask("GET", "http://127.0.0.1:8099/huge.png", want)
+assert r.status == 200 and r.getheader("Content-Type") in ("image/jpeg", "image/png"), r.getheaders()
+assert r.getheader("X-Gateway-Pens") is None
+print("ok: a 20-megapixel picture beyond aerapens comes as", r.getheader("Content-Type"))
+PY
+kill $PICS
+# aerapens' own limits, as its unit sets them
+[ "$(systemctl show -p LimitAS --value 'webgate-pens@x.service')" = 67108864 ] || fail "aerapens' memory isn't limited"
+[ "$(systemctl show -p PrivateNetwork --value 'webgate-pens@x.service')" = yes ] || fail "aerapens has a network"
+"$GW/aera-gateway" remove web
+[ ! -e /etc/systemd/system/webgate-pens.socket ] || fail "remove web left aerapens' socket"
+[ ! -e /opt/aera-gateway-pens ] || fail "remove web left aerapens"
+command -v cc >/dev/null || fail "remove web took gcc"
+ok "web: pens"
+
 echo "== claude: the recipe leaves what ClaudeST's pi/install.sh left"
 snap() {
   mkdir -p "$1"

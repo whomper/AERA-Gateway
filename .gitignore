@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .venv/
 *.log
+pens/aerapens
+pens/common/tools/pens/build/

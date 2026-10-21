@@ -107,6 +107,10 @@ gateway/      what runs on the Pi; the apps carry a copy of this folder
   webgate-ext/    webgate's extension for the Pi's browser (install web --browser)
   install.sh      the apps' old way in, handed on to aera-gateway
   test_*.py       their tests
+pens/             aerapens, for webgate's pictures as the Atari's pens: built on the Pi by install web
+  common/         its source, AERA-Atari's common/ at the commit in pens/COMMON (tools/sync-common.sh)
+tools/
+  sync-common.sh  pens/common/ from AERA-Atari; never edit pens/common/ here
 update-pi.sh      the Pi brought up to date: this copy at the latest release, then aera-gateway update
 tests/systemd.sh  aera-gateway for real, on a computer with systemd
 web-proxy/    notes and WRP's patch for the web proxies
