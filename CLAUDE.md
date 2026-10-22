@@ -1,8 +1,9 @@
 # Notes for working on AERA-Gateway
 
 AERA-Gateway is the Raspberry Pi side of the AERA Atari apps: the gateways
-for EMail (`mail`, emailgate), ECal and EContact (`dav`, ecalgate) and EFTP
-(`ftp`, eftpgate), the shared rules (`gateway/aeragate.py`) and the one
+for EMail (`mail`, emailgate), ECal and EContact (`dav`, ecalgate), EFTP
+(`ftp`, eftpgate) and EWeb (`web`, webgate, with aerapens from `pens/` and
+the Pi's browser), the shared rules (`gateway/aeragate.py`) and the one
 installer (`gateway/aera-gateway`), which also sets up ClaudeST's bridge
 (`claude`).
 
@@ -12,9 +13,10 @@ installer (`gateway/aera-gateway`), which also sets up ClaudeST's bridge
   table, `aeragate.py`, CI and the docs.
 - Each app's session owns its gateway's protocol (emailgate's STARTTLS
   and "emailgate:" refusal lines, ecalgate's feed trimming and texts,
-  eftpgate's FTP server, FTPS session reuse, SFTP and known_hosts, the
-  bridge in ClaudeST): ask it before changing those, and send it the
-  change to review.
+  eftpgate's FTP server, FTPS session reuse, SFTP and known_hosts,
+  webgate and webgate-ext, aerapens' request and pens, the bridge in
+  ClaudeST): ask it before changing those, and send it the change to
+  review.
 - **A port never moves without the owning app's OK**: the Ataris have
   them in their settings (143/587/110, 8180, 2121 and 30000-30099, 8280,
   2323; 8281 is webgate's extension's, on 127.0.0.1 only).

@@ -6,7 +6,7 @@ body:
     id: service
     attributes:
       label: Which gateway
-      options: ["mail (emailgate, for EMail)", "dav (ecalgate, for ECal and EContact)", "ftp (eftpgate, for EFTP)",
+      options: ["mail (emailgate, for EMail)", "dav (ecalgate, for ECal and EContact)", "ftp (eftpgate, for EFTP)", "web (webgate, for EWeb)",
                 "claude (ClaudeST's bridge)", "aera-gateway itself (install, update, status, remove)"]
     validations:
       required: true

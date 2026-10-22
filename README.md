@@ -55,8 +55,9 @@ into its Atari program:
 
 Use the Pi's address, not its name: plain TOS with STinG can't always
 look names up on the home network. On a Falcon or TT, EMail, ECal,
-EContact and EFTP can make the secure connections themselves (their
-Falcon mode) and need the Pi only for SFTP.
+EContact, EFTP and EWeb can make the secure connections themselves
+(their Falcon mode); the Pi is still needed for SFTP, and for EWeb's
+smaller pictures, pens and snapshots.
 
 Then, now and then:
 
@@ -78,34 +79,11 @@ is there too.
 A Pi set up with the apps' own `install.sh` (before the gateways moved
 here) is taken over by `update`: the same services, ports and settings.
 
-## TROLL's proxy is gone
-
-AERA-Gateway no longer has troll-proxy (IMAP for the TROLL mail client on
-port 1143). A Pi that still runs it can let it go:
-
-```
-sudo systemctl disable --now falcon-imap-logproxy
-sudo rm /etc/systemd/system/falcon-imap-logproxy.service
-sudo rm -r /opt/falcon-imap
-sudo systemctl daemon-reload
-```
-
-and, if ufw let the Atari in on 1143, `sudo ufw status numbered` and
-`sudo ufw delete N` for that rule. Postfix on port 25 was there for TROLL
-too; remove it if nothing else uses it.
-
-## The web
-
-EWeb goes through `web` (webgate). The web proxies for CAB and Highwire
-(WRP and Macproxy Classic, in Docker) are set up by hand: [web-proxy/README.md](web-proxy/README.md)
-has the steps, WRP's patch and the firewall rules that keep them to the
-Atari.
-
 ## Source
 
 ```
 gateway/      what runs on the Pi; the apps carry a copy of this folder
-  aera-gateway    the installer: install, update, status, remove, set-key
+  aera-gateway    the installer: install (one service, or all), update, status, remove, set-key
   aeragate.py     the rules every gateway keeps: who may use it, where it may go, TLS, the log
   emailgate.py    mail: plain IMAP, SMTP and POP3 in, TLS out
   ecalgate.py     dav: plain HTTP in proxy form in, HTTPS out, feeds trimmed
@@ -118,9 +96,8 @@ pens/             aerapens, for webgate's pictures as the Atari's pens: built on
   common/         its source, AERA-Atari's common/ at the commit in pens/COMMON (tools/sync-common.sh)
 tools/
   sync-common.sh  pens/common/ from AERA-Atari; never edit pens/common/ here
-update-pi.sh      the Pi brought up to date: this copy at the latest release, then aera-gateway update
+update-pi.sh      this copy at the latest release, then aera-gateway update (with --allow: install all)
 tests/systemd.sh  aera-gateway for real, on a computer with systemd
-web-proxy/    notes and WRP's patch for the web proxies
 ```
 
 ClaudeST's bridge is ClaudeST's own (it changes with `CLAUDEST.PRG`):
@@ -128,10 +105,10 @@ ClaudeST's bridge is ClaudeST's own (it changes with `CLAUDEST.PRG`):
 
 ## The apps' copies
 
-EMail, ECal, EContact, EFTP, EWeb and ClaudeST carry `gateway/` as a read-only
-copy (a git subtree of this repository's `gateway` branch, brought up to
-date with their `tools/sync-gateway.sh`), so their tests run against the
-gateway they were made with. Change the gateways here, never in a copy.
+EMail, ECal, EContact, EFTP, EWeb and ClaudeST carry `gateway/` as a
+read-only copy (a git subtree of this repository's `gateway` branch,
+brought up to date with their `tools/sync-gateway.sh`), so their tests
+run against the gateway they were made with. Change the gateways here, never in a copy.
 The `gateway` branch is `git subtree split --prefix=gateway` of `main`.
 
 ## Releases
@@ -156,10 +133,11 @@ CI runs both on every push, the first with Python 3.9, 3.11, 3.12 and 3.13
 
 ## Licence
 
-The gateways, the installer and the notes here are free software under
+Copyright (C) 2026 AERA | Erez Yaary. The gateways, the installer and the notes here are free software under
 the GNU General Public License, version 2 or (at your option) any later
-version; see [`COPYING`](COPYING). `web-proxy/wrp-custom.patch` changes
-[WRP](https://github.com/tenox7/wrp) and stays under WRP's own licence.
+version; see [`COPYING`](COPYING). The decoders in `pens/common/third_party/`
+(libjpeg-turbo, TJpgDec, libnsgif) keep their own licences, which are
+beside them.
 
 ---
 
