@@ -521,6 +521,8 @@ class DavFtpTest(Base):
         self.assertEqual(self.run_ag("remove", "web"), 0, self.err)
         self.assertIsNone(self.unit("webgate-browser"))
 
+    @unittest.skipUnless(os.path.isdir(os.path.join(ag.Web.PENS_SRC, "common")),
+                         "needs AERA-Gateway's pens/ (an app's copy of gateway/ has none)")
     def test_web_pens(self):
         self.pi.programs = {"make"}          # no cc yet
         self.assertEqual(self.run_ag("install", "web"), 0, self.err)
