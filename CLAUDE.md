@@ -70,6 +70,17 @@ sessions stay as they are.)
   and Actions > Release > Run workflow; the Pi follows the latest one
   (`update-pi.sh`), and ClaudeST's bridge comes from ClaudeST's latest
   release.
+  - **Releases go out without asking Erez** (his decision, 23 Oct 2026;
+  guidelines 1.2, AERA-Atari a1345ca). Release when work on `main` is
+  ready, as soon as this repo's checks pass (the checks above and CI,
+  `tests/systemd.sh` included); there are no TOS rigs or family GEM
+  checks here. Don't wait for a yes and don't collect work for a later
+  release. Then give Erez the link in one line, with anything he has to
+  do (on the Pi, `./update-pi.sh`), and send the hub the link. Roll back
+  a bad release the same way. Decisions that are his (design, Pi
+  packages, ports, a change to what a user sees that wasn't asked for)
+  still go to him first. A change to the docs alone needs no release of
+  its own: it goes out with the next one.
 - **Never commit:** real addresses from the owner's network (use
   `192.168.1.x`, `PI_IP`, `ATARI_IP`), passwords, session keys.
 - British English, as in the app READMEs.
