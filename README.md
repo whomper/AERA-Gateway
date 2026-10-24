@@ -1,5 +1,7 @@
 # AERA-Gateway
 
+<img src="docs/icon.png" width="96" align="right" alt="AERA-Gateway icon: an Atari ST, a Raspberry Pi and the cloud, connected">
+
 The Raspberry Pi side of the AERA Atari programs: the gateways that give
 an Atari (ST, STE, TT, Falcon; TOS or MagiC, STinG) modern mail,
 calendars, contacts, file transfer, the web and Claude, and one program,
