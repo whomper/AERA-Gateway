@@ -263,6 +263,15 @@ the Pi, typing types there, for the logins and CAPTCHAs a snapshot can't
 do. The browser's profile, with any logins, stays in
 `/var/lib/webgate/browser`.
 
+Sites behind Cloudflare's check ("Just a moment...") pass with it too:
+when a site answers EWeb with the check, a script for the big browsers,
+webgate opens the page in the Pi's browser, which passes the check, and
+EWeb gets the page it goes on to. The site's next pages go through the
+browser too, for the rest of the visit (until none has been asked for
+in 25 minutes). The pass stays in the browser: webgate never sends its
+cookies or passes itself off as the browser, so a picture the check
+refuses stays out. A check that wants a click is ticked in live view.
+
 It needs a Pi with 2 GB of memory or more (Chromium takes about 400 MB
 with one page) and installs Chromium, Xvfb and xdotool (about 600 MB).
 It runs as webgate's own user, as two more services, `webgate-screen`
@@ -391,7 +400,8 @@ python3 -m unittest discover -s gateway -p 'test_*.py'
   chunked answers, redirects, cookies, the home-network rule), pictures
   made smaller (with Pillow), pens with a stand-in aerapens on its
   socket, the Pi's browser's way out with a stand-in name server, and
-  snapshots and live view with stand-ins for the browser.
+  snapshots, live view and Cloudflare's check with stand-ins for the
+  browser and the site.
 - `test_eftpgate.py`: an SFTP and an FTPS server on this computer, and a
   plain FTP client (and EFTP's own FTP core, when built) talking to
   eftpgate as the Atari does.
