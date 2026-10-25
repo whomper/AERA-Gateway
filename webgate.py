@@ -607,6 +607,14 @@ class Prefetch:
                 a = make_ahead(*job["how"])
             except Exception:       # (anything: the Atari's own request then fetches it)
                 a = None
+            if Config.verbose:      # who connected where (7.3), the host only, as note() says it
+                try:
+                    u = urlsplit(job["how"][0])
+                    where = "%s://%s:%d" % (u.scheme, u.hostname, u.port or (443 if u.scheme == "https" else 80))
+                except ValueError:  # (a port that isn't one: make_ahead fetched nothing)
+                    where = "-"
+                aeragate.say("%s GET %s -> %s (fetched ahead)" % (
+                    key[0], where, "%d, %d bytes" % (a.status, len(a.data)) if a else "not made"))
             with self.lock:
                 job["answer"] = a
                 job["size"] = len(a.data) if a else 0
