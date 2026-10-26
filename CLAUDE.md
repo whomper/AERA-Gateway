@@ -2,8 +2,8 @@
 
 AERA-Gateway is the Raspberry Pi side of the AERA Atari apps: the gateways
 for EMail (`mail`, emailgate), ECal and EContact (`dav`, ecalgate), EFTP
-(`ftp`, eftpgate) and EWeb (`web`, webgate, with aerapens from `pens/` and
-the Pi's browser), the shared rules (`gateway/aeragate.py`) and the one
+(`ftp`, eftpgate) and EWeb (`web`, webgate, with aerapens from `pens/`,
+aerajsc from `jsc/` and the Pi's browser), the shared rules (`gateway/aeragate.py`) and the one
 installer (`gateway/aera-gateway`), which also sets up ClaudeST's bridge
 (`claude`).
 
@@ -14,7 +14,8 @@ installer (`gateway/aera-gateway`), which also sets up ClaudeST's bridge
 - Each app's session owns its gateway's protocol (emailgate's STARTTLS
   and "emailgate:" refusal lines, ecalgate's feed trimming and texts,
   eftpgate's FTP server, FTPS session reuse, SFTP and known_hosts,
-  webgate and webgate-ext, aerapens' request and pens, the bridge in
+  webgate and webgate-ext, aerapens' request and pens, aerajsc's request
+  and bytecode (`jsc/eweb/` is EWeb's, `tools/sync-jsc.sh`), the bridge in
   ClaudeST): ask it before changing those, and send it the change to
   review.
 - **A port never moves without the owning app's OK**: the Ataris have
@@ -41,7 +42,8 @@ sessions stay as they are.)
   plus paramiko for eftpgate's SFTP and Pillow (python3-pil) for
   webgate's pictures; `install web --browser` adds Chromium, Xvfb and
   xdotool (Erez's decision, 20 Oct 2026); `install web` adds gcc and
-  make, if missing, to build aerapens from `pens/` (21 Oct 2026). No
+  make, if missing, to build aerapens from `pens/` (21 Oct 2026) and
+  aerajsc from `jsc/` (26 Oct 2026). No
   other packages on the Pi.
 - **Security (guideline 7.3):** the home network only, or `--allow`; no
   connection back home without `--allow-local`, and only to the address

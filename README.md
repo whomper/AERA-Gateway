@@ -59,7 +59,7 @@ Use the Pi's address, not its name: plain TOS with STinG can't always
 look names up on the home network. On a Falcon or TT, EMail, ECal,
 EContact, EFTP and EWeb can make the secure connections themselves
 (their Falcon mode); the Pi is still needed for SFTP, and for EWeb's
-smaller pictures, pens and snapshots.
+smaller pictures, pens, compiled scripts and snapshots.
 
 Then, now and then:
 
@@ -96,8 +96,11 @@ gateway/      what runs on the Pi; the apps carry a copy of this folder
   test_*.py       their tests
 pens/             aerapens, for webgate's pictures as the Atari's pens: built on the Pi by install web
   common/         its source, AERA-Atari's common/ at the commit in pens/COMMON (tools/sync-common.sh)
+jsc/              aerajsc, for webgate's scripts compiled for EWeb: built on the Pi by install web
+  eweb/           its source, EWeb's tools/jsc and QuickJS at the commit in jsc/EWEB (tools/sync-jsc.sh)
 tools/
   sync-common.sh  pens/common/ from AERA-Atari; never edit pens/common/ here
+  sync-jsc.sh     jsc/eweb/ from EWeb; never edit jsc/eweb/ here
 update-pi.sh      this copy at the latest release, then aera-gateway update (with --allow: install all)
 tests/systemd.sh  aera-gateway for real, on a computer with systemd
 ```
@@ -138,8 +141,8 @@ CI runs both on every push, the first with Python 3.9, 3.11, 3.12 and 3.13
 Copyright (C) 2026 AERA | Erez Yaary. The gateways, the installer and the notes here are free software under
 the GNU General Public License, version 2 or (at your option) any later
 version; see [`COPYING`](COPYING). The decoders in `pens/common/third_party/`
-(libjpeg-turbo, TJpgDec, libnsgif) keep their own licences, which are
-beside them.
+(libjpeg-turbo, TJpgDec, libnsgif) and QuickJS in `jsc/eweb/third_party/`
+(MIT) keep their own licences, which are beside them.
 
 ---
 

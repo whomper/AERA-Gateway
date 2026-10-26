@@ -4,3 +4,5 @@ __pycache__/
 *.log
 pens/aerapens
 pens/common/tools/pens/build/
+jsc/aerajsc
+jsc/eweb/tools/jsc/build/

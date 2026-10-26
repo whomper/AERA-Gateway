@@ -211,6 +211,45 @@ kill $PICS
 command -v cc >/dev/null || fail "remove web took gcc"
 ok "web: pens"
 
+echo "== web: scripts compiled for EWeb, by aerajsc behind its socket"
+"$GW/aera-gateway" install web --allow-local
+systemctl is-active --quiet webgate-js.socket || fail "aerajsc's socket isn't listening"
+[ -x /opt/aera-gateway-jsc/aerajsc ] || fail "aerajsc wasn't built"
+[ -z "$(git -C "$GW/.." status --porcelain --ignored jsc)" ] || fail "the build left files in the copy"
+sleep 2
+TAG=$(journalctl -u webgate --no-pager | sed -n 's/.*webgate: scripts compiled by aerajsc //p' | tail -1)
+[ -n "$TAG" ] || { journalctl -u webgate -n 20 --no-pager; fail "webgate didn't find aerajsc"; }
+mkdir -p "$W/js"
+python3 -c "print('var a = /x+/.test(\'xx\');\n' * 200)" > "$W/js/a.js"
+echo "var = ;" > "$W/js/bad.js"
+python3 -m http.server --bind 127.0.0.1 --directory "$W/js" 8099 >/dev/null 2>&1 &
+JS=$!
+sleep 1
+python3 - "$TAG" <<'PY'
+import http.client, sys
+tag = sys.argv[1]
+def ask(url, headers):
+    c = http.client.HTTPConnection("127.0.0.1", 8280, timeout=60)
+    c.request("GET", url, headers=headers)
+    r = c.getresponse()
+    return r, r.read()
+r, data = ask("http://127.0.0.1:8099/a.js", {"X-Gateway-Script": tag})
+assert r.getheader("Content-Type") == "application/x-eweb-qjs", (r.getheaders(), data[:80])
+assert data.startswith(("EWQJS %s\n" % tag).encode()), data[:80]
+print("ok: a script compiled for EWeb,", len(data), "bytes")
+r, data = ask("http://127.0.0.1:8099/bad.js", {"X-Gateway-Script": tag})
+assert r.getheader("X-Gateway-Script") is None and data == b"var = ;\n", (r.getheaders(), data)
+r, data = ask("http://127.0.0.1:8099/a.js", {"X-Gateway-Script": "another"})
+assert r.getheader("X-Gateway-Script") is None and data.startswith(b"var a"), r.getheaders()
+print("ok: one that doesn't compile, and one for another QuickJS, as they came")
+PY
+kill $JS
+[ "$(systemctl show -p PrivateNetwork --value 'webgate-js@x.service')" = yes ] || fail "aerajsc has a network"
+"$GW/aera-gateway" remove web
+[ ! -e /etc/systemd/system/webgate-js.socket ] || fail "remove web left aerajsc's socket"
+[ ! -e /opt/aera-gateway-jsc ] || fail "remove web left aerajsc"
+ok "web: scripts"
+
 echo "== claude: the recipe leaves what ClaudeST's pi/install.sh left"
 snap() {
   mkdir -p "$1"
