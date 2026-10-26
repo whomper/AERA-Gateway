@@ -245,6 +245,12 @@ print("ok: one that doesn't compile, and one for another QuickJS, as they came")
 PY
 kill $JS
 [ "$(systemctl show -p PrivateNetwork --value 'webgate-js@x.service')" = yes ] || fail "aerajsc has a network"
+grep -qx "MaxConnections=2" /etc/systemd/system/webgate-js.socket || fail "aerajsc's socket takes more than 2 at once"
+# an update with the same jsc/ keeps the aerajsc built from it
+"$GW/aera-gateway" update > "$W/update.out" 2>&1 || { cat "$W/update.out"; fail "update after scripts"; }
+! grep -q "Building aerajsc" "$W/update.out" || fail "the same jsc/ built again"
+systemctl is-active --quiet webgate-js.socket || fail "aerajsc's socket isn't listening after the update"
+ok "the same aerajsc kept"
 "$GW/aera-gateway" remove web
 [ ! -e /etc/systemd/system/webgate-js.socket ] || fail "remove web left aerajsc's socket"
 [ ! -e /opt/aera-gateway-jsc ] || fail "remove web left aerajsc"
