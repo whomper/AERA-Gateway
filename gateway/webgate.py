@@ -519,6 +519,7 @@ class Bridge:
         self.n = 0
         self.shown = None                   # the address the browser last opened (None: none yet)
         self.polled = time.monotonic()      # the extension's last /next, begun or ended
+        self.polling = 0                    # its /next waiting now (it is listening)
 
     GONE = 10   # seconds an address may wait untaken, with no /next, before the extension counts as gone
 
@@ -526,7 +527,7 @@ class Bridge:
         """the extension isn't asking for addresses: Chromium not running,
         or webgate-ext stopped in it (Erez's live view, 30 Oct 2026: it
         waited the whole minute for a browser that wasn't listening)"""
-        return time.monotonic() - self.polled > self.GONE
+        return not self.polling and time.monotonic() - self.polled > self.GONE
 
     def why(self):
         """what to say when the browser didn't answer"""
@@ -568,7 +569,11 @@ class Bridge:
         """for the extension: the next address, or None after wait seconds"""
         with self.cv:
             self.polled = time.monotonic()
-            self.cv.wait_for(lambda: self.wanted is not None, wait)
+            self.polling += 1
+            try:
+                self.cv.wait_for(lambda: self.wanted is not None, wait)
+            finally:
+                self.polling -= 1
             w, self.wanted = self.wanted, None
             self.polled = time.monotonic()
             return w

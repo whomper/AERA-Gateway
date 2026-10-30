@@ -819,6 +819,26 @@ class LiveTest(unittest.TestCase):
         finally:
             webgate.Bridge.GONE, webgate.Config.snapshot_wait = gone, wait
 
+    def test_browser_listening_while_idle(self):
+        # the extension's /next waits up to 25 s for an address: an idle
+        # browser in the middle of that wait is listening, not gone
+        webgate.BRIDGE.shown = "https://example.com/"
+        gone = webgate.Bridge.GONE
+        webgate.Bridge.GONE = 0.2
+        t = threading.Thread(target=webgate.BRIDGE.next, args=(1.5,))
+        t.start()
+        try:
+            time.sleep(0.6)
+            self.assertFalse(webgate.BRIDGE.gone())
+            r, data, _ = self.ask("http://webgate/live", turn=False)
+            self.assertIn("<input type=image name=at", data.decode("utf-8"))
+            t.join()
+            time.sleep(0.4)
+            self.assertTrue(webgate.BRIDGE.gone())      # and once it stops asking, gone
+        finally:
+            t.join()
+            webgate.Bridge.GONE = gone
+
     def test_nothing_open_yet(self):
         # live view before the browser has opened anything: Go to, not a
         # picture the extension can't take of a blank tab
