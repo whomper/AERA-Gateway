@@ -794,6 +794,31 @@ class LiveTest(unittest.TestCase):
         self.assertIn('<input type=image name=at', page)
         self.assertIn('action="http://webgate/live/click"', page)
 
+    def test_browser_gone(self):
+        # no /next for a while (Chromium stopped webgate-ext's background):
+        # live view says so after GONE seconds, not after the whole wait
+        webgate.BRIDGE.shown = "https://example.com/"
+        gone, wait = webgate.Bridge.GONE, webgate.Config.snapshot_wait
+        webgate.Bridge.GONE, webgate.Config.snapshot_wait = 0.5, 30
+        webgate.BRIDGE.polled = time.monotonic() - 60
+        try:
+            t = time.monotonic()
+            r, data, _ = self.ask("http://webgate/live?url=https%3A%2F%2Fexample.com%2F", turn=False)
+            self.assertLess(time.monotonic() - t, 5)
+            self.assertEqual(r.status, 200)
+            self.assertIn("<b>The Pi's browser isn't listening", data.decode("utf-8"))
+            self.assertIn("systemctl restart webgate-browser", data.decode("utf-8"))
+            self.assertNotIn("shot.jpg", data.decode("utf-8"))
+            r, data, _ = self.ask("http://webgate/live/shot.jpg?n=1", turn=False)
+            self.assertEqual(r.status, 504)
+            self.assertIn(b"isn't listening", data)
+            self.assertIsNone(webgate.BRIDGE.wanted)
+            # the extension back: answered as before
+            r, data, w = self.ask("http://webgate/live/shot.jpg?n=2")
+            self.assertEqual((r.status, data), (200, JPEG))
+        finally:
+            webgate.Bridge.GONE, webgate.Config.snapshot_wait = gone, wait
+
     def test_nothing_open_yet(self):
         # live view before the browser has opened anything: Go to, not a
         # picture the extension can't take of a blank tab
