@@ -20,13 +20,17 @@ async function fit(tab, w, h) {
   if (tab.width !== w || tab.height !== h) {
     if (win.state !== "normal")
       await chrome.windows.update(win.id, {state: "normal"});
-    win = await chrome.windows.get(win.id);
-    tab = await chrome.tabs.get(tab.id);
-    await chrome.windows.update(win.id, {left: 0, top: 0, width: w + (win.width - tab.width),
-                                         height: h + (win.height - tab.height)});
-    await new Promise(ok => setTimeout(ok, 500));
-    win = await chrome.windows.get(win.id);
-    tab = await chrome.tabs.get(tab.id);
+    // the bar a normal window has comes a moment after it leaves full
+    // screen: sized again until the tab is the size asked (3 tries)
+    for (let i = 0; i < 3 && (tab.width !== w || tab.height !== h); i++) {
+      win = await chrome.windows.get(win.id);
+      tab = await chrome.tabs.get(tab.id);
+      await chrome.windows.update(win.id, {left: 0, top: 0, width: w + (win.width - tab.width),
+                                           height: h + (win.height - tab.height)});
+      await new Promise(ok => setTimeout(ok, 500));
+      win = await chrome.windows.get(win.id);
+      tab = await chrome.tabs.get(tab.id);
+    }
   }
   return [win.left + (win.width - tab.width), win.top + (win.height - tab.height)];
 }
