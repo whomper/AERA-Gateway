@@ -124,7 +124,7 @@ listens 8280
 listens 8281
 unit_has webgate "--port 8280 --browser$"
 unit_has webgate "^Environment=DISPLAY=:99$"
-[ "$(sudo -u webgate DISPLAY=:99 xdotool getdisplaygeometry)" = "1024 768" ] || fail "no screen for the browser"
+[ "$(sudo -u webgate DISPLAY=:99 xdotool getdisplaygeometry)" = "1280 3072" ] || fail "no screen for the browser"
 grep -qx -- "--proxy-server=http://127.0.0.1:8281" /var/lib/webgate/chromium-args || fail "the browser doesn't go through webgate"
 grep -qx -- "--load-extension=/opt/aera-gateway/webgate-ext" /var/lib/webgate/chromium-args || fail "no webgate-ext"
 grep -qx -- "--host-resolver-rules=MAP \* ~NOTFOUND, EXCLUDE 127.0.0.1" /var/lib/webgate/chromium-args \
