@@ -761,7 +761,8 @@ class Web(Gateway):
             "[Unit]", "Description=webgate's screen for the Pi's browser (EWeb's snapshots and live view)",
             "After=%s.service" % self.name, "JoinsNamespaceOf=%s.service" % self.name, "",
             "[Service]",
-            "ExecStart=%s %s -screen 0 1024x768x24 -nolisten tcp" % (pi.which("Xvfb") or "/usr/bin/Xvfb",
+            # tall enough for live view's window: EWeb's page width, three of its screens (webgate-ext sizes it)
+            "ExecStart=%s %s -screen 0 1280x3072x24 -nolisten tcp" % (pi.which("Xvfb") or "/usr/bin/Xvfb",
                                                                     self.DISPLAY),
             "NoNewPrivileges=yes"] + common + ["", "[Install]", "WantedBy=multi-user.target", ""])
         browser = "\n".join([
