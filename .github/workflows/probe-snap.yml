@@ -15,6 +15,9 @@ jobs:
           sudo rm -f /usr/bin/chromium /usr/bin/chromium-browser     # the runner's own build: not Ubuntu's
           sudo apt-get install -y -qq xvfb xdotool python3-pil gcc make >/dev/null
           sudo gateway/aera-gateway install web --allow-local
+          sudo sed -i 's|^ExecStart=\(.*\)$|ExecStart=\1 --browser|' /etc/systemd/system/webgate.service
+          grep ExecStart /etc/systemd/system/webgate.service
+          sudo systemctl daemon-reload && sudo systemctl restart webgate
           sudo systemd-run --unit=probe-x -p User=nobody /usr/bin/Xvfb :99 -screen 0 1280x3072x24 -nolisten tcp
           sleep 2
       - name: "E: webgate's home in /var/lib (snapd homedirs), lingering, Chromium as a user service"
@@ -23,7 +26,7 @@ jobs:
           sudo systemctl stop webgate
           sudo usermod -d /var/lib/webgate webgate
           sudo systemctl start webgate
-          sudo snap set system homedirs=/var/lib && snap get system homedirs
+          sudo snap set system homedirs=/var/lib && sudo snap get system homedirs
           sudo install -d -o webgate -g webgate /var/lib/webgate
           sudo loginctl enable-linger webgate
           sleep 3
@@ -39,10 +42,6 @@ jobs:
           sleep 25
           sudo -u webgate env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-active probe-e || true
           sudo journalctl _UID=$U --no-pager -n 30 | cut -c1-220
-          # webgate --browser is what lets snapshots through: turn it on without the system browser units
-          sudo sed -i 's/--allow-local$/--allow-local --browser/; s/--allow-local --browser --browser/--allow-local --browser/' /etc/systemd/system/webgate.service
-          grep ExecStart /etc/systemd/system/webgate.service
-          sudo systemctl daemon-reload && sudo systemctl restart webgate && sleep 30
           curl -s -m 60 -x http://127.0.0.1:8280 -H 'X-Gateway-Snapshot: 1' -D - http://example.com/ | head -c 600; echo
           sudo -u webgate env XDG_RUNTIME_DIR=/run/user/$U systemctl --user stop probe-e || true
       - name: "F: an ordinary user with a /home, lingering, Chromium as a user service"
