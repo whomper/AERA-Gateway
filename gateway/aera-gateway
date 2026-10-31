@@ -290,6 +290,7 @@ class Gateway:
     key = name = script = title = ""
     packages = ()               # Debian packages beyond python3 and ca-certificates
     state = False               # a StateDirectory (eftpgate's SSH host keys)
+    home = None                 # its user's home, when it needs one (webgate's, for Ubuntu's Chromium snap)
     removed = ""
 
     def unit_file(self):
@@ -666,6 +667,12 @@ class Web(Gateway):
     SCREEN, BROWSER = "webgate-screen", "webgate-browser"
     DISPLAY = ":99"
     PROFILE = "/var/lib/webgate/browser"
+    home = "/var/lib/webgate"
+    # Ubuntu's Chromium is a snap: snapd starts it only from its user's own
+    # systemd (a lingering webgate), with a home snapd knows (homedirs) and
+    # its profile and extension in the snap's own folder there
+    SNAP_DIR = "/var/lib/webgate/snap/chromium/common"
+    SNAP_UNIT = "/var/lib/webgate/.config/systemd/user/webgate-browser.service"
     MIN_MEMORY = 1536                       # MB: a Pi with 2 GB or more
     # aerapens (EWeb's pictures as the Atari's pens): built here from this
     # copy's pens/, run by systemd one a connection on its socket
@@ -741,14 +748,26 @@ class Web(Gateway):
         keep = [k for k in keep if not k.startswith("Environment=DISPLAY=")]
         return super().unit(ns, keep + (["Environment=DISPLAY=" + self.DISPLAY] if ns.browser else []))
 
+    def snap(self, pi):
+        """is the browser Ubuntu's Chromium snap (its chromium-browser
+        package only puts the snap in)?"""
+        path = pi.which("chromium", "chromium-browser") or ""
+        return path.startswith("/snap/") or (path.endswith("/chromium-browser") and pi.ok("snap", "list", "chromium")
+                                             and not pi.exists("/usr/lib/chromium-browser/chromium-browser"))
+
+    def profile(self, pi):
+        return self.SNAP_DIR + "/browser" if self.snap(pi) else self.PROFILE
+
     def browser_units(self, pi, ns):
-        """(the screen's unit, the browser's unit)"""
+        """(the screen's unit, the browser's unit: a system one, or for the
+        snap webgate's own user one)"""
         port = ns.browser_port
-        chromium = pi.which("chromium", "chromium-browser") or "/usr/bin/chromium"
-        ext = "%s/%s" % (OPT, EXT)
+        snap = self.snap(pi)
+        chromium = "/snap/bin/chromium" if snap else pi.which("chromium", "chromium-browser") or "/usr/bin/chromium"
+        ext = self.SNAP_DIR + "/" + EXT if snap else "%s/%s" % (OPT, EXT)
         args = [chromium, "--kiosk", "--no-first-run", "--no-default-browser-check", "--noerrdialogs",
                 "--disable-infobars", "--disable-session-crashed-bubble", "--password-store=basic",
-                "--user-data-dir=" + self.PROFILE, "--load-extension=" + ext, "--disable-extensions-except=" + ext,
+                "--user-data-dir=" + self.profile(pi), "--load-extension=" + ext, "--disable-extensions-except=" + ext,
                 # everything through webgate, which connects only where 7.3 lets it
                 "--proxy-server=http://127.0.0.1:%d" % port, "--proxy-bypass-list=<-loopback>;127.0.0.1:%d" % port,
                 # and it resolves nothing itself: names go to webgate as they are
@@ -765,15 +784,24 @@ class Web(Gateway):
             "ExecStart=%s %s -screen 0 1280x3072x24 -nolisten tcp" % (pi.which("Xvfb") or "/usr/bin/Xvfb",
                                                                     self.DISPLAY),
             "NoNewPrivileges=yes"] + common + ["", "[Install]", "WantedBy=multi-user.target", ""])
+        wait = ("ExecStartPre=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do xdotool getdisplaygeometry >/dev/null "
+                "2>&1 && exit 0; sleep 1; done; exit 1'")
+        if snap:
+            # webgate's own systemd starts it (snapd's rule); the snap's
+            # confinement is its sandbox, and the screen is reached by its
+            # abstract socket
+            return screen, "\n".join([
+                "[Unit]", "Description=The Pi's browser for EWeb (Ubuntu's Chromium snap, out through webgate only)",
+                "", "[Service]", "Environment=DISPLAY=" + self.DISPLAY, wait,
+                "ExecStart=" + " ".join(unit_word(w) for w in args), "Restart=always", "RestartSec=5",
+                "", "[Install]", "WantedBy=default.target", ""])
         browser = "\n".join([
             "[Unit]", "Description=The Pi's browser for EWeb (Chromium, out through webgate only)",
             "Requires=%s.service" % self.SCREEN, "After=%s.service %s.service" % (self.SCREEN, self.name),
             "JoinsNamespaceOf=%s.service" % self.name, "",
             "[Service]",
             "Environment=DISPLAY=" + self.DISPLAY, "Environment=HOME=/var/lib/webgate", "StateDirectory=webgate",
-            # the screen may take a moment
-            "ExecStartPre=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8 9 10; do xdotool getdisplaygeometry >/dev/null "
-            "2>&1 && exit 0; sleep 1; done; exit 1'",
+            wait,               # (the screen may take a moment)
             "ExecStart=" + " ".join(unit_word(w) for w in args),
             "# Chromium's own sandbox needs its setuid helper or user namespaces: no NoNewPrivileges here"]
             + common + ["", "[Install]", "WantedBy=multi-user.target", ""])
@@ -783,20 +811,60 @@ class Web(Gateway):
         if not ns.browser:
             self.browser_off(pi, quiet=False)
             return
+        snap = self.snap(pi)
         screen, browser = self.browser_units(pi, ns)
+        if snap:
+            self.snap_ready(pi)
+            if pi.exists(unit_path(self.BROWSER)):          # a system browser unit from before
+                pi.run("systemctl", "disable", "--now", self.BROWSER + ".service", check=False, out="hide",
+                       errors=False)
+                pi.remove(unit_path(self.BROWSER))
         pi.write(unit_path(self.SCREEN), screen)
-        pi.write(unit_path(self.BROWSER), browser)
+        pi.write(self.SNAP_UNIT if snap else unit_path(self.BROWSER), browser)
         # Chromium keeps an extension's old background script in its
         # profile: a new webgate-ext starts afresh (the logins stay)
         for d in ("Service Worker", "Extension State", "Extension Rules"):
-            pi.rmtree("%s/Default/%s" % (self.PROFILE, d))
+            pi.rmtree("%s/Default/%s" % (self.profile(pi), d))
         pi.run("systemctl", "daemon-reload")
-        pi.run("systemctl", "enable", self.SCREEN + ".service", self.BROWSER + ".service", out="hide")
+        pi.run("systemctl", "enable", self.SCREEN + ".service", *([] if snap else [self.BROWSER + ".service"]),
+               out="hide")
         pi.run("systemctl", "restart", self.SCREEN + ".service", check=False)
-        pi.run("systemctl", "restart", self.BROWSER + ".service", check=False)
+        if snap:
+            user = ("systemctl", "--user", "-M", self.name + "@")
+            pi.run("chown", "-R", "%s:%s" % (self.name, self.name), self.home + "/.config", check=False)
+            pi.run(*user, "daemon-reload", check=False)
+            pi.run(*user, "enable", self.BROWSER + ".service", check=False, out="hide")
+            pi.run(*user, "restart", self.BROWSER + ".service", check=False)
+        else:
+            pi.run("systemctl", "restart", self.BROWSER + ".service", check=False)
         say("The Pi's browser (Chromium, in webgate's own screen) is running for EWeb's snapshots and live view.")
 
+    def snap_ready(self, pi):
+        """webgate as snapd wants the user it starts Chromium for: its home
+        (/var/lib/webgate) one snapd knows, its own systemd running
+        without a login, and the snap's folder there with webgate-ext"""
+        if (pi.out("getent", "passwd", self.name).split(":") + [""] * 6)[5] != self.home:
+            # usermod won't while webgate's programs run: a moment's stop
+            pi.run("systemctl", "stop", self.name + ".service", check=False)
+            pi.run("usermod", "--home", self.home, self.name)
+            pi.run("systemctl", "start", self.name + ".service", check=False)
+        dirs = [d for d in pi.out("snap", "get", "system", "homedirs").strip().split(",") if d]
+        if "/var/lib" not in dirs:
+            pi.run("snap", "set", "system", "homedirs=" + ",".join(dirs + ["/var/lib"]))
+        pi.run("loginctl", "enable-linger", self.name)
+        d = self.home
+        for part in ("", "/snap", "/snap/chromium", "/snap/chromium/common", "/snap/chromium/common/browser"):
+            pi.run("install", "-d", "-o", self.name, "-g", self.name, d + part)
+        pi.rmtree(self.SNAP_DIR + "/" + EXT)
+        for f in sorted(glob.glob(pi.path("%s/%s/*" % (OPT, EXT)))):
+            pi.copy(f, "%s/%s/%s" % (self.SNAP_DIR, EXT, os.path.basename(f)), 0o644)
+
     def browser_off(self, pi, quiet=True):
+        if pi.exists(self.SNAP_UNIT):
+            user = ("systemctl", "--user", "-M", self.name + "@")
+            pi.run(*user, "disable", "--now", self.BROWSER + ".service", check=False, out="hide", errors=False)
+            pi.remove(self.SNAP_UNIT)
+            pi.run("loginctl", "disable-linger", self.name, check=False, errors=False)
         if not pi.exists(unit_path(self.BROWSER)) and not pi.exists(unit_path(self.SCREEN)):
             return
         for u in (self.BROWSER, self.SCREEN):
@@ -804,7 +872,7 @@ class Web(Gateway):
             pi.remove(unit_path(u))
         pi.run("systemctl", "daemon-reload")
         if not quiet:
-            say("The Pi's browser is off (its profile, with any logins, stays in %s)." % self.PROFILE)
+            say("The Pi's browser is off (its profile, with any logins, stays in %s)." % self.profile(pi))
 
     def after_remove(self, pi):
         self.browser_off(pi)
@@ -1068,7 +1136,8 @@ def install_gateway(pi, gw, o, src=HERE):
     gw.prepare(pi, ns)
     need_packages(pi, gw)
     if not pi.ok("id", gw.name):
-        pi.run("useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", gw.name)
+        pi.run("useradd", "--system", "--no-create-home", *(["--home-dir", gw.home] if gw.home else []),
+               "--shell", "/usr/sbin/nologin", gw.name)
     undo, done = put_files(pi, src)
     pi.write(gw.unit_file(), gw.unit(ns, carried(old_unit)))
     pi.run("systemctl", "daemon-reload")

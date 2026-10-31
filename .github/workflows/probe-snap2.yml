@@ -1,0 +1,17 @@
+name: Probe snap.sh
+on:
+  push:
+    branches: [probe-snap2]
+permissions:
+  contents: read
+jobs:
+  snap:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo tests/snap.sh
+      - if: failure()
+        run: |
+          sudo journalctl -u webgate -n 40 --no-pager || true
+          sudo journalctl _UID=$(id -u webgate) -n 60 --no-pager | grep -v dbus | tail -40 || true
+          sudo cat /var/lib/webgate/.config/systemd/user/webgate-browser.service || true
