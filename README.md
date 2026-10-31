@@ -282,6 +282,16 @@ through webgate, so the home-network rule holds for it too: nothing at
 home without `--allow-local`, whatever a name's answer says, and no
 files from the Pi. `install web --no-browser` turns it off again.
 
+On Ubuntu (Lubuntu and the like, a laptop as the gateway), Chromium is
+a snap, which snapd starts only from its user's own systemd: there the
+browser runs as webgate's user service (`systemctl --user -M webgate@
+status webgate-browser`), webgate's home is `/var/lib/webgate`, snapd is
+told that homes may be in `/var/lib` (`snap set system homedirs`), and
+webgate's systemd runs without anyone logged in (`loginctl
+enable-linger webgate`). The profile is then in
+`/var/lib/webgate/snap/chromium/common/browser`, and the snap's own
+confinement is the browser's sandbox. The same command sets it all up.
+
 ## claude: ClaudeST's bridge
 
 The bridge is ClaudeST's own (it changes with `CLAUDEST.PRG`);
@@ -416,4 +426,6 @@ computer with systemd (CI does on every push): it sets the gateways up
 with the apps' old installers, takes them over, installs and removes,
 runs web with the Pi's browser (a stand-in Chromium) and with the real
 aerapens behind its socket, and checks the claude recipe against
-ClaudeST's own `pi/install.sh`.
+ClaudeST's own `pi/install.sh`. `tests/snap.sh` sets up web with the
+browser on Ubuntu with the real Chromium snap, and takes a page and a
+live view picture through it.

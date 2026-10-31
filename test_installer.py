@@ -39,13 +39,17 @@ class FakePi(ag.Pi):
         self.answers = []
         self.busy = set()           # ports another program has
         self.programs = set()       # installed beyond python3 (chromium, Xvfb...)
+        self.paths = {}             # where one of them is, when not /usr/bin (the Chromium snap's)
+        self.snaps = set()          # snaps installed
+        self.homes = {}             # users' homes
+        self.homedirs = ""          # snapd's homedirs setting
         self.no_modules = set()     # Python modules that aren't there
 
     def have(self, prog):
         return prog == "python3" or (prog == "ufw" and self.ufw is not None)
 
     def which(self, *progs):
-        return next(("/usr/bin/" + p for p in progs if p in self.programs), None)
+        return next((self.paths.get(p, "/usr/bin/" + p) for p in progs if p in self.programs), None)
 
     def is_root(self):
         return True
@@ -90,6 +94,18 @@ class FakePi(ag.Pi):
             rc = 0 if c[1] in self.users else 1
         elif c[0] == "useradd":
             self.users.add(c[-1])
+            self.homes[c[-1]] = c[c.index("--home-dir") + 1] if "--home-dir" in c else "/home/" + c[-1]
+        elif c[0] == "usermod" and "--home" in c:
+            self.homes[c[-1]] = c[c.index("--home") + 1]
+        elif c[:2] == ["getent", "passwd"]:
+            rc = 0 if c[2] in self.users else 2
+            text = "%s:x:999:999::%s:/usr/sbin/nologin\n" % (c[2], self.homes.get(c[2], "/home/" + c[2]))
+        elif c[:2] == ["snap", "list"]:
+            rc = 0 if c[2] in self.snaps else 1
+        elif c[:4] == ["snap", "get", "system", "homedirs"]:
+            rc, text = (0, self.homedirs + "\n") if self.homedirs else (1, "")
+        elif c[:3] == ["snap", "set", "system"]:
+            self.homedirs = c[3].split("=", 1)[1]
         elif c[:2] == ["systemctl", "restart"]:
             self.started(c[2].replace(".service", ""))
         elif c[:3] == ["systemctl", "disable", "--now"]:
@@ -521,6 +537,74 @@ class DavFtpTest(Base):
         self.run_ag("install", "web", "--browser")
         self.assertEqual(self.run_ag("remove", "web"), 0, self.err)
         self.assertIsNone(self.unit("webgate-browser"))
+
+    def test_web_browser_snap(self):
+        # Ubuntu's Chromium is a snap: snapd starts it only from its user's
+        # own systemd, with a home it knows; the rest as on the Pi
+        self.pi.write("/proc/meminfo", "MemTotal:        3884136 kB\n")
+        self.pi.programs = {"chromium", "Xvfb", "xdotool"}
+        self.pi.paths = {"chromium": "/snap/bin/chromium"}
+        self.pi.snaps = {"chromium"}
+        self.pi.homedirs = "/srv"
+        self.assertEqual(self.run_ag("install", "web", "--browser"), 0, self.err)
+        useradd = next(c for c in self.pi.cmds if c[0] == "useradd" and c[-1] == "webgate")
+        self.assertEqual(useradd[useradd.index("--home-dir") + 1], "/var/lib/webgate")
+        self.assertNotIn("usermod", [c[0] for c in self.pi.cmds])       # its home was right from the start
+        self.assertEqual(self.pi.homedirs, "/srv,/var/lib")             # added to, not replaced
+        self.assertIn(("loginctl", "enable-linger", "webgate"), self.pi.cmds)
+        self.assertIsNone(self.unit("webgate-browser"))                 # not a system unit
+        self.assertIn(":99 -screen 0 1280x3072x24", self.unit("webgate-screen"))
+        browser = self.pi.read(ag.Web.SNAP_UNIT)
+        common = "/var/lib/webgate/snap/chromium/common"
+        for want in ("ExecStart=/snap/bin/chromium --kiosk", "--user-data-dir=%s/browser" % common,
+                     "--load-extension=%s/webgate-ext" % common, "--proxy-server=http://127.0.0.1:8281",
+                     '"--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"', "--disable-quic",
+                     "Environment=DISPLAY=:99", "WantedBy=default.target"):
+            self.assertIn(want, browser)
+        self.assertNotIn("User=", browser)
+        self.assertTrue(self.pi.exists(common + "/webgate-ext/manifest.json"))
+        self.assertIn(("chown", "-R", "webgate:webgate", common + "/webgate-ext"), self.pi.cmds)
+        self.assertIn(("systemctl", "--user", "-M", "webgate@", "restart", "webgate-browser.service"), self.pi.cmds)
+        self.assertIn("The Pi's browser (Chromium", self.out)
+        # an update: a new extension afresh in the snap's profile; the logins stay
+        self.pi.write(common + "/browser/Default/Service Worker/x", "old")
+        self.pi.write(common + "/browser/Default/Cookies", "logins")
+        self.assertEqual(self.run_ag("update"), 0, self.err)
+        self.assertFalse(self.pi.exists(common + "/browser/Default/Service Worker"))
+        self.assertTrue(self.pi.exists(common + "/browser/Default/Cookies"))
+        # off: its user unit and the lingering go
+        self.assertEqual(self.run_ag("install", "web", "--no-browser"), 0, self.err)
+        self.assertFalse(self.pi.exists(ag.Web.SNAP_UNIT))
+        self.assertIn(("loginctl", "disable-linger", "webgate"), self.pi.cmds)
+        self.assertIsNone(self.unit("webgate-screen"))
+
+    def test_web_browser_snap_after_the_pi_way(self):
+        # webgate made before 1.18 (its home /home/webgate, a system browser
+        # unit): its home moved, with webgate stopped a moment, and the
+        # system unit replaced by the user one
+        self.pi.write("/proc/meminfo", "MemTotal:        3884136 kB\n")
+        self.pi.users.add("webgate")
+        self.pi.homes["webgate"] = "/home/webgate"
+        self.pi.write(ag.unit_path("webgate-browser"), "[Service]\nExecStart=/usr/bin/chromium\n")
+        self.pi.programs = {"chromium-browser", "Xvfb", "xdotool"}
+        self.pi.snaps = {"chromium"}
+        self.assertEqual(self.run_ag("install", "web", "--browser"), 0, self.err)
+        i = self.pi.cmds.index(("usermod", "--home", "/var/lib/webgate", "webgate"))
+        self.assertEqual(self.pi.cmds[i - 1][:3], ("systemctl", "stop", "webgate.service"))
+        self.assertEqual(self.pi.cmds[i + 1][:3], ("systemctl", "start", "webgate.service"))
+        self.assertEqual(self.pi.homedirs, "/var/lib")
+        self.assertIsNone(self.unit("webgate-browser"))
+        self.assertIn("ExecStart=/snap/bin/chromium", self.pi.read(ag.Web.SNAP_UNIT))
+
+    def test_web_browser_not_a_snap(self):
+        # Raspberry Pi OS's chromium-browser is a real one, snap or no snap
+        self.pi.write("/proc/meminfo", "MemTotal:        3884136 kB\n")
+        self.pi.programs = {"chromium-browser", "Xvfb", "xdotool"}
+        self.pi.write("/usr/lib/chromium-browser/chromium-browser", "a program")
+        self.pi.snaps = {"chromium"}
+        self.assertEqual(self.run_ag("install", "web", "--browser"), 0, self.err)
+        self.assertIn("ExecStart=/usr/bin/chromium-browser", self.unit("webgate-browser"))
+        self.assertFalse(self.pi.exists(ag.Web.SNAP_UNIT))
 
     @unittest.skipUnless(os.path.isdir(os.path.join(ag.Web.PENS_SRC, "common")),
                          "needs AERA-Gateway's pens/ (an app's copy of gateway/ has none)")
