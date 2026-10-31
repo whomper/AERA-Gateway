@@ -79,10 +79,27 @@ sessions stay as they are.)
   checks here. Don't wait for a yes and don't collect work for a later
   release. Then give Erez the link in one line, with anything he has to
   do (on the Pi, `./update-pi.sh`), and send the hub the link. Roll back
-  a bad release the same way. Decisions that are his (design, Pi
-  packages, ports, a change to what a user sees that wasn't asked for)
-  still go to him first. A change to the docs alone needs no release of
+  a bad release the same way. Decisions that are his still go to him first.
+A change to the docs alone needs no release of
   its own: it goes out with the next one.
+- **Who decides what** (Erez, 31 Oct 2026; the guidelines' "Who decides
+  what", AERA-Atari 797fddf). Erez's part, put to him before the work as
+  a decision with a short context:
+  - new programs and ideas, their core capabilities, and how they work
+    with the other programs;
+  - the user experience: the look, the layout, the way through a task,
+    the words, the icons, the defaults;
+  - phases: work stays inside the phase he approved; at its end, one
+    phase report (what it set out to do, what was done with the release
+    links, what is left, the next phase as a proposal), and the next
+    phase starts when he says so;
+  - priorities and conflicts between programs or sessions (through the
+    hub, with its options and recommendation);
+  - packages on the Pi and ports.
+
+  How it is made is the team's, without asking: code, structure, shared
+  code, tests, measurements, fixes, docs and releases inside an approved
+  phase.
 - **Never commit:** real addresses from the owner's network (use
   `192.168.1.x`, `PI_IP`, `ATARI_IP`), passwords, session keys.
 - British English, as in the app READMEs.
