@@ -103,6 +103,7 @@ tools/
   sync-jsc.sh     jsc/eweb/ from EWeb; never edit jsc/eweb/ here
 update-pi.sh      this copy at the latest release, then aera-gateway update (with --allow: install all)
 tests/systemd.sh  aera-gateway for real, on a computer with systemd
+tests/snap.sh     install web --browser for real with Ubuntu's Chromium snap
 ```
 
 ClaudeST's bridge is ClaudeST's own (it changes with `CLAUDEST.PRG`):
@@ -131,10 +132,11 @@ notes that it is withdrawn and which one to use.
 pip install paramiko pyftpdlib pyopenssl pillow
 python3 -m unittest discover -s gateway -p 'test_*.py'
 sudo tests/systemd.sh          on a spare computer with systemd: it installs and removes services
+sudo tests/snap.sh             on a spare Ubuntu computer: the Pi's browser with the Chromium snap
 ```
 
-CI runs both on every push, the first with Python 3.9, 3.11, 3.12 and 3.13
-(Raspberry Pi OS bullseye, bookworm and trixie, Ubuntu 24.04).
+CI runs all three on every push, the first with Python 3.9, 3.11, 3.12 and
+3.13 (Raspberry Pi OS bullseye, bookworm and trixie, Ubuntu 24.04).
 
 ## Licence
 

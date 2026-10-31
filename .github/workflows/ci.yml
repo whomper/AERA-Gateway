@@ -40,3 +40,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Take over the apps' set-ups, install, remove; the claude recipe
         run: sudo tests/systemd.sh
+
+  snap:
+    name: Ubuntu, its Chromium a snap
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: install web --browser with the real snap, a page and live view through it
+        run: sudo tests/snap.sh
