@@ -858,6 +858,8 @@ class Web(Gateway):
         pi.rmtree(self.SNAP_DIR + "/" + EXT)
         for f in sorted(glob.glob(pi.path("%s/%s/*" % (OPT, EXT)))):
             pi.copy(f, "%s/%s/%s" % (self.SNAP_DIR, EXT, os.path.basename(f)), 0o644)
+        # the snap reads only what is its user's in its home (AppArmor's owner rules)
+        pi.run("chown", "-R", "%s:%s" % (self.name, self.name), self.SNAP_DIR + "/" + EXT)
 
     def browser_off(self, pi, quiet=True):
         if pi.exists(self.SNAP_UNIT):

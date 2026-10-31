@@ -563,6 +563,7 @@ class DavFtpTest(Base):
             self.assertIn(want, browser)
         self.assertNotIn("User=", browser)
         self.assertTrue(self.pi.exists(common + "/webgate-ext/manifest.json"))
+        self.assertIn(("chown", "-R", "webgate:webgate", common + "/webgate-ext"), self.pi.cmds)
         self.assertIn(("systemctl", "--user", "-M", "webgate@", "restart", "webgate-browser.service"), self.pi.cmds)
         self.assertIn("The Pi's browser (Chromium", self.out)
         # an update: a new extension afresh in the snap's profile; the logins stay
