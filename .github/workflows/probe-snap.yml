@@ -12,71 +12,53 @@ jobs:
       - name: Setup
         run: |
           sudo snap install chromium
-          snap version
-          readlink -f /usr/bin/chromium || true; ls -la /usr/bin/chromium* /usr/local/bin/chrom* 2>&1 | head
-          sysctl kernel.apparmor_restrict_unprivileged_userns || true
+          sudo rm -f /usr/bin/chromium /usr/bin/chromium-browser     # the runner's own build: not Ubuntu's
           sudo apt-get install -y -qq xvfb xdotool python3-pil gcc make >/dev/null
-          # webgate itself, without the browser (the extension's bridge is what we watch)
           sudo gateway/aera-gateway install web --allow-local
-          sudo systemd-run --unit=probe-x -p User=webgate /usr/bin/Xvfb :99 -screen 0 1280x3072x24 -nolisten tcp
+          sudo systemd-run --unit=probe-x -p User=nobody /usr/bin/Xvfb :99 -screen 0 1280x3072x24 -nolisten tcp
           sleep 2
-      - name: "A: the webgate user with homedirs=/var/lib, profile and extension in the snap's own folder, the unit's sandbox"
+      - name: "E: webgate's home in /var/lib (snapd homedirs), lingering, Chromium as a user service"
         if: always()
         run: |
+          sudo systemctl stop webgate
           sudo usermod -d /var/lib/webgate webgate
-          sudo snap set system homedirs=/var/lib || true
-          sudo mkdir -p /var/lib/webgate && sudo chown webgate: /var/lib/webgate
+          sudo systemctl start webgate
+          sudo snap set system homedirs=/var/lib && snap get system homedirs
+          sudo install -d -o webgate -g webgate /var/lib/webgate
+          sudo loginctl enable-linger webgate
+          sleep 3
+          U=$(id -u webgate); ls -ld /run/user/$U || true
+          systemctl is-active user@$U.service || true
           C=/var/lib/webgate/snap/chromium/common
-          sudo -u webgate mkdir -p $C 2>&1 || sudo install -d -o webgate -g webgate $C
-          sudo cp -r /opt/aera-gateway/webgate-ext $C/ && sudo chown -R webgate: $C
-          sudo systemd-run --unit=probe-a -p User=webgate -p Environment=DISPLAY=:99 -p Environment=HOME=/var/lib/webgate \
-            -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p ReadWritePaths=/var/lib/webgate \
-            /snap/bin/chromium --kiosk --no-first-run --user-data-dir=$C/profile --load-extension=$C/webgate-ext \
-            --proxy-server=http://127.0.0.1:8281 "--proxy-bypass-list=<-loopback>;127.0.0.1:8281" about:blank
-          sleep 20
-          systemctl is-active probe-a || true
-          sudo journalctl -u probe-a --no-pager -n 25
-          curl -s -m 40 -x http://127.0.0.1:8280 -H 'X-Gateway-Snapshot: 1' http://example.com/ | head -c 300; echo
-          sudo systemctl stop probe-a || true
-      - name: "B: as A without ProtectSystem/ProtectHome"
-        if: always()
-        run: |
-          C=/var/lib/webgate/snap/chromium/common
-          sudo systemd-run --unit=probe-b -p User=webgate -p Environment=DISPLAY=:99 -p Environment=HOME=/var/lib/webgate \
-            /snap/bin/chromium --kiosk --no-first-run --user-data-dir=$C/profile --load-extension=$C/webgate-ext \
-            --proxy-server=http://127.0.0.1:8281 "--proxy-bypass-list=<-loopback>;127.0.0.1:8281" about:blank
-          sleep 20
-          systemctl is-active probe-b || true
-          sudo journalctl -u probe-b --no-pager -n 25
-          curl -s -m 40 -x http://127.0.0.1:8280 -H 'X-Gateway-Snapshot: 1' http://example.com/ | head -c 300; echo
-          sudo systemctl stop probe-b || true
-      - name: "C: a user with a real home in /home"
+          sudo -u webgate mkdir -p $C && sudo cp -r /opt/aera-gateway/webgate-ext $C/ && sudo chown -R webgate: $C
+          sudo -u webgate env XDG_RUNTIME_DIR=/run/user/$U systemd-run --user --unit=probe-e \
+            -p Environment=DISPLAY=:99 /snap/bin/chromium --kiosk --no-first-run \
+            --user-data-dir=$C/profile --load-extension=$C/webgate-ext \
+            --proxy-server=http://127.0.0.1:8281 "--proxy-bypass-list=<-loopback>;127.0.0.1:8281" \
+            "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1" --disable-quic about:blank
+          sleep 25
+          sudo -u webgate env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-active probe-e || true
+          sudo journalctl _UID=$U --no-pager -n 30 | cut -c1-220
+          # webgate --browser is what lets snapshots through: turn it on without the system browser units
+          sudo sed -i 's/--allow-local$/--allow-local --browser/; s/--allow-local --browser --browser/--allow-local --browser/' /etc/systemd/system/webgate.service
+          grep ExecStart /etc/systemd/system/webgate.service
+          sudo systemctl daemon-reload && sudo systemctl restart webgate && sleep 30
+          curl -s -m 60 -x http://127.0.0.1:8280 -H 'X-Gateway-Snapshot: 1' -D - http://example.com/ | head -c 600; echo
+          sudo -u webgate env XDG_RUNTIME_DIR=/run/user/$U systemctl --user stop probe-e || true
+      - name: "F: an ordinary user with a /home, lingering, Chromium as a user service"
         if: always()
         run: |
           sudo useradd -m -s /usr/sbin/nologin wgsnap
+          sudo loginctl enable-linger wgsnap
+          sleep 3
+          U=$(id -u wgsnap)
           C=/home/wgsnap/snap/chromium/common
-          sudo install -d -o wgsnap -g wgsnap /home/wgsnap/snap /home/wgsnap/snap/chromium $C
-          sudo cp -r /opt/aera-gateway/webgate-ext $C/ && sudo chown -R wgsnap: $C
-          sudo systemd-run --unit=probe-c -p User=wgsnap -p Environment=DISPLAY=:99 \
-            /snap/bin/chromium --kiosk --no-first-run --user-data-dir=$C/profile --load-extension=$C/webgate-ext \
+          sudo -u wgsnap mkdir -p $C && sudo cp -r /opt/aera-gateway/webgate-ext $C/ && sudo chown -R wgsnap: $C
+          sudo -u wgsnap env XDG_RUNTIME_DIR=/run/user/$U systemd-run --user --unit=probe-f \
+            -p Environment=DISPLAY=:99 /snap/bin/chromium --kiosk --no-first-run \
+            --user-data-dir=$C/profile --load-extension=$C/webgate-ext \
             --proxy-server=http://127.0.0.1:8281 "--proxy-bypass-list=<-loopback>;127.0.0.1:8281" about:blank
-          sleep 20
-          systemctl is-active probe-c || true
-          sudo journalctl -u probe-c --no-pager -n 25
-          curl -s -m 40 -x http://127.0.0.1:8280 -H 'X-Gateway-Snapshot: 1' http://example.com/ | head -c 300; echo
-          sudo systemctl stop probe-c || true
-      - name: "D: the runner's own non-snap Chromium, as webgate, with and without the userns limit"
-        if: always()
-        run: |
-          B=$(readlink -f /usr/bin/chromium)
-          sudo systemd-run --unit=probe-d -p User=webgate -p Environment=DISPLAY=:99 -p Environment=HOME=/var/lib/webgate \
-            $B --kiosk --no-first-run --user-data-dir=/var/lib/webgate/d --load-extension=/opt/aera-gateway/webgate-ext \
-            --proxy-server=http://127.0.0.1:8281 "--proxy-bypass-list=<-loopback>;127.0.0.1:8281" about:blank
-          sleep 12; systemctl is-active probe-d || true; sudo journalctl -u probe-d --no-pager -n 6 | cut -c1-200
-          sudo systemctl stop probe-d 2>/dev/null; sudo systemctl reset-failed probe-d 2>/dev/null || true
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          sudo systemd-run --unit=probe-d2 -p User=webgate -p Environment=DISPLAY=:99 -p Environment=HOME=/var/lib/webgate \
-            $B --kiosk --no-first-run --user-data-dir=/var/lib/webgate/d --load-extension=/opt/aera-gateway/webgate-ext \
-            --proxy-server=http://127.0.0.1:8281 "--proxy-bypass-list=<-loopback>;127.0.0.1:8281" about:blank
-          sleep 15; systemctl is-active probe-d2 || true
-          curl -s -m 40 -x http://127.0.0.1:8280 -H 'X-Gateway-Snapshot: 1' http://example.com/ | head -c 300; echo
+          sleep 25
+          sudo -u wgsnap env XDG_RUNTIME_DIR=/run/user/$U systemctl --user is-active probe-f || true
+          sudo journalctl _UID=$U --no-pager -n 20 | cut -c1-220
+          curl -s -m 60 -x http://127.0.0.1:8280 -H 'X-Gateway-Snapshot: 1' -D - http://example.com/ | head -c 600; echo
