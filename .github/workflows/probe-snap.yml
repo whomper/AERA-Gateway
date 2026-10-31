@@ -1,0 +1,44 @@
+name: Probe snap Chromium
+on:
+  push:
+    branches: [probe-snap]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Chromium as Ubuntu has it (a snap)
+        run: |
+          sudo snap install chromium
+          snap list chromium
+          sudo sh -c 'command -v chromium chromium-browser'
+          sudo apt-get install -y -qq xvfb xdotool python3-pil gcc make >/dev/null
+      - name: install web --browser with the real snap
+        run: sudo gateway/aera-gateway install web --browser --allow-local || true
+      - name: What runs
+        if: always()
+        run: |
+          sleep 25
+          for u in webgate webgate-screen webgate-browser; do echo "== $u: $(systemctl is-active $u)"; done
+          sudo systemctl cat webgate-browser | grep ExecStart
+          sudo journalctl -u webgate-browser --no-pager -n 60 || true
+          ps -eo user,pid,args | grep -i [c]hrom | head -5 || true
+          sudo ls -la /var/lib/webgate /var/lib/webgate/browser 2>&1 | head -20
+          getent passwd webgate
+      - name: A snapshot of a page through the Pi's browser
+        if: always()
+        run: |
+          curl -s -m 70 -x http://127.0.0.1:8280 -H 'X-Gateway-Snapshot: 1' -D - http://example.com/ | head -c 800; echo
+          sudo journalctl -u webgate --no-pager -n 30 || true
+      - name: The same by hand, outside the unit's sandbox, to tell the two apart
+        if: always()
+        run: |
+          sudo systemctl stop webgate-browser || true
+          sudo -u webgate env HOME=/var/lib/webgate DISPLAY=:99 timeout 20 /snap/bin/chromium --no-first-run \
+            --user-data-dir=/var/lib/webgate/browser --load-extension=/opt/aera-gateway/webgate-ext about:blank 2>&1 | tail -20 || true
+          echo "== profile under the snap's own folder, extension copied there"
+          sudo mkdir -p /tmp/h && sudo chown webgate /tmp/h
+          sudo -u webgate env HOME=/tmp/h DISPLAY=:99 timeout 20 /snap/bin/chromium --no-first-run about:blank 2>&1 | tail -10 || true
+          sudo ls -la /tmp/h /tmp/h/snap 2>&1 | head
