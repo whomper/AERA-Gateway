@@ -108,3 +108,17 @@ A change to the docs alone needs no release of
   author of every commit:
   `git commit --author="AERA | Erez Yaary <yaary@me.com>"`, with Claude as
   the signing committer (AERA-Atari, `standards/GITHUB-IDENTITY.md`).
+## Maintenance mode (Erez, 1 Nov 2026)
+
+AERA-Gateway is in maintenance mode while EWeb, EPDF and EPlay go to 1.0 (AERA-Atari, ATARI-APP-GUIDELINES.md, section 8). Until Erez ends it:
+- No new features, clean-ups or installer work of its own.
+- What EWeb, EPDF or EPlay ask for (webgate, aerapens, aerajsc, a pdfgate) goes on as before, committed and released by this session.
+- Otherwise a release only for:
+  - a security or data-loss fault;
+  - a breakage Erez reports;
+  - something outside that stops it working (Raspberry Pi OS, a certificate, a server).
+
+  Such a release takes only that fix, and its notes say why.
+- The apps in maintenance don't sync `gateway/`: the `gateway` branch moving is no reason for them to rebuild.
+- Nothing runs in the background; the session waits for Erez, the hub or a focus app's session.
+- Only Erez's explicit word ends this mode. The hub passes it on quoting him.
