@@ -265,6 +265,7 @@ unit_has translategate "^User=translategate"
 unit_has translategate "^MemoryMax=1G"
 unit_has translategate "^OOMScoreAdjust=-300"
 [ ! -e /opt/translategate ] || fail "the stand-in set up an engine"
+[ -e /opt/aera-gateway/translate-phrases.tsv ] || fail "translate-phrases.tsv isn't in /opt"
 python3 - <<'PY'
 import socket
 def ask(req):

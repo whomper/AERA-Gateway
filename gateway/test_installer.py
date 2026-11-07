@@ -482,7 +482,7 @@ class DavFtpTest(Base):
         self.assertEqual(self.run_ag("install", "dav"), 0, self.err)
         self.assertEqual(self.execstart("ecalgate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/ecalgate.py "
                                                      "--port 8180")
-        self.assertIn("Pi gateway:  192.168.1.10", self.out)
+        self.assertIn("Gateway:     192.168.1.10", self.out)
         self.run_ag("install", "ecal", "--allow-local", "--allow", "192.168.1.50,192.168.1.51")
         self.run_ag("install", "econtact", "--port", "8181", "-v")
         self.assertEqual(self.execstart("ecalgate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/ecalgate.py "
@@ -507,7 +507,7 @@ class DavFtpTest(Base):
                                                     "--port 8280 --allow 192.168.1.50")
         self.assertEqual(self.pi.rules, [("192.168.1.50", "8280")])
         self.assertIn("In EWeb on the Atari, Settings > Secure:", self.out)
-        self.assertIn("Pi gateway:  192.168.1.10", self.out)
+        self.assertIn("Gateway:     192.168.1.10", self.out)
         self.assertIn("Port:        8280", self.out)
         self.assertTrue(self.pi.exists("/opt/aera-gateway/webgate.py"))
         self.assertNotIn(("apt-get", "install", "-y", "-qq", "python3-pil"), self.pi.cmds)  # Pillow there
@@ -538,7 +538,7 @@ class DavFtpTest(Base):
             self.assertIn(want, browser)
         self.assertTrue(self.pi.exists("/opt/aera-gateway/webgate-ext/manifest.json"))
         self.assertIn(("systemctl", "restart", "webgate-browser.service"), self.pi.cmds)
-        self.assertIn("the Pi's browser", self.out)
+        self.assertIn("the Gateway's browser", self.out)
         # an update keeps it, and a new extension starts afresh
         self.pi.write("/var/lib/webgate/browser/Default/Service Worker/x", "old")
         self.pi.write("/var/lib/webgate/browser/Default/Cookies", "logins")
@@ -583,7 +583,7 @@ class DavFtpTest(Base):
         self.assertTrue(self.pi.exists(common + "/webgate-ext/manifest.json"))
         self.assertIn(("chown", "-R", "webgate:webgate", common + "/webgate-ext"), self.pi.cmds)
         self.assertIn(("systemctl", "--user", "-M", "webgate@", "restart", "webgate-browser.service"), self.pi.cmds)
-        self.assertIn("The Pi's browser (Chromium", self.out)
+        self.assertIn("The Gateway's browser (Chromium", self.out)
         # an update: a new extension afresh in the snap's profile; the logins stay
         self.pi.write(common + "/browser/Default/Service Worker/x", "old")
         self.pi.write(common + "/browser/Default/Cookies", "logins")

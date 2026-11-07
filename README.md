@@ -17,7 +17,7 @@ they are.
 | `translate` | the apps' Translate | 8480                              | nothing: a local engine translates    |
 | `claude` | ClaudeST            | 2323 (or a serial cable)             | HTTPS to claude.ai or the API         |
 
-In the instructions, `PI_IP` is the Pi's address on your home network and
+In the instructions, `GATEWAY_IP` is the Gateway's (the Raspberry Pi's) address on your home network and
 `ATARI_IP` the Atari's.
 
 ## Getting started
@@ -50,13 +50,13 @@ into its Atari program:
 
 | Atari program      | Where                                  | What                                          |
 |--------------------|----------------------------------------|-----------------------------------------------|
-| EMail              | Options > Accounts                     | server `PI_IP`; IMAP 143 (or POP3 110), SMTP 587 |
-| ECal, EContact     | Settings > Connection                  | Pi gateway `PI_IP`, port 8180                 |
-| EFTP               | Options > Settings > Secure            | Pi gateway `PI_IP`, port 2121                 |
-| EWeb               | Settings > Secure                      | Pi gateway `PI_IP`, port 8280                 |
-| ClaudeST           | Options > Settings > Network           | `PI_IP`, port 2323                            |
+| EMail              | Options > Accounts                     | server `GATEWAY_IP`; IMAP 143 (or POP3 110), SMTP 587 |
+| ECal, EContact     | Settings > Connection                  | Gateway `GATEWAY_IP`, port 8180                 |
+| EFTP               | Options > Settings > Secure            | Gateway `GATEWAY_IP`, port 2121                 |
+| EWeb               | Settings > Secure                      | Gateway `GATEWAY_IP`, port 8280                 |
+| ClaudeST           | Options > Settings > Network           | `GATEWAY_IP`, port 2323                            |
 
-Use the Pi's address, not its name: plain TOS with STinG can't always
+Use the Gateway's address, not its name: plain TOS with STinG can't always
 look names up on the home network. On a Falcon or TT, EMail, ECal,
 EContact, EFTP and EWeb can make the secure connections themselves
 (their Falcon mode); the Pi is still needed for SFTP, and for EWeb's
@@ -92,8 +92,9 @@ gateway/      what runs on the Pi; the apps carry a copy of this folder
   ecalgate.py     dav: plain HTTP in proxy form in, HTTPS out, feeds trimmed
   eftpgate.py     ftp: plain FTP in, FTPS or SFTP out
   webgate.py      web: plain HTTP in proxy form in, HTTP or HTTPS out
-  webgate-ext/    webgate's extension for the Pi's browser (install web --browser)
+  webgate-ext/    webgate's extension for the Gateway's browser (install web --browser)
   translategate.py translate: text translated on the Pi by a local engine (Argos Translate)
+  translate-phrases.tsv translategate's greetings and closings, a plain list
   install.sh      the apps' old way in, handed on to aera-gateway
   test_*.py       their tests
 pens/             aerapens, for webgate's pictures as the Atari's pens: built on the Pi by install web
@@ -136,7 +137,7 @@ notes that it is withdrawn and which one to use.
 pip install paramiko pyftpdlib pyopenssl pillow
 python3 -m unittest discover -s gateway -p 'test_*.py'
 sudo tests/systemd.sh          on a spare computer with systemd: it installs and removes services
-sudo tests/snap.sh             on a spare Ubuntu computer: the Pi's browser with the Chromium snap
+sudo tests/snap.sh             on a spare Ubuntu computer: the Gateway's browser with the Chromium snap
 ```
 
 CI runs all three on every push, the first with Python 3.9, 3.11, 3.12 and
