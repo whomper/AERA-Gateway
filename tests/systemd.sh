@@ -260,7 +260,7 @@ echo "== translate: translategate with the stand-in engine (no model in CI)"
 "$GW/aera-gateway" install translate --engine stand-in --allow 127.0.0.1
 running translategate
 listens 8480
-unit_has translategate "^ExecStart=/usr/bin/python3 /opt/aera-gateway/translategate.py --port 8480 --allow 127.0.0.1 --engine stand-in"
+unit_has translategate "^ExecStart=/usr/bin/python3 /opt/aera-gateway/translategate.py --port 8480 --allow 127.0.0.1$"
 unit_has translategate "^User=translategate"
 unit_has translategate "^MemoryMax=2G"
 [ ! -e /opt/translategate ] || fail "the stand-in set up an engine"
@@ -290,7 +290,7 @@ sleep 1
 ! journalctl -u translategate --no-pager | grep -qi "wilhelmina" || fail "a word of the text is in the journal"
 journalctl -u translategate --no-pager | grep -q "127.0.0.1 de>en 200, " || fail "no log line for the translation"
 "$GW/aera-gateway" update > "$W/update.out" 2>&1 || { cat "$W/update.out"; fail "update with translate"; }
-unit_has translategate "--engine stand-in"
+unit_has translategate "translategate.py --port 8480 --allow 127.0.0.1$"
 running translategate
 "$GW/aera-gateway" remove translate
 [ ! -e /etc/systemd/system/translategate.service ] || fail "remove translate left its unit"
