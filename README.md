@@ -14,6 +14,7 @@ they are.
 | `dav`    | ECal and EContact   | 8180                                 | HTTPS to CalDAV, CardDAV and feeds    |
 | `ftp`    | EFTP                | 2121, and 30000-30099 for data       | FTPS or SFTP to the server            |
 | `web`    | EWeb                | 8280                                 | HTTP and HTTPS to any web server      |
+| `pdf`    | EConvert and EPDF   | 8380                                 | converts PDFs for the Atari (nothing onwards) |
 | `translate` | the apps' Translate | 8480                              | nothing: a local engine translates    |
 | `claude` | ClaudeST            | 2323 (or a serial cable)             | HTTPS to claude.ai or the API         |
 
@@ -55,6 +56,7 @@ into its Atari program:
 | EFTP               | Options > Settings > Secure            | Gateway `GATEWAY_IP`, port 2121                 |
 | EWeb               | Settings > Secure                      | Gateway `GATEWAY_IP`, port 8280                 |
 | ClaudeST           | Options > Settings > Network           | `GATEWAY_IP`, port 2323                            |
+| EConvert, EPDF     | Gateway mode: Through the Gateway      | `GATEWAY_IP`, port 8380                       |
 
 Use the Gateway's address, not its name: plain TOS with STinG can't always
 look names up on the home network. On a Falcon or TT, EMail, ECal,

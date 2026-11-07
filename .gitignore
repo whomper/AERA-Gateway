@@ -6,3 +6,5 @@ pens/aerapens
 pens/common/tools/pens/build/
 jsc/aerajsc
 jsc/eweb/tools/jsc/build/
+pdf/aerapdf
+pdf/epdf/build/

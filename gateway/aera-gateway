@@ -9,6 +9,7 @@ says how they are.
   sudo ./aera-gateway install dav                           ECal's and EContact's (ecalgate)
   sudo ./aera-gateway install ftp                           EFTP's (eftpgate)
   sudo ./aera-gateway install web                           EWeb's (webgate)
+  sudo ./aera-gateway install pdf                           EConvert's and EPDF's converter (pdfgate)
   sudo ./aera-gateway install translate                     translation for the apps (translategate)
   sudo ./aera-gateway install claude --network --atari ATARI_IP
                                                             ClaudeST's bridge (claude-st)
@@ -57,8 +58,8 @@ PROG = sys.argv[0] if sys.argv[0].endswith("aera-gateway") else "aera-gateway"  
 OPT = "/opt/aera-gateway"                   # the gateways' code on the Pi
 UNITS = "/etc/systemd/system"
 OLD_BIN = "/usr/local/bin"                  # where the apps' own install.sh put them
-FILES = ("aeragate.py", "emailgate.py", "ecalgate.py", "eftpgate.py", "webgate.py", "translategate.py",
-         "translate-phrases.tsv")
+FILES = ("aeragate.py", "emailgate.py", "ecalgate.py", "eftpgate.py", "webgate.py", "pdfgate.py",
+         "translategate.py", "translate-phrases.tsv")
 EXT = "webgate-ext"                         # webgate's browser extension, a folder next to them
 HOME_NETS = ("192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8")
 CLAUDEST = "whomper/ClaudeST"
@@ -1085,6 +1086,111 @@ class Web(Gateway):
             "Check it from any browser on your network: http://%s:%s/" % (ip, ns.port)])
 
 
+class Pdf(Gateway):
+    """pdfgate: PDFs converted for EConvert and EPDF by aerapdf, EPDF's
+    converter, built here from this copy's pdf/ (EPDF's source at the
+    commit in pdf/EPDF, tools/sync-pdf.sh)"""
+    key, name, script = "pdf", "pdfgate", "pdfgate.py"
+    title = "PDF converter for EConvert and EPDF on the Atari"
+    removed = "pdfgate removed."
+    PDF_SRC = os.path.join(os.path.dirname(HERE), "pdf")
+    PDF_DIR = "/opt/aera-gateway-pdf"
+    built = None                            # this install's aerapdf, built in prepare() ("kept": as it is)
+    source = None                           # the sum of the pdf/ it is built from
+
+    def options(self, ap):
+        super().options(ap)
+        ap.add_argument("--port", type=int, help="the port on the Pi (8380 is the default)")
+        ap.add_argument("-v", "--verbose", action="store_true", default=None, help="log every request")
+        ap.add_argument("--no-verbose", dest="verbose", action="store_false")
+
+    def apply(self, ns, o):
+        super().apply(ns, o)
+        if o.port is not None:
+            ns.port = o.port
+        if o.verbose is not None:
+            ns.verbose = o.verbose
+
+    def check(self, ns):
+        if not os.path.isdir(os.path.join(self.PDF_SRC, "epdf")):
+            raise Failed("This copy has no pdf/ (EPDF's converter): install pdf from AERA-Gateway itself.")
+
+    def pdf_sum(self):
+        """a sum of this copy's pdf/: the same sum, the same aerapdf"""
+        h = hashlib.sha256()
+        for top, dirs, files in sorted(os.walk(self.PDF_SRC)):
+            dirs[:] = sorted(d for d in dirs if d != "build")
+            for f in sorted(files):
+                if f != "aerapdf":
+                    path = os.path.join(top, f)
+                    h.update(os.path.relpath(path, self.PDF_SRC).encode() + b"\0")
+                    with open(path, "rb") as fh:
+                        h.update(fh.read())
+        return h.hexdigest()
+
+    def prepare(self, pi, ns):
+        """aerapdf built from pdf/, unless the one there is from the same pdf/"""
+        self.built = None
+        self.source = self.pdf_sum()
+        if pi.exists(self.PDF_DIR + "/aerapdf") and \
+                (pi.read(self.PDF_DIR + "/BUILT") or "").strip() == self.source:
+            self.built = "kept"
+            return
+        need = [pkg for prog, pkg in (("cc", "gcc"), ("make", "make")) if not pi.which(prog)]
+        if need:
+            heading("Installing %s, to build aerapdf (EPDF's converter)" % " and ".join(need))
+            pi.run("apt-get", "update", "-qq")
+            pi.run("apt-get", "install", "-y", "-qq", *need)
+        heading("Building aerapdf: this takes a few minutes on a Pi")
+        tmp = tempfile.mkdtemp(prefix="aerapdf-")
+        shutil.copytree(self.PDF_SRC, os.path.join(tmp, "pdf"), ignore=shutil.ignore_patterns("aerapdf", "build"))
+        if pi.run("make", "-s", "-C", os.path.join(tmp, "pdf"), check=False).returncode != 0 or \
+                not os.path.isfile(os.path.join(tmp, "pdf", "aerapdf")):
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise Failed("aerapdf didn't build (see above): pdfgate isn't installed.")
+        self.built = tmp
+
+    def before_start(self, pi):
+        """aerapdf, its fonts and which EPDF it is from, in place before
+        pdfgate starts"""
+        if not self.built or self.built == "kept":
+            self.built = None
+            return
+        try:
+            pdf = os.path.join(self.built, "pdf")
+            pi.rmtree(self.PDF_DIR + "/fonts")
+            pi.makedirs(self.PDF_DIR + "/fonts")
+            pi.copy(os.path.join(pdf, "aerapdf"), self.PDF_DIR + "/aerapdf", 0o755)
+            for f in sorted(glob.glob(os.path.join(pdf, "epdf", "third_party", "liberation", "fonts", "*.ttf"))):
+                pi.copy(f, "%s/fonts/%s" % (self.PDF_DIR, os.path.basename(f)), 0o644)
+            with open(os.path.join(pdf, "EPDF")) as fh:
+                pi.write(self.PDF_DIR + "/SOURCE", fh.read().strip() + "\n")
+            pi.write(self.PDF_DIR + "/BUILT", self.source + "\n")
+        finally:
+            shutil.rmtree(self.built, ignore_errors=True)
+            self.built = None
+
+    def after_remove(self, pi):
+        pi.rmtree(self.PDF_DIR)
+
+    def args(self, ns):
+        out = ["--port", str(ns.port)] + super().args(ns)
+        out += ["-v"] if ns.verbose else []
+        return out + ns.extra
+
+    def ports(self, ns):
+        return [str(ns.port)]
+
+    def tell(self, ns, ip):
+        return "\n".join([
+            "",
+            "pdfgate is running. In EConvert and EPDF on the Atari, Gateway mode, Through the Gateway:",
+            "   Gateway:     %s" % ip,
+            "   Port:        %s" % ns.port,
+            "",
+            "Check it from any browser on your network: http://%s:%s/version" % (ip, ns.port)])
+
+
 class Translate(Gateway):
     """translategate: text translated on the Pi for the Atari apps, by a
     local engine (no text leaves the home network). The engine, Argos
@@ -1255,7 +1361,7 @@ class Translate(Gateway):
 
 
 MAIL = Mail()
-GATEWAYS = [MAIL, Dav(), Ftp(), Web(), Translate()]
+GATEWAYS = [MAIL, Dav(), Ftp(), Web(), Pdf(), Translate()]
 
 
 def put_files(pi, src):
@@ -1606,6 +1712,7 @@ SERVICES = {g.key: g for g in GATEWAYS + [CLAUDE]}
 NAMES = {"email": "mail", "emailgate": "mail", "cal": "dav", "ecal": "dav", "econtact": "dav",
          "contacts": "dav", "ecalgate": "dav", "eftp": "ftp", "eftpgate": "ftp",
          "claudest": "claude", "claude-st": "claude", "eweb": "web", "webgate": "web",
+         "epdf": "pdf", "econvert": "pdf", "pdfgate": "pdf",
          "translation": "translate", "translategate": "translate"}
 
 
@@ -1673,6 +1780,9 @@ def install_all(pi, o, src=HERE):
     for svc in GATEWAYS + [CLAUDE]:
         if svc is MAIL and not o.mail and not svc.installed(pi) and not pi.exists(Mail.STUNNEL):
             skipped.append("mail (name your provider's servers: --mail IMAP SMTP[:587] [POP3])")
+            continue
+        if svc.key == "pdf" and not os.path.isdir(os.path.join(Pdf.PDF_SRC, "epdf")):
+            skipped.append("pdf (EPDF's converter comes only with AERA-Gateway itself, not an app's copy)")
             continue
         if svc.key == "translate" and not svc.installed(pi) and not svc.arch_ok(pi):
             skipped.append("translate (its engine needs the 64-bit Raspberry Pi OS: uname -m says %s)"
