@@ -11,7 +11,9 @@
  * when the picture is shown that small, which is much quicker; the kinds
  * it won't take (progressive, SOF1, CMYK...) from their blocks' averages
  * (jpegdc.c), an eighth of their size. PNG: png.c. GIF: NetSurf's
- * libnsgif (third_party/nsgif), its first frame.
+ * libnsgif (third_party/nsgif), its first frame. WebP (a build with
+ * PIC_LIBWEBP: EWeb's): Google's libwebp (third_party/libwebp), lossy and
+ * lossless, with alpha; not an animation.
  */
 #ifndef PIC_H
 #define PIC_H
@@ -22,8 +24,8 @@ int pic_kind(const unsigned char *d, long n);
 /* the name of a kind, for messages: "JPEG" */
 const char *pic_kind_name(int kind);
 
-/* 1 and its size in pixels, from its header (JPEG, PNG, GIF); 0 when
-   it can't be told */
+/* 1 and its size in pixels, from its header (JPEG, PNG, GIF; WebP
+   with PIC_LIBWEBP); 0 when it can't be told */
 int pic_size(const unsigned char *d, long n, long *w, long *h);
 
 typedef struct {
@@ -45,9 +47,30 @@ const char *pic_why_text(int why);
    PNG); it is checked before anything is decoded. */
 PIC *pic_decode(const unsigned char *d, long n, int w, int h, long max_px, int *why);
 void pic_free(PIC *p);
+/* a JPEG read a piece at a time and made a row at a time at w x h, never
+   whole in memory (TJpgDec's builds: a 1 MB ST's): fill(fu, buf, n) gives
+   the file's next bytes (0 at the end), row(ru, y, px, alpha) each row
+   shown, y from 0 to h - 1 (px w pixels 5-6-5, alpha w bytes), the same
+   pixels as pic_decode's: a program can show them as they come, the
+   picture from the top down. 1 done; 0 not (why); -1 not a JPEG made
+   this way (progressive, CMYK, ...; libjpeg's builds): pic_decode */
+int pic_jpeg_rows(long (*fill)(void *u, unsigned char *buf, long n), void *fu, int w, int h,
+		  void (*row)(void *u, long y, const unsigned short *px, const unsigned char *alpha), void *ru, int *why);
+#ifdef PIC_CHECK_HEADERS
+/* the tests' (libjpeg's builds): JPEGs whose headers libjpeg and pic.c's
+   own reader for the DSP (a TJpgDec build's) read the same, those only
+   libjpeg gives the DSP (extended sequential), those that differ */
+extern long pic_hdr_same, pic_hdr_lj_only, pic_hdr_differ;
+#endif
 /* called now and then while decoding; 0 stops it (PIC_STOPPED). NULL:
    never */
 extern int (*pic_poll)(void);
+/* the scaler (a decode to a size, row by row) calls pic_poll every this many
+   source rows: 16, unless the program sets it. One row of an 800-pixel PNG
+   takes about 9.5 ms on a 16 MHz 68030, so a program whose poll is cheap
+   and that wants a turn under 50 ms sets 1 (EWeb: the pictures' page 180
+   ms -> 75, the decode 1.8 % slower); one whose poll is dear keeps 16 */
+extern int pic_scale_poll_rows;
 
 /* ---- a baseline JPEG decoded on the Falcon's DSP (PIC_LIBJPEG builds;
    dsp/jpeg.a56) ---- */
@@ -83,6 +106,7 @@ extern const PIC_DSP *pic_dsp;
 /* put and the gets set it when the DSP stops answering, and then do
    nothing */
 extern int pic_dsp_failed;
+extern unsigned long pic_dsp_bad;	/* dspjpeg.c: the refused destination of a DSP picture (0: none) */
 /* 1 (as it starts): the DSP shrinks a JPEG shown smaller too, sending
    only the pixels shown; 0: it sends them all, for the scaler (the tests
    compare the two) */
@@ -119,7 +143,24 @@ int pic_pal_nearest(PIC_PAL *pal, int r, int g, int b);
 /* the picture as pens, Floyd-Steinberg (serpentine; a colour wanted past
    the cube's edges finds the pen that lies that way); out has w * h
    bytes. The pixels the alpha leaves less than half solid are given pen
-   0 (they aren't drawn) and carry no error */
-void pic_dither(const PIC *p, PIC_PAL *pal, unsigned char *out);
+   0 (they aren't drawn) and carry no error. pic_poll is called every 16
+   rows (pic_dither's own; the scaler's is pic_scale_poll_rows): 1 done, 0 when it stopped it (out then partly made) */
+int pic_dither(const PIC *p, PIC_PAL *pal, unsigned char *out);
+/* the same a row at a time, for a picture that isn't whole in memory: rows
+   of w pixels (5-6-5, alpha or NULL) given top to bottom, each one's pens
+   to out (w bytes); the same pens as pic_dither's for the same rows (not
+   the DSP's way). NULL when its state (some 150 bytes) can't be had;
+   without room for two rows' errors, each pixel's nearest pen, as
+   pic_dither then does */
+typedef struct pic_dither_rows PIC_DITHER;
+PIC_DITHER *pic_dither_open(long w, PIC_PAL *pal);
+void pic_dither_row(PIC_DITHER *dt, const unsigned short *px, const unsigned char *alpha, unsigned char *out);
+void pic_dither_close(PIC_DITHER *dt);
+/* Sharp (Erez, 5 Nov 2026, EPDF's first): from here each pixel its
+   nearest pen, no dither, as without room for the errors. For a picture
+   of few colours (a screenshot, a diagram) on 16 colours or fewer, whose
+   letters a dither makes dots; photos keep the dither (the caller
+   decides: EPDF, a palette of up to 128 colours). Off unless asked */
+void pic_dither_sharp(PIC_DITHER *dt);
 
 #endif
