@@ -306,6 +306,30 @@ class JobTest(Base):
         self.assertEqual(got["long"][0], 200)
 
 
+class EnHe(tg.StandIn):
+    """the default install: English and Hebrew only"""
+    NAMES = {"en": "English", "he": "Hebrew"}
+
+
+class NotInstalledTest(Base):
+    engine = EnHe
+
+    def test_german_is_not_already_english(self):
+        st, hd, body = self.tr("Guten Tag, ich hoffe, es geht Ihnen gut. Die Rechnung ist nicht korrekt, %s." % SECRET)
+        self.assertEqual((st, body), (422, "translategate: that pair of languages isn't installed\n"))
+        self.assertEqual(hd["x-translate-from"], "de")
+        self.assertNotIn("x-translate-same", hd)
+
+    def test_argos_detects_beyond_its_pairs(self):
+        eng = tg.Argos.__new__(tg.Argos)
+        eng.pair = {("en", "he"): None, ("he", "en"): None}
+        s = "Guten Tag, ich hoffe, es geht Ihnen gut. Wir haben die Rechnung erhalten und sie ist nicht korrekt."
+        self.assertEqual(eng.detect(s), "de")
+        self.assertEqual(eng.detect("Thanks"), "en")
+        self.assertEqual(eng.detect("I hope this letter finds you well and that the old Falcon still runs."), "en")
+        self.assertEqual(eng.detect("שלום, מה שלומך?"), "he")
+
+
 class LoadingTest(Base):
     engine = staticmethod(lambda: tg.StandIn(load=30))
 
