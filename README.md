@@ -369,6 +369,13 @@ list that grows as real use shows a phrase the models get wrong. Known
 gaps, from the fixed sets: "Re:" before a subject isn't translated, and
 "הזמנה חדשה" (a new order) comes back as "A new invitation".
 
+The apps that translate also have a Languages page: tick the languages
+wanted, see the memory they take against the room there is, and on OK
+the Gateway installs and removes them itself (translategate-langs.service
+downloads them; translategate then starts again with them). Nothing is
+sent until the page closes with OK, and only from the Ataris allowed
+(`--allow`). The sizes are `gateway/translate-languages.tsv`'s.
+
 Check it from any browser on your network: `http://GATEWAY_IP:8480/status`
 answers "translategate 1", the engine and "ready". `--port N` gives it
 another port, `-v` logs the status pages too, and `--engine stand-in`
