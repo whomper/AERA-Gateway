@@ -50,7 +50,6 @@ import tarfile
 import tempfile
 import time
 import urllib.request
-import zipfile
 
 VERSION = "1.28"                         # AERA-Gateway's release: the Release workflow tags it vX.Y
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -59,7 +58,7 @@ OPT = "/opt/aera-gateway"                   # the gateways' code on the Pi
 UNITS = "/etc/systemd/system"
 OLD_BIN = "/usr/local/bin"                  # where the apps' own install.sh put them
 FILES = ("aeragate.py", "emailgate.py", "ecalgate.py", "eftpgate.py", "webgate.py", "pdfgate.py",
-         "translategate.py", "translate-phrases.tsv")
+         "translategate.py", "translatelangs.py", "translate-phrases.tsv", "translate-languages.tsv")
 EXT = "webgate-ext"                         # webgate's browser extension, a folder next to them
 HOME_NETS = ("192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8")
 CLAUDEST = "whomper/ClaudeST"
@@ -1211,7 +1210,6 @@ class Translate(Gateway):
     LANGUAGES = "en,he"
     PIP = ("ctranslate2>=4,<5", "sentencepiece>=0.2,<0.3")
     MAX_MEMORY = 1536                       # MB translategate may take (MemoryMax) on a 4 GB Pi
-    memory_max = 1024                       # MemoryMax for the models installed (prepare)
     MIN_MEMORY = 3500                       # MB: the models loaded beside the other gateways (a 4 GB Pi
                                             # says about 3790)
 
@@ -1262,8 +1260,12 @@ class Translate(Gateway):
         # the engine's memory (about 420 MB at its peak), beside the other
         # gateways on a 4 GB Pi; and when memory runs out, the kernel takes
         # a browser's page or a conversion before the loaded models
-        mm = "1G" if self.memory_max == 1024 else "%dM" % self.memory_max
-        return text.replace("Restart=always", "MemoryMax=%s\nOOMScoreAdjust=-300\nRestart=always" % mm, 1)
+        # (the models may change from the Atari's Languages page, up to
+        # translatelangs.CAP_MB of them: the most they may take, always)
+        mm = "%dM" % self.MAX_MEMORY if ns.engine == "argos" else "1G"
+        text = text.replace("Restart=always", "MemoryMax=%s\nOOMScoreAdjust=-300\nRestart=always" % mm, 1)
+        # the languages' job's files (request, job), translategate's to write
+        return text.replace("NoNewPrivileges=yes", "StateDirectory=translategate\nNoNewPrivileges=yes", 1)
 
     def describe(self, ns):
         return "engine " + ns.engine
@@ -1298,17 +1300,15 @@ class Translate(Gateway):
                    if "%s_%s" % p not in have]
         if missing:
             self.fetch(pi, missing)
-        # the memory the models take loaded (about their size on disk, and a
-        # little more), checked against what a Pi beside the others can give
-        size = sum(os.path.getsize(f) for f in glob.glob(pi.path(self.MODELS) + "/*/model/model.bin"))
-        need = int(size * 1.25 / 2 ** 20) + 150
-        if need > self.MAX_MEMORY:
+        # the models' room: what translatelangs (and the Languages page) allow
+        tl = load(HERE, "translatelangs.py")
+        need = tl.size_mb(want)
+        if need > tl.CAP_MB:
             for a, b in missing:
                 pi.rmtree("%s/%s_%s" % (self.MODELS, a, b))
-            raise Failed("The translation models for %s would take about %d MB loaded; translategate may take "
-                         "%d MB beside the other gateways. Name fewer languages (--languages en,he)."
-                         % (",".join(sorted(set(want) | {"en"})), need, self.MAX_MEMORY))
-        self.memory_max = max(1024, -(-need // 64) * 64)
+            raise Failed("The translation models for %s take %d MB; %d MB fit beside the other gateways. "
+                         "Name fewer languages (--languages en,he)." % (",".join(sorted(set(want) | {"en"})),
+                                                                       need, tl.CAP_MB))
 
     def memory(self, pi):
         m = re.search(r"^MemTotal:\s+(\d+) kB", pi.read("/proc/meminfo") or "", re.M)
@@ -1327,49 +1327,50 @@ class Translate(Gateway):
     def fetch(self, pi, pairs):
         """Argos Translate's models for pairs, from its index (once; offline after)"""
         heading("Downloading the translation models: %s" % ", ".join("%s>%s" % p for p in pairs))
+        tl = load(HERE, "translatelangs.py")
         try:
-            with urllib.request.urlopen(self.INDEX, timeout=60) as r:
-                index = json.load(r)
-        except (OSError, ValueError) as e:
-            raise Failed("can't read Argos Translate's list of models (%s)" % e)
-        newest = {}
-        for p in index:
-            k = (p.get("from_code"), p.get("to_code"))
-            links = [u for u in p.get("links", []) if u.startswith("https://")]
-            if k in pairs and links:
-                v = tuple(int(x) for x in re.findall(r"\d+", str(p.get("package_version", "0"))))
-                if k not in newest or v > newest[k][0]:
-                    newest[k] = (v, links[0])
-        gone = [p for p in pairs if p not in newest]
-        if gone:
-            raise Failed("Argos Translate has no model for %s" % ", ".join("%s>%s" % p for p in gone))
-        for (a, b), (_, url) in sorted(newest.items()):
-            tmp = tempfile.mkdtemp(prefix="translategate-")
-            try:
-                say("   %s>%s from %s" % (a, b, url))
-                # (its server turns away Python's own User-Agent)
-                req = urllib.request.Request(url, headers={"User-Agent": "aera-gateway/" + VERSION})
-                with urllib.request.urlopen(req, timeout=600) as r, open(os.path.join(tmp, "m.zip"), "wb") as f:
-                    shutil.copyfileobj(r, f)
-                with zipfile.ZipFile(os.path.join(tmp, "m.zip")) as z:
-                    names = z.namelist()
-                    top = names[0].split("/")[0]
-                    want = ("%s/metadata.json" % top, "%s/sentencepiece.model" % top,
-                            "%s/model/model.bin" % top)
-                    if any(n not in names for n in want) or any(n.startswith("/") or ".." in n.split("/")
-                                                                for n in names):
-                        raise Failed("the %s>%s model isn't one translategate can use" % (a, b))
-                    z.extractall(tmp, [n for n in names if n.startswith(top + "/model/") or n in want])
-                dst = "%s/%s_%s" % (self.MODELS, a, b)
-                pi.rmtree(dst)
-                pi.makedirs(self.MODELS)
-                shutil.copytree(os.path.join(tmp, top), pi.path(dst))
-            except (OSError, zipfile.BadZipFile) as e:
-                raise Failed("can't download the %s>%s model (%s)" % (a, b, e))
-            finally:
-                shutil.rmtree(tmp, ignore_errors=True)
+            urls = tl.links(pairs)
+            for p in sorted(urls):
+                say("   %s>%s from %s" % (p[0], p[1], urls[p]))
+                tl.fetch(p, urls[p], pi.path(self.MODELS))
+        except tl.Fail as e:
+            raise Failed(str(e))
+
+    UNITS_LANGS = ("translategate-langs.path", "translategate-langs.service")
+
+    def langs_units(self):
+        """the languages' job: translategate writes a request, systemd runs
+        translatelangs for it, as translategate's user, the only one of the
+        two that connects anywhere (Argos Translate's downloads)"""
+        path = "\n".join([
+            "[Unit]", "Description=translategate's languages: a request from an app's Languages page", "",
+            "[Path]", "PathModified=/var/lib/translategate/request", "Unit=translategate-langs.service", "",
+            "[Install]", "WantedBy=multi-user.target", ""])
+        svc = "\n".join([
+            "[Unit]", "Description=translategate's languages: Argos Translate's models put in and taken out", "",
+            "[Service]", "Type=oneshot", "User=translategate",
+            "ExecStart=/usr/bin/python3 %s/translatelangs.py job" % OPT,
+            "StateDirectory=translategate", "ReadWritePaths=%s" % self.MODELS,
+            "TimeoutStartSec=3600", "MemoryMax=256M",
+            "NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes",
+            "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX", ""])
+        return {self.UNITS_LANGS[0]: path, self.UNITS_LANGS[1]: svc}
+
+    def before_start(self, pi):
+        """the models translategate's own (the Languages page changes them),
+        and the languages' job set up"""
+        pi.makedirs(self.MODELS)
+        pi.run("chown", "-R", "translategate:translategate", self.MODELS)
+        for name, text in self.langs_units().items():
+            pi.write("%s/%s" % (UNITS, name), text)
+        pi.run("systemctl", "daemon-reload")
+        pi.run("systemctl", "enable", "--now", self.UNITS_LANGS[0], out="hide")
 
     def after_remove(self, pi):
+        pi.run("systemctl", "disable", "--now", *self.UNITS_LANGS, check=False, out="hide", errors=False)
+        for name in self.UNITS_LANGS:
+            pi.remove("%s/%s" % (UNITS, name))
+        pi.run("systemctl", "daemon-reload")
         pi.rmtree(self.DIR)
 
     def tell(self, ns, ip):

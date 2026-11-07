@@ -97,6 +97,8 @@ gateway/      what runs on the Pi; the apps carry a copy of this folder
   webgate-ext/    webgate's extension for the Gateway's browser (install web --browser)
   translategate.py translate: text translated on the Pi by a local engine (Argos Translate)
   translate-phrases.tsv translategate's greetings and closings, a plain list
+  translatelangs.py translate: the languages installed and removed (the apps' Languages page)
+  translate-languages.tsv the languages that can be installed, with their sizes
   install.sh      the apps' old way in, handed on to aera-gateway
   test_*.py       their tests
 pens/             aerapens, for webgate's pictures as the Atari's pens: built on the Pi by install web

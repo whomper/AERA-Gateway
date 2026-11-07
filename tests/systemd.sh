@@ -310,7 +310,7 @@ unit_has translategate "^ExecStart=/usr/bin/python3 /opt/aera-gateway/translateg
 unit_has translategate "^User=translategate"
 unit_has translategate "^MemoryMax=1G"
 unit_has translategate "^OOMScoreAdjust=-300"
-[ ! -e /opt/translategate ] || fail "the stand-in set up an engine"
+[ ! -e /opt/translategate/venv ] || fail "the stand-in set up an engine"
 [ -e /opt/aera-gateway/translate-phrases.tsv ] || fail "translate-phrases.tsv isn't in /opt"
 python3 - <<'PY'
 import socket
@@ -337,11 +337,64 @@ PY
 sleep 1
 ! journalctl -u translategate --no-pager | grep -qi "wilhelmina" || fail "a word of the text is in the journal"
 journalctl -u translategate --no-pager | grep -q "127.0.0.1 de>en 200, " || fail "no log line for the translation"
+# the Languages page: a request, the job (with an index and models of the
+# test's own, as file: URLs), the models in place, translategate again
+systemctl is-active --quiet translategate-langs.path || fail "the languages' job isn't watching"
+mkdir -p /srv/tl-fake /etc/systemd/system/translategate-langs.service.d
+python3 - "$GW" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from test_translatelangs import fake_index
+print(fake_index("/srv/tl-fake", [("he", "en"), ("en", "he")]))
+PY
+chmod -R a+rX /srv/tl-fake
+printf '[Service]\nEnvironment=TRANSLATELANGS_INDEX=file:///srv/tl-fake/index.json\n' \
+  > /etc/systemd/system/translategate-langs.service.d/test.conf
+systemctl daemon-reload
+python3 - <<'PY'
+import socket, time
+def ask(req):
+    s = socket.create_connection(("127.0.0.1", 8480), timeout=20)
+    s.sendall(req)
+    out = b""
+    while True:
+        b = s.recv(65536)
+        if not b:
+            return out.partition(b"\r\n\r\n")
+        out += b
+head, _, body = ask(b"POST /languages HTTP/1.0\r\nContent-Length: 2\r\n\r\nhe")
+assert head.startswith(b"HTTP/1.0 202") and body == b"job 1\n", (head, body)
+for _ in range(60):
+    time.sleep(1)
+    try:
+        _, _, body = ask(b"GET /job HTTP/1.0\r\n\r\n")
+    except OSError:
+        continue                        # (translategate starting again)
+    if not body.startswith(b"job 1\nrunning"):
+        break
+assert body == b"job 1\ndone\n", body
+for _ in range(20):
+    time.sleep(1)
+    try:
+        _, _, body = ask(b"GET /languages?all=1 HTTP/1.0\r\n\r\n")
+        break
+    except OSError:
+        pass
+assert b"\nhe\tHebrew\t230\tinstalled\n" in body and b"used_mb 230\n" in body, body
+print("ok: the Languages page's request, its job and the models in place")
+PY
+[ -e /opt/translategate/models/he_en/model/model.bin ] || fail "the job didn't put he>en in place"
+[ "$(stat -c %U /opt/translategate/models/he_en)" = translategate ] || fail "the job's models aren't translategate's"
+journalctl -u translategate --no-pager | grep -q "starting again with them" || fail "translategate didn't start again"
+rm -rf /etc/systemd/system/translategate-langs.service.d /srv/tl-fake
+systemctl daemon-reload
 "$GW/aera-gateway" update > "$W/update.out" 2>&1 || { cat "$W/update.out"; fail "update with translate"; }
 unit_has translategate "translategate.py --port 8480 --allow 127.0.0.1$"
 running translategate
 "$GW/aera-gateway" remove translate
 [ ! -e /etc/systemd/system/translategate.service ] || fail "remove translate left its unit"
+[ ! -e /etc/systemd/system/translategate-langs.path ] || fail "remove translate left the languages' job"
+[ ! -e /opt/translategate ] || fail "remove translate left /opt/translategate"
 ok "translate"
 
 echo "== claude: the recipe leaves what ClaudeST's pi/install.sh left"
