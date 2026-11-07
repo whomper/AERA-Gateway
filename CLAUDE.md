@@ -23,6 +23,20 @@ installer (`gateway/aera-gateway`), which also sets up ClaudeST's bridge
   2323; 8281 is webgate's extension's, on 127.0.0.1 only).
 - ClaudeST's bridge stays in ClaudeST; the `claude` recipe sets it up as
   ClaudeST's `pi/install.sh` did, and `tests/systemd.sh` checks that.
+  - **The Gateway session owns the gateway as one unit** (Erez, 7 Nov
+  2026; guidelines 7.3, AERA-Atari 49e1d9f). It commits, tests and
+  releases everything that runs on the Pi: the services, the installer,
+  `aeragate.py`, the port table, CI, the one `VERSION` and
+  `update-pi.sh`. Nobody else pushes AERA-Gateway, the hub included.
+  The app sessions decide their service's protocol and write its code,
+  and hand it over as a `git format-patch` with tests, or as a
+  `tools/sync-NAME.sh` copy of a named commit of their repository (never
+  edited here). This session reviews each against the unit (install,
+  what an update keeps, remove, `tests/systemd.sh`, the ports, guideline
+  7.3, standard Python only, one `VERSION`), integrates it, runs the
+  checks, releases it and sends the link to the app session and the
+  hub. An app release that needs a gateway change names that version
+  and goes out after it.
 
 ## Talking with Erez
 
@@ -108,21 +122,6 @@ A change to the docs alone needs no release of
   author of every commit:
   `git commit --author="AERA | Erez Yaary <yaary@me.com>"`, with Claude as
   the signing committer (AERA-Atari, `standards/GITHUB-IDENTITY.md`).
-
-  - **The Gateway session owns the gateway as one unit** (Erez, 7 Nov
-  2026; guidelines 7.3, AERA-Atari 49e1d9f). It commits, tests and
-  releases everything that runs on the Pi: the services, the installer,
-  `aeragate.py`, the port table, CI, the one `VERSION` and
-  `update-pi.sh`. Nobody else pushes AERA-Gateway, the hub included.
-  The app sessions decide their service's protocol and write its code,
-  and hand it over as a `git format-patch` with tests, or as a
-  `tools/sync-NAME.sh` copy of a named commit of their repository (never
-  edited here). This session reviews each against the unit (install,
-  what an update keeps, remove, `tests/systemd.sh`, the ports, guideline
-  7.3, standard Python only, one `VERSION`), integrates it, runs the
-  checks, releases it and sends the link to the app session and the
-  hub. An app release that needs a gateway change names that version
-  and goes out after it.
 
 ## Maintenance mode (Erez, 1 Nov 2026)
 
