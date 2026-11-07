@@ -218,6 +218,49 @@ class ShapeTest(Base):
         self.assertEqual(tg.MARK_BACK.search(out).group(1), "3")
 
 
+class FakeModel:
+    """CTranslate2 and SentencePiece as far as Argos.translate uses them:
+    the "translation" is the source in capitals, a word alone said twice
+    (as the small models do)"""
+    def __init__(self):
+        self.fed = []
+
+    def encode(self, s, out_type=str):
+        return s.split()
+
+    def decode(self, toks):
+        return " ".join(toks)
+
+    def translate_batch(self, toks, **kw):
+        class Hyp:
+            def __init__(self, h):
+                self.hypotheses = [h]
+        self.fed += [" ".join(t) for t in toks]
+        return [Hyp([w.upper() for w in t] * (2 if len(t) == 1 else 1)) for t in toks]
+
+
+class ArgosShapeTest(unittest.TestCase):
+    def setUp(self):
+        self.eng = tg.Argos.__new__(tg.Argos)
+        self.model = FakeModel()
+        self.eng.pair = {("he", "en"): (self.model, self.model), ("en", "he"): (self.model, self.model)}
+
+    def test_closings(self):
+        self.assertEqual(tg.closing("he", "en", "בברכה,"), "Best regards,")
+        self.assertEqual(tg.closing("en", "he", "Kind Regards"), "בברכה")
+        self.assertIsNone(tg.closing("en", "he", "Kind regards to your mother"))
+        self.assertEqual(self.eng.translate(["בברכה,", "Thanks!"], "he", "en"), ["Best regards,", "THANKS!"])
+        self.assertEqual(self.model.fed, ["Thanks!"])
+
+    def test_short_gets_a_full_stop(self):
+        self.assertEqual(self.eng.translate(["Dana", "new order", "One. Two words here."], "en", "he"),
+                         ["DANA", "NEW ORDER", "ONE. TWO WORDS HERE."])
+        self.assertEqual(self.model.fed, ["Dana.", "new order.", "One.", "Two words here."])
+        self.assertTrue(tg.short("Re: the old Falcon"))
+        self.assertFalse(tg.short("Thanks,"))
+        self.assertFalse(tg.short("one two three four five"))
+
+
 class Slow(tg.StandIn):
     def __init__(self):
         super().__init__(delay=0.6)
