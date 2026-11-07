@@ -1731,22 +1731,22 @@ def status(pi, src=HERE):
     stale = False
     for svc in GATEWAYS + [CLAUDE]:
         if not svc.installed(pi):
-            say("  %-7s %-10s not installed" % (svc.key, svc.name))
+            say("  %-9s %-13s not installed" % (svc.key, svc.name))
             continue
         state = pi.out("systemctl", "is-active", svc.name).strip() or "stopped"
         if svc is CLAUDE:
-            say("  %-7s %-10s %-9s %s" % (svc.key, svc.name, state, svc.describe(pi)))
+            say("  %-9s %-13s %-9s %s" % (svc.key, svc.name, state, svc.describe(pi)))
             continue
         try:
             ns, _, script = svc.current(pi, src)
         except Failed as e:
-            say("  %-7s %-10s %-9s %s" % (svc.key, svc.name, state, e))
+            say("  %-9s %-13s %-9s %s" % (svc.key, svc.name, state, e))
             continue
         ports = " ".join("%s%s" % (p, "" if listening(pi, p) else " (not listening)") for p in svc.ports(ns))
         who = "only " + ", ".join(ns.allow) if ns.allow else "home network"
-        say("  %-7s %-10s %-9s port %s; %s; %s" % (svc.key, svc.name, state, ports, who, svc.describe(ns)))
+        say("  %-9s %-13s %-9s port %s; %s; %s" % (svc.key, svc.name, state, ports, who, svc.describe(ns)))
         if os.path.dirname(script) != OPT:
-            say("          set up by the app's own install.sh: sudo %s update takes it over" % PROG)
+            say("                          set up by the app's own install.sh: sudo %s update takes it over" % PROG)
             stale = True
     if any(svc.installed(pi) for svc in GATEWAYS) and not stale:
         differ = [f for f in FILES if pi.read("%s/%s" % (OPT, f)) != open(os.path.join(src, f)).read()]
