@@ -323,7 +323,7 @@ many bytes, never the file's name or what is in it.
 
 ```
 sudo aera-gateway install translate
-sudo aera-gateway install translate --languages en,he,de
+sudo aera-gateway install translate --languages en,de,he
 ```
 
 An app with its Translate setting on sends the Gateway text in UTF-8;
@@ -338,18 +338,19 @@ The engine is Argos Translate's models (OpenNMT, one a pair of
 languages) run by CTranslate2. `install translate` puts CTranslate2 and
 SentencePiece in a Python venv of their own, `/opt/translategate/venv`
 (it installs python3-venv if it isn't there), and downloads the models
-for English and Hebrew both ways (about 230 MB) into
+for English and German both ways (about 290 MB) into
 `/opt/translategate/models`, once; after that it works offline. It needs
 a Raspberry Pi with 4 GB of memory or more and the 64-bit Raspberry Pi OS
 (`uname -m` says aarch64; CTranslate2 isn't made for the 32-bit one): the
-models take about 400 MB loaded and stay loaded, so a short text (a
+models take about 500 MB loaded and stay loaded, so a short text (a
 subject, a few words) is answered in a second or two. translategate may
-take 1 GB at most, and when memory runs out on the Pi the kernel stops a
-browser's page or a conversion before it. `--languages en,he,de` adds a language:
+take 1.5 GB at most, and when memory runs out on the Pi the kernel stops a
+browser's page or a conversion before it. `--languages en,de,he` names the
+languages to have (Hebrew added here; a language left out is removed):
 each one to and from English, and the others through English (Hebrew to
 German goes by way of English). Each language takes 120-300 MB loaded;
-translategate may take 1.5 GB at most on a 4 GB Pi, so `install
-translate` refuses a set of languages that wouldn't fit. An update keeps the engine and its models; `remove
+on a 4 GB Pi there is room for 1108 MB of them, so `install translate`
+refuses a set of languages that wouldn't fit. An update keeps the engine and its models; `remove
 translate` removes them.
 
 The Gateway shapes the text, the same for every app: paragraphs come

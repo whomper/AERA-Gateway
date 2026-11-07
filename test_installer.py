@@ -757,7 +757,7 @@ class DavFtpTest(Base):
         self.assertEqual(len(venvs), 1)
         pip = [c for c in self.pi.cmds if c[0].endswith("/venv/bin/pip")]
         self.assertEqual(pip[-1][3:], ag.Translate.PIP)
-        self.assertEqual(self.fetched, [[("en", "he"), ("he", "en")]])
+        self.assertEqual(self.fetched, [[("de", "en"), ("en", "de")]])            # English and German
         self.assertIn("Gateway:  192.168.1.10", self.out)
         self.assertIn("Port:     8480", self.out)
         # an update keeps the engine, its models and the settings
@@ -766,12 +766,17 @@ class DavFtpTest(Base):
         self.assertEqual(len(self.fetched), 1)
         self.assertIn("--port 8481 --allow 192.168.1.50 --engine argos\n", self.execstart("translategate") + "\n")
         # another language: only its models
-        self.assertEqual(self.run_ag("install", "translate", "--languages", "en,he,de"), 0, self.err)
-        self.assertEqual(self.fetched[-1], [("de", "en"), ("en", "de")])       # through English
+        self.assertEqual(self.run_ag("install", "translate", "--languages", "en,de,he"), 0, self.err)
+        self.assertEqual(self.fetched[-1], [("en", "he"), ("he", "en")])       # through English
         # with German there, a plain install again asks for nothing
         n = len(self.fetched)
         self.assertEqual(self.run_ag("install", "translate"), 0, self.err)
         self.assertEqual(len(self.fetched), n)
+        # exactly the languages named: Hebrew's models go
+        self.assertEqual(self.run_ag("install", "translate", "--languages", "en,de"), 0, self.err)
+        self.assertEqual(len(self.fetched), n)
+        self.assertFalse(self.pi.exists(ag.Translate.MODELS + "/he_en"))
+        self.assertTrue(self.pi.exists(ag.Translate.MODELS + "/de_en"))
         # the languages' job, for the Atari's Languages page
         path = self.pi.read("/etc/systemd/system/translategate-langs.path")
         job = self.pi.read("/etc/systemd/system/translategate-langs.service")
