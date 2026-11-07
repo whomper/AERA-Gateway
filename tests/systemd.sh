@@ -262,7 +262,8 @@ running translategate
 listens 8480
 unit_has translategate "^ExecStart=/usr/bin/python3 /opt/aera-gateway/translategate.py --port 8480 --allow 127.0.0.1$"
 unit_has translategate "^User=translategate"
-unit_has translategate "^MemoryMax=2G"
+unit_has translategate "^MemoryMax=1G"
+unit_has translategate "^OOMScoreAdjust=-300"
 [ ! -e /opt/translategate ] || fail "the stand-in set up an engine"
 python3 - <<'PY'
 import socket

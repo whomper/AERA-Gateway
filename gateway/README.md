@@ -313,9 +313,12 @@ SentencePiece in a Python venv of their own, `/opt/translategate/venv`
 (it installs python3-venv if it isn't there), and downloads the models
 for English and Hebrew both ways (about 230 MB) into
 `/opt/translategate/models`, once; after that it works offline. It needs
-a Raspberry Pi with 4 GB of memory or more: the models take about 400 MB
-loaded and stay loaded, so a short text (a subject, a few words) is
-answered in about a second. `--languages` adds the pairs between the
+a Raspberry Pi with 4 GB of memory or more and the 64-bit Raspberry Pi OS
+(`uname -m` says aarch64; CTranslate2 isn't made for the 32-bit one): the
+models take about 400 MB loaded and stay loaded, so a short text (a
+subject, a few words) is answered in a second or two. translategate may
+take 1 GB at most, and when memory runs out on the Pi the kernel stops a
+browser's page or a conversion before it. `--languages` adds the pairs between the
 codes given. An update keeps the engine and its models; `remove
 translate` removes them.
 
@@ -333,9 +336,10 @@ Check it from any browser on your network: `http://PI_IP:8480/status`
 answers "translategate 1", the engine and "ready". `--port N` gives it
 another port, `-v` logs the status pages too, and `--engine stand-in`
 runs it without an engine (it answers in capitals: for the tests).
-`tools/translate-check.py --port 8480 --pid $(systemctl show -p MainPID
---value translategate)` reports the engine's quality, speed and memory
-on the fixed set in `tests/translate/`.
+`python3 tools/translate-check.py`, run on the Gateway, reports the
+machine, the system, the memory, and the engine's quality, speed (a
+piece of 2 KB, the size the apps send) and memory on the fixed sets in
+`tests/translate/`.
 
 ## claude: ClaudeST's bridge
 

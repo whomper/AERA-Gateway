@@ -44,6 +44,7 @@ class FakePi(ag.Pi):
         self.homes = {}             # users' homes
         self.homedirs = ""          # snapd's homedirs setting
         self.no_modules = set()     # Python modules that aren't there
+        self.arch = "aarch64"       # uname -m
 
     def have(self, prog):
         return prog == "python3" or (prog == "ufw" and self.ufw is not None)
@@ -121,6 +122,8 @@ class FakePi(ag.Pi):
             text = "Status: active\n" if self.ufw else "Status: inactive\n"
         elif c[:2] == ["ufw", "allow"]:
             self.rules.append((c[3], c[7]))
+        elif c[:2] == ["uname", "-m"]:
+            text = self.arch + "\n"
         elif c[:2] == ["hostname", "-I"]:
             text = "192.168.1.10 fd00::10\n"
         elif c[:3] == ["python3", "-m", "venv"]:
@@ -693,7 +696,7 @@ class DavFtpTest(Base):
         unit = self.unit("translategate")
         self.assertIn("ExecStart=/opt/translategate/venv/bin/python3 /opt/aera-gateway/translategate.py "
                       "--port 8480 --allow 192.168.1.50 --engine argos\n", unit)
-        for want in ("User=translategate", "MemoryMax=2G", "ProtectSystem=strict", "NoNewPrivileges=yes"):
+        for want in ("User=translategate", "MemoryMax=1G", "OOMScoreAdjust=-300", "ProtectSystem=strict", "NoNewPrivileges=yes"):
             self.assertIn(want, unit)
         venvs = [c for c in self.pi.cmds if c[:3] == ("python3", "-m", "venv")]
         self.assertEqual(len(venvs), 1)
@@ -727,6 +730,15 @@ class DavFtpTest(Base):
         self.assertIn("needs a Pi with 4 GB of memory or more; this one has 1902 MB", self.err)
         self.assertIsNone(self.unit("translategate"))
         self.assertEqual(self.run_ag("install", "translate", "--languages", "en"), 2)
+
+    def test_translate_needs_64_bits(self):
+        self.pi.arch = "armv7l"
+        self.assertEqual(self.run_ag("install", "translate"), 1)
+        self.assertIn("needs a 64-bit system (CTranslate2 is made for aarch64 and x86_64): uname -m says armv7l",
+                      self.err)
+        self.assertIn("the 64-bit Raspberry Pi OS", self.err)
+        self.assertFalse(any(c[0] == "apt-get" or "venv" in " ".join(c) for c in self.pi.cmds))
+        self.assertEqual(self.run_ag("install", "translate", "--engine", "stand-in"), 0, self.err)
 
     def test_cafile_must_exist(self):
         self.assertEqual(self.run_ag("install", "ftp", "--cafile", "/no/such/ca.pem"), 2)
@@ -777,7 +789,7 @@ class ClaudeTest(Base):
         self.pi.write("/proc/meminfo", "MemTotal:        1948304 kB\n")
         self.assertEqual(self.run_ag("install", "all", "--allow", "192.168.1.50", "--from", self.src), 0, self.err)
         self.assertIn("Installed: dav, ftp, web, claude", self.out)
-        self.assertIn("translate (its engine needs a Pi with 4 GB of memory or more)", self.out)
+        self.assertIn("translate (its engine needs a Pi with 4 GB of memory or more; this one has 1902 MB)", self.out)
         self.assertIsNone(self.unit("translategate"))
 
     def test_install_all_keeps_a_serial_cable(self):

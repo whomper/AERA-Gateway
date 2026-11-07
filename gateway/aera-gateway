@@ -1099,7 +1099,8 @@ class Translate(Gateway):
     INDEX = "https://raw.githubusercontent.com/argosopentech/argospm-index/main/index.json"
     LANGUAGES = "en,he"
     PIP = ("ctranslate2>=4,<5", "sentencepiece>=0.2,<0.3")
-    MIN_MEMORY = 3500                       # MB: the models loaded beside the other gateways
+    MIN_MEMORY = 3500                       # MB: the models loaded beside the other gateways (a 4 GB Pi
+                                            # says about 3790)
 
     def options(self, ap):
         super().options(ap)
@@ -1143,8 +1144,10 @@ class Translate(Gateway):
         text = super().unit(ns, keep)
         if ns.engine == "argos":
             text = text.replace("ExecStart=/usr/bin/python3 ", "ExecStart=%s/bin/python3 " % self.VENV)
-        # the engine's memory, beside the other gateways on one Pi
-        return text.replace("Restart=always", "MemoryMax=2G\nRestart=always", 1)
+        # the engine's memory (about 420 MB at its peak), beside the other
+        # gateways on a 4 GB Pi; and when memory runs out, the kernel takes
+        # a browser's page or a conversion before the loaded models
+        return text.replace("Restart=always", "MemoryMax=1G\nOOMScoreAdjust=-300\nRestart=always", 1)
 
     def describe(self, ns):
         return "engine " + ns.engine
@@ -1154,6 +1157,10 @@ class Translate(Gateway):
         and its models; kept as they are on an update"""
         if ns.engine != "argos":
             return
+        arch = self.arch(pi)
+        if not self.arch_ok(pi):
+            raise Failed("translategate's engine needs a 64-bit system (CTranslate2 is made for aarch64 and "
+                         "x86_64): uname -m says %s.\nOn a Raspberry Pi: the 64-bit Raspberry Pi OS." % arch)
         if not self.memory_ok(pi):
             raise Failed("translategate's engine needs a Pi with 4 GB of memory or more; this one has %d MB."
                          % self.memory(pi))
@@ -1176,6 +1183,12 @@ class Translate(Gateway):
     def memory(self, pi):
         m = re.search(r"^MemTotal:\s+(\d+) kB", pi.read("/proc/meminfo") or "", re.M)
         return int(m.group(1)) // 1024 if m else None
+
+    def arch(self, pi):
+        return pi.out("uname", "-m").strip()
+
+    def arch_ok(self, pi):
+        return self.arch(pi) in ("", "aarch64", "arm64", "x86_64")
 
     def memory_ok(self, pi):
         mb = self.memory(pi)
@@ -1660,8 +1673,13 @@ def install_all(pi, o, src=HERE):
         if svc is MAIL and not o.mail and not svc.installed(pi) and not pi.exists(Mail.STUNNEL):
             skipped.append("mail (name your provider's servers: --mail IMAP SMTP[:587] [POP3])")
             continue
+        if svc.key == "translate" and not svc.installed(pi) and not svc.arch_ok(pi):
+            skipped.append("translate (its engine needs the 64-bit Raspberry Pi OS: uname -m says %s)"
+                           % svc.arch(pi))
+            continue
         if svc.key == "translate" and not svc.installed(pi) and not svc.memory_ok(pi):
-            skipped.append("translate (its engine needs a Pi with 4 GB of memory or more)")
+            skipped.append("translate (its engine needs a Pi with 4 GB of memory or more; this one has %d MB)"
+                           % svc.memory(pi))
             continue
         if svc is CLAUDE:
             argv = ["--from", o.source] if o.source else []
