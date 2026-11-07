@@ -292,6 +292,33 @@ enable-linger webgate`). The profile is then in
 `/var/lib/webgate/snap/chromium/common/browser`, and the snap's own
 confinement is the browser's sandbox. The same command sets it all up.
 
+## pdf: EConvert's and EPDF's converter
+
+```
+sudo aera-gateway install pdf --allow ATARI_IP
+```
+
+EConvert and EPDF can have a PDF converted by the Gateway instead of by
+the Atari: much faster than a Falcon (a page in a second or two rather than
+minutes), and on any Atari, an ST included. The Atari sends the PDF,
+pdfgate converts it with aerapdf and sends the converted PDF back: the
+same file, byte for byte, that EConvert writes on a Falcon with the same
+settings, because aerapdf is EConvert's own converter (EPDF's source,
+copied into `pdf/` by `tools/sync-pdf.sh` at a named EPDF commit) built
+for the Pi. `install pdf` builds it (a few minutes; it installs gcc and
+make if they aren't there) and puts its fonts beside it in
+`/opt/aera-gateway-pdf`. `install all` includes it.
+
+In EConvert and EPDF on the Atari, Gateway mode, Through the Gateway:
+the Gateway's IP address, port 8380. Check it from any browser on your network:
+`http://GATEWAY_IP:8380/version` answers "aerapdf" and the EPDF commit it was
+built from. The exchange is EPDF's (its `docs/PI-GATEWAY.md`).
+
+One PDF is converted at a time, each with at most 600 seconds and 768 MB;
+a PDF of more than 64 MB is refused. The PDF and the result are on the
+Gateway's disk only while it converts. The log says which Atari converted how
+many bytes, never the file's name or what is in it.
+
 ## translate: translation for the apps
 
 ```
