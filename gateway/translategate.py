@@ -256,7 +256,10 @@ class Argos:
         return set(self.pair)
 
     def detect(self, text):
-        return detect(text, {a for a, _ in self.pair})
+        # among every language detect() knows, not only the installed
+        # sources: German with en,he installed is German (422, the pair
+        # isn't installed), never "already English"
+        return detect(text, set(STOPWORDS) | {code for code, _, _ in SCRIPTS} | {a for a, _ in self.pair})
 
     def translate(self, texts, src, dst, check=lambda: None):
         tr, sp = self.pair[(src, dst)]
@@ -482,8 +485,8 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             pass
 
-    def refuse(self, status, why, n=0, pair=""):
-        self.reply(status, why)
+    def refuse(self, status, why, n=0, pair="", headers=()):
+        self.reply(status, why, headers=headers)
         self.note("%s%d, %d bytes (%s)" % (pair + " " if pair else "", status, n, why))
 
     def allowed(self):
@@ -560,7 +563,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         langs = dict(eng.languages())
         if used not in langs or to not in langs or (used, to) not in eng.pairs():
-            self.refuse(422, "that pair of languages isn't installed", size, pair)
+            # (X-Translate-From: the language found, so the app can name it)
+            self.refuse(422, "that pair of languages isn't installed", size, pair,
+                        headers=[("X-Translate-From", used)])
             return
         deadline = t0 + Config.seconds
         sock = self.connection
