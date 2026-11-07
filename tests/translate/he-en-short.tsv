@@ -1,0 +1,24 @@
+# Short inputs for translategate's engine (tools/translate-check.py): a
+# few words picked out, closings, names and subject lines, as EMail's
+# Translate... on highlighted words and its subjects send them. No private
+# text. Columns: from, to, the text, a reference translation.
+he	en	בברכה,	Best regards,
+he	en	תודה	Thanks
+he	en	תודה רבה	Thank you very much
+he	en	דנה	Dana
+he	en	שלום	Hello
+he	en	דחוף	Urgent
+he	en	פגישה ביום שלישי	Meeting on Tuesday
+he	en	הזמנה חדשה	New order
+he	en	חשבונית לחודש אוקטובר	Invoice for October
+he	en	בהצלחה	Good luck
+en	he	Best regards,	בברכה,
+en	he	Thanks	תודה
+en	he	Dana	דנה
+en	he	Hello	שלום
+en	he	Urgent	דחוף
+en	he	Meeting on Tuesday	פגישה ביום שלישי
+en	he	New order	הזמנה חדשה
+en	he	Your invoice for October	החשבונית שלך לחודש אוקטובר
+en	he	Good luck	בהצלחה
+en	he	Re: the old Falcon	תשובה: הפלקון הישן

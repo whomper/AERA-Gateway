@@ -2,15 +2,17 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 AERA | Erez Yaary
 """translategate's engine on a Pi: quality, speed and memory, from the fixed
-set tests/translate/he-en.tsv (no private text).
+sets in tests/translate/ (no private text).
 
     python3 tools/translate-check.py [--host PI_IP] [--port PORT] [--pid PID]
 
-For each line: the time the answer took, a chrF score against the reference
-(character n-grams, 0-100; a rough measure, read the answers too), and
-whether the URLs and numbers came back as they were. With --pid (the
-service's, systemctl show -p MainPID translategate), its memory before and
-after. Standard Python 3 only.
+The sets: he-en.tsv, letters and sentences; he-en-short.tsv, a few words,
+closings, names and subjects. For each line: the time the answer took, a
+chrF score against the reference (character n-grams, 0-100; a rough
+measure, read the answers too), and whether the URLs and numbers came
+back as they were. With --pid (the service's: systemctl show -p MainPID
+--value translategate), its memory before and after, resident and at
+its peak. Standard Python 3 only.
 """
 import argparse
 import os
@@ -21,7 +23,7 @@ import urllib.request
 from collections import Counter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SET = os.path.join(HERE, "..", "tests", "translate", "he-en.tsv")
+SETS = [os.path.join(HERE, "..", "tests", "translate", f) for f in ("he-en.tsv", "he-en-short.tsv")]
 
 
 def chrf(hyp, ref, n=6, beta=2.0):
@@ -42,15 +44,18 @@ def chrf(hyp, ref, n=6, beta=2.0):
     return 0.0 if p + r == 0 else 100 * (1 + beta ** 2) * p * r / (beta ** 2 * p + r)
 
 
-def rss(pid):
+def memory(pid):
+    """the process's memory: (resident now, at its peak) in MB"""
+    got = {}
     try:
         with open("/proc/%d/status" % pid) as f:
             for line in f:
-                if line.startswith("VmRSS:"):
-                    return int(line.split()[1]) // 1024
+                k, _, v = line.partition(":")
+                if k in ("VmRSS", "VmHWM"):
+                    got[k] = int(v.split()[0]) // 1024
     except (OSError, ValueError):
         pass
-    return None
+    return "resident %s MB, peak %s MB" % (got.get("VmRSS", "?"), got.get("VmHWM", "?"))
 
 
 def kept(text):
@@ -62,15 +67,23 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--pid", type=int)
-    ap.add_argument("--set", default=SET)
+    ap.add_argument("--set", action="append", help="a set of lines (default: the long and the short one)")
     a = ap.parse_args()
     base = "http://%s:%d" % (a.host, a.port)
     with urllib.request.urlopen(base + "/status", timeout=10) as r:
         print(r.read().decode().replace("\n", ", ").rstrip(", "))
     if a.pid:
-        print("memory before: %s MB" % rss(a.pid))
+        print("memory before: %s" % memory(a.pid))
+    for path in a.set or SETS:
+        check(base, path)
+    if a.pid:
+        print("memory after: %s" % memory(a.pid))
+
+
+def check(base, path):
+    print("== %s" % os.path.basename(path))
     scores, times = [], []
-    for line in open(a.set, encoding="utf-8"):
+    for line in open(path, encoding="utf-8"):
         if line.startswith("#") or not line.strip():
             continue
         src, dst, text, ref = line.rstrip("\n").split("\t")
@@ -94,8 +107,6 @@ def main():
                out.replace("\n", " / "), ref.replace("\n", " / ")))
     print("%d lines: chrF %.1f on average, %.2f s on average, %.2f s at most" %
           (len(scores), sum(scores) / len(scores), sum(times) / len(times), max(times)))
-    if a.pid:
-        print("memory after: %s MB" % rss(a.pid))
 
 
 if __name__ == "__main__":

@@ -165,6 +165,37 @@ def unrepeat(src, out):
     return out if REPEAT.search(src) else REPEAT.sub(r"\1", out)
 
 
+# a letter's greetings and closings, which the small models get wrong alone ("בברכה" ->
+# "welcome"): the commonest, both ways, as a letter writer would put them
+CLOSINGS = {
+    ("he", "en"): {"בברכה": "Best regards", "בברכה רבה": "Kind regards", "בברכת": "Regards",
+                   "תודה": "Thanks", "תודה רבה": "Thank you very much", "להתראות": "See you",
+                   "שלך": "Yours", "בכבוד רב": "Respectfully", "שבוע טוב": "Have a good week",
+                   "שבת שלום": "Shabbat shalom", "חג שמח": "Happy holiday", "שלום": "Hello"},
+    ("en", "he"): {"best regards": "בברכה", "kind regards": "בברכה", "regards": "בברכה",
+                   "best wishes": "בברכה", "thanks": "תודה", "thank you": "תודה",
+                   "many thanks": "תודה רבה", "cheers": "תודה", "see you": "להתראות",
+                   "yours": "שלך", "sincerely": "בכבוד רב", "yours sincerely": "בכבוד רב",
+                   "hello": "שלום", "hi": "שלום"},
+}
+SHORT_WORDS = 4
+CLOSING_PUNCT = re.compile(r"^(.*?)([\s,.!:;\u2026]*)$", re.S)
+
+
+def closing(src, dst, text):
+    """the closing's words, its own punctuation after them, or None"""
+    words, punct = CLOSING_PUNCT.match(text).groups()
+    got = CLOSINGS.get((src, dst), {}).get(words.strip().lower())
+    return got + punct if got else None
+
+
+def short(text):
+    """a few words with no sentence end (a subject, a name, words picked
+    out): the models do these far better as a sentence, so a full stop is
+    put after them, and taken off the answer again"""
+    return len(text.split()) <= SHORT_WORDS and not re.search(r"[.!?\u2026:;,]$", text)
+
+
 class Argos:
     """Argos Translate's models (OpenNMT, one a pair) run by CTranslate2,
     from the venv `aera-gateway install translate` made: loaded once, in
@@ -225,13 +256,19 @@ class Argos:
         for t in texts:
             check()
             ss = sentences(t)
-            done = []
-            for i in range(0, len(ss), self.BATCH):
-                toks = [sp.encode(s, out_type=str)[:400] for s in ss[i:i + self.BATCH]]
+            done = [closing(src, dst, x) for x in ss]
+            todo = [i for i, x in enumerate(done) if x is None]
+            for at in range(0, len(todo), self.BATCH):
+                batch = todo[at:at + self.BATCH]
+                feed = [ss[i] + "." if short(ss[i]) else ss[i] for i in batch]
+                toks = [sp.encode(x, out_type=str)[:400] for x in feed]
                 r = tr.translate_batch(toks, beam_size=self.BEAM,
                                        max_decoding_length=min(512, 2 * max(len(x) for x in toks) + 16))
-                done += [unrepeat(src_s, sp.decode(x.hypotheses[0]))
-                         for src_s, x in zip(ss[i:i + self.BATCH], r)]
+                for i, x in zip(batch, r):
+                    got = unrepeat(ss[i], sp.decode(x.hypotheses[0]))
+                    if short(ss[i]):
+                        got = re.sub(r"[.\u3002]$", "", got.rstrip())
+                    done[i] = got
                 check()
             out.append(" ".join(done))
         return out
