@@ -256,6 +256,46 @@ ok "the same aerajsc kept"
 [ ! -e /opt/aera-gateway-jsc ] || fail "remove web left aerajsc"
 ok "web: scripts"
 
+echo "== translate: translategate with the stand-in engine (no model in CI)"
+"$GW/aera-gateway" install translate --engine stand-in --allow 127.0.0.1
+running translategate
+listens 8480
+unit_has translategate "^ExecStart=/usr/bin/python3 /opt/aera-gateway/translategate.py --port 8480 --allow 127.0.0.1 --engine stand-in"
+unit_has translategate "^User=translategate"
+unit_has translategate "^MemoryMax=2G"
+[ ! -e /opt/translategate ] || fail "the stand-in set up an engine"
+python3 - <<'PY'
+import socket
+def ask(req):
+    s = socket.create_connection(("127.0.0.1", 8480), timeout=20)
+    s.sendall(req)
+    out = b""
+    while True:
+        b = s.recv(65536)
+        if not b:
+            return out
+        out += b
+r = ask(b"GET /status HTTP/1.0\r\n\r\n")
+assert r.endswith(b"\r\n\r\ntranslategate 1\nengine stand-in 1\nready\n"), r
+body = "Dear Wilhelmina,\nthe meeting moved to 10:30, see https://example.com/m.\n\nBye".encode()
+r = ask(b"POST /translate?to=en&from=de HTTP/1.0\r\nContent-Length: %d\r\n\r\n" % len(body) + body)
+head, _, text = r.partition(b"\r\n\r\n")
+assert head.startswith(b"HTTP/1.0 200") and b"X-Translate-From: de" in head, head
+assert text == "en: DEAR WILHELMINA, THE MEETING MOVED TO 10:30, SEE https://example.com/m.\n\nen: BYE".encode(), text
+r = ask(b"POST /translate?to=en HTTP/1.0\r\nContent-Length: 9000\r\n\r\n")
+assert r.startswith(b"HTTP/1.0 413") and r.endswith(b"translategate: the text is over 8 KB\n"), r
+print("ok: status, a letter's lines joined and a URL kept, a refusal")
+PY
+sleep 1
+! journalctl -u translategate --no-pager | grep -qi "wilhelmina" || fail "a word of the text is in the journal"
+journalctl -u translategate --no-pager | grep -q "127.0.0.1 de>en 200, " || fail "no log line for the translation"
+"$GW/aera-gateway" update > "$W/update.out" 2>&1 || { cat "$W/update.out"; fail "update with translate"; }
+unit_has translategate "--engine stand-in"
+running translategate
+"$GW/aera-gateway" remove translate
+[ ! -e /etc/systemd/system/translategate.service ] || fail "remove translate left its unit"
+ok "translate"
+
 echo "== claude: the recipe leaves what ClaudeST's pi/install.sh left"
 snap() {
   mkdir -p "$1"

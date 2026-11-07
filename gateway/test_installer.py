@@ -125,9 +125,15 @@ class FakePi(ag.Pi):
             text = "192.168.1.10 fd00::10\n"
         elif c[:3] == ["python3", "-m", "venv"]:
             os.makedirs(os.path.join(c[3], "bin"), exist_ok=True)
-            with open(os.path.join(c[3], "bin", "python"), "w"):
+            for py in ("python", "python3"):
+                with open(os.path.join(c[3], "bin", py), "w"):
+                    pass
+                os.chmod(os.path.join(c[3], "bin", py), 0o755)
+        elif c[0].endswith("/venv/bin/python3") and c[1] == "-c":
+            rc = 0 if os.path.exists(c[0]) and os.path.exists(os.path.join(os.path.dirname(c[0]), "pip-done")) else 1
+        elif c[0].endswith("/venv/bin/pip") and c[1] == "install":
+            with open(os.path.join(os.path.dirname(c[0]), "pip-done"), "w"):
                 pass
-            os.chmod(os.path.join(c[3], "bin", "python"), 0o755)
         elif c[0] == "ls":
             rc = 2
         elif c[0] == "make":            # aerapens' or aerajsc's build: a stand-in for what it makes
@@ -212,6 +218,15 @@ class Base(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root, True)
         self.pi = FakePi(self.root)
         self.pi.write("/etc/ssl/certs/ca-certificates.crt", "roots")
+        self.fetched = []
+
+        def fetch(gw, pi, pairs):           # Argos Translate's models, without the network
+            self.fetched.append(sorted(pairs))
+            for a, b in pairs:
+                pi.write("%s/%s_%s/metadata.json" % (ag.Translate.MODELS, a, b), '{"from_code": "%s"}' % a)
+        patch = unittest.mock.patch.object(ag.Translate, "fetch", fetch)
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def run_ag(self, *argv):
         out, err = io.StringIO(), io.StringIO()
@@ -673,6 +688,46 @@ class DavFtpTest(Base):
         self.assertFalse(any(c[:2] == ("apt-get", "install") for c in self.pi.cmds))
         self.assertEqual(self.run_ag("install", "web"), 0, self.err)        # without it, as before
 
+    def test_translate(self):
+        self.assertEqual(self.run_ag("install", "translate", "--allow", "192.168.1.50"), 0, self.err)
+        unit = self.unit("translategate")
+        self.assertIn("ExecStart=/opt/translategate/venv/bin/python3 /opt/aera-gateway/translategate.py "
+                      "--port 8480 --allow 192.168.1.50 --engine argos\n", unit)
+        for want in ("User=translategate", "MemoryMax=2G", "ProtectSystem=strict", "NoNewPrivileges=yes"):
+            self.assertIn(want, unit)
+        venvs = [c for c in self.pi.cmds if c[:3] == ("python3", "-m", "venv")]
+        self.assertEqual(len(venvs), 1)
+        pip = [c for c in self.pi.cmds if c[0].endswith("/venv/bin/pip")]
+        self.assertEqual(pip[-1][3:], ag.Translate.PIP)
+        self.assertEqual(self.fetched, [[("en", "he"), ("he", "en")]])
+        self.assertIn("Gateway:  192.168.1.10", self.out)
+        self.assertIn("Port:     8480", self.out)
+        # an update keeps the engine, its models and the settings
+        self.assertEqual(self.run_ag("install", "translate", "--port", "8481"), 0, self.err)
+        self.assertEqual(len([c for c in self.pi.cmds if c[:3] == ("python3", "-m", "venv")]), 1)
+        self.assertEqual(len(self.fetched), 1)
+        self.assertIn("--port 8481 --allow 192.168.1.50 --engine argos\n", self.execstart("translategate") + "\n")
+        # another language: only its models
+        self.assertEqual(self.run_ag("install", "translate", "--languages", "en,he,de"), 0, self.err)
+        self.assertEqual(self.fetched[-1], [("de", "en"), ("de", "he"), ("en", "de"), ("he", "de")])
+        self.assertEqual(self.run_ag("remove", "translate"), 0, self.err)
+        self.assertIsNone(self.unit("translategate"))
+        self.assertFalse(self.pi.exists("/opt/translategate"))
+
+    def test_translate_stand_in(self):
+        self.assertEqual(self.run_ag("install", "translate", "--engine", "stand-in"), 0, self.err)
+        self.assertIn("ExecStart=/usr/bin/python3 /opt/aera-gateway/translategate.py --port 8480\n",
+                      self.unit("translategate"))
+        self.assertFalse(any("venv" in " ".join(c) for c in self.pi.cmds if isinstance(c[0], str)))
+        self.assertEqual(self.fetched, [])
+
+    def test_translate_needs_memory(self):
+        self.pi.write("/proc/meminfo", "MemTotal:        1948304 kB\n")
+        self.assertEqual(self.run_ag("install", "translate"), 1)
+        self.assertIn("needs a Pi with 4 GB of memory or more; this one has 1902 MB", self.err)
+        self.assertIsNone(self.unit("translategate"))
+        self.assertEqual(self.run_ag("install", "translate", "--languages", "en"), 2)
+
     def test_cafile_must_exist(self):
         self.assertEqual(self.run_ag("install", "ftp", "--cafile", "/no/such/ca.pem"), 2)
 
@@ -710,12 +765,20 @@ class ClaudeTest(Base):
             self.assertIn("--allow 192.168.1.50", self.execstart(name), name)
         self.assertIn("imap.mail.me.com smtp.mail.me.com:587", self.execstart("emailgate"))
         self.assertIn("--tcp 0.0.0.0:2323 --allow 192.168.1.50", self.pi.read(self.conf))
-        self.assertIn("Installed: mail, dav, ftp, web, claude", self.out)
+        self.assertIn("Installed: mail, dav, ftp, web, translate, claude", self.out)
         # again, without --mail or --allow: everything kept as it is
         self.assertEqual(self.run_ag("install", "all", "--from", self.src), 0, self.err)
         self.assertIn("--allow 192.168.1.50", self.execstart("ecalgate"))
         self.assertIn("imap.mail.me.com", self.execstart("emailgate"))
         self.assertIn("--allow 192.168.1.50", self.pi.read(self.conf))
+
+    def test_install_all_small_pi(self):
+        # install all leaves translate out on a Pi too small for its engine, and installs the others
+        self.pi.write("/proc/meminfo", "MemTotal:        1948304 kB\n")
+        self.assertEqual(self.run_ag("install", "all", "--allow", "192.168.1.50", "--from", self.src), 0, self.err)
+        self.assertIn("Installed: dav, ftp, web, claude", self.out)
+        self.assertIn("translate (its engine needs a Pi with 4 GB of memory or more)", self.out)
+        self.assertIsNone(self.unit("translategate"))
 
     def test_install_all_keeps_a_serial_cable(self):
         self.assertEqual(self.run_ag("install", "claude", "--from", self.src, "--serial", "/dev/ttyUSB0"), 0)

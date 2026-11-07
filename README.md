@@ -14,6 +14,7 @@ they are.
 | `dav`    | ECal and EContact   | 8180                                 | HTTPS to CalDAV, CardDAV and feeds    |
 | `ftp`    | EFTP                | 2121, and 30000-30099 for data       | FTPS or SFTP to the server            |
 | `web`    | EWeb                | 8280                                 | HTTP and HTTPS to any web server      |
+| `translate` | the apps' Translate | 8480                              | nothing: a local engine translates    |
 | `claude` | ClaudeST            | 2323 (or a serial cable)             | HTTPS to claude.ai or the API         |
 
 In the instructions, `PI_IP` is the Pi's address on your home network and
@@ -92,6 +93,7 @@ gateway/      what runs on the Pi; the apps carry a copy of this folder
   eftpgate.py     ftp: plain FTP in, FTPS or SFTP out
   webgate.py      web: plain HTTP in proxy form in, HTTP or HTTPS out
   webgate-ext/    webgate's extension for the Pi's browser (install web --browser)
+  translategate.py translate: text translated on the Pi by a local engine (Argos Translate)
   install.sh      the apps' old way in, handed on to aera-gateway
   test_*.py       their tests
 pens/             aerapens, for webgate's pictures as the Atari's pens: built on the Pi by install web
@@ -101,6 +103,8 @@ jsc/              aerajsc, for webgate's scripts compiled for EWeb: built on the
 tools/
   sync-common.sh  pens/common/ from AERA-Atari; never edit pens/common/ here
   sync-jsc.sh     jsc/eweb/ from EWeb; never edit jsc/eweb/ here
+  translate-check.py translategate's engine on a Pi: quality, speed and memory
+tests/translate/  the fixed Hebrew/English set translate-check.py uses (no private text)
 update-pi.sh      this copy at the latest release, then aera-gateway update (with --allow: install all)
 tests/systemd.sh  aera-gateway for real, on a computer with systemd
 tests/snap.sh     install web --browser for real with Ubuntu's Chromium snap
