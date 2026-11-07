@@ -1207,7 +1207,7 @@ class Translate(Gateway):
     VENV = DIR + "/venv"
     MODELS = DIR + "/models"
     INDEX = "https://raw.githubusercontent.com/argosopentech/argospm-index/main/index.json"
-    LANGUAGES = "en,he"
+    LANGUAGES = "en,de"                     # the default (Erez, 7 Nov 2026)
     PIP = ("ctranslate2>=4,<5", "sentencepiece>=0.2,<0.3")
     MAX_MEMORY = 1536                       # MB translategate may take (MemoryMax) on a 4 GB Pi
     MIN_MEMORY = 3500                       # MB: the models loaded beside the other gateways (a 4 GB Pi
@@ -1219,9 +1219,9 @@ class Translate(Gateway):
         ap.add_argument("--engine", choices=("argos", "stand-in"),
                         help="argos (the default): Argos Translate's models; stand-in: no engine, for tests")
         ap.add_argument("--languages", metavar="CODES",
-                        help="the languages to translate between, e.g. en,he (the default), en,he,de: each one "
-                             "to and from English, the others through English; each takes 120-300 MB "
-                             "loaded, 1.5 GB in all at most")
+                        help="the languages to have, e.g. en,de (the default), en,de,he: exactly these (others "
+                             "removed), each one to and from English, the others through English; each takes "
+                             "120-300 MB loaded, 1108 MB of them at most")
         ap.add_argument("-v", "--verbose", action="store_true", default=None, help="log every request")
         ap.add_argument("--no-verbose", dest="verbose", action="store_false")
 
@@ -1240,7 +1240,7 @@ class Translate(Gateway):
         if o.languages is not None:
             codes = [c.strip() for c in o.languages.split(",") if c.strip()]
             if len(codes) < 2 or not all(re.fullmatch(r"[a-z]{2,3}", c) for c in codes):
-                raise Usage("--languages: two or more codes, e.g. en,he")
+                raise Usage("--languages: two or more codes, e.g. en,de")
             self.languages = codes
 
     def args(self, ns):
@@ -1300,6 +1300,10 @@ class Translate(Gateway):
                    if "%s_%s" % p not in have]
         if missing:
             self.fetch(pi, missing)
+        if self.languages:                  # exactly these: the others' models removed
+            for d in have:
+                if not set(d.split("_")) <= set(want) | {"en"}:
+                    pi.rmtree("%s/%s" % (self.MODELS, d))
         # the models' room: what translatelangs (and the Languages page) allow
         tl = load(HERE, "translatelangs.py")
         need = tl.size_mb(want)
@@ -1307,7 +1311,7 @@ class Translate(Gateway):
             for a, b in missing:
                 pi.rmtree("%s/%s_%s" % (self.MODELS, a, b))
             raise Failed("The translation models for %s take %d MB; %d MB fit beside the other gateways. "
-                         "Name fewer languages (--languages en,he)." % (",".join(sorted(set(want) | {"en"})),
+                         "Name fewer languages (--languages en,de)." % (",".join(sorted(set(want) | {"en"})),
                                                                        need, tl.CAP_MB))
 
     def memory(self, pi):
