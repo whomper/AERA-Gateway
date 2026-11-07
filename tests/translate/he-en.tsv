@@ -1,0 +1,16 @@
+# The fixed Hebrew/English set for translategate's engine: quality, speed
+# and memory on a Pi (tools/translate-check.py). No private text: short
+# letters and sentences of the kind the apps translate. Columns: from, to,
+# the text (\n for a line end), a reference translation.
+he	en	שלום, מה שלומך? מקווה שהכול בסדר אצלכם.	Hello, how are you? I hope everything is fine with you.
+he	en	הפגישה נדחתה ליום שלישי בשעה עשר בבוקר.	The meeting has been postponed to Tuesday at ten in the morning.
+he	en	תודה רבה על העזרה, זה היה מאוד חשוב לי.	Thank you very much for the help, it was very important to me.
+he	en	אני מצרף את הקובץ שביקשת. תגיד לי אם משהו חסר.	I am attaching the file you asked for. Tell me if anything is missing.
+he	en	המחשב הישן עדיין עובד, אבל הוא איטי מאוד.	The old computer still works, but it is very slow.
+he	en	נא לאשר את קבלת ההזמנה עד סוף השבוע.	Please confirm receipt of the order by the end of the week.
+he	en	בברכה,\nישראל ישראלי	Best regards,\nIsrael Israeli
+en	he	Dear friend, I hope this letter finds you well.	חבר יקר, אני מקווה שהמכתב הזה מוצא אותך בטוב.
+en	he	The train leaves at 8:15, so please be on time.	הרכבת יוצאת ב־8:15, אז בבקשה תגיע בזמן.
+en	he	Your order has been shipped and should arrive within three days.	ההזמנה שלך נשלחה והיא אמורה להגיע תוך שלושה ימים.
+en	he	Could you send me the photos from the weekend?	תוכל לשלוח לי את התמונות מסוף השבוע?
+en	he	The price is 120 ILS, see https://example.com/shop for details.	המחיר הוא 120 ILS, ראה https://example.com/shop לפרטים.

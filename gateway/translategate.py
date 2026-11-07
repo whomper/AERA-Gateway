@@ -1,0 +1,468 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 AERA | Erez Yaary
+"""translategate - text translated on the Pi, for the Atari apps.
+
+An app with its Translate setting On sends UTF-8 text; the Pi translates it
+with a local engine (no text leaves the home network) and sends it back.
+The protocol is AERA-Atari's standards/TRANSLATION-SERVICE.md; the client
+is common/src/translate.c:
+
+    GET  /status                    translategate 1 / engine NAME VERSION / ready
+    GET  /languages                 CODE<TAB>NAME, one line a language
+    POST /translate?to=CODE[&from=CODE]   the text as the body (8 KB at most)
+
+  answered by 200 with the translation (X-Translate-From: the language
+  used), or, already in the target language, by 200 with X-Translate-Same: 1
+  and no body; refused with one line "translategate: why" and 400, 413,
+  422 (the pair isn't installed), 503 (loading or busy) or 504 (over 60 s).
+
+The text is shaped here, once, for every app: blank-line paragraph breaks
+come back exactly; the lines of a paragraph are joined and translated as
+sentences, unless they are all short (an address, a list, a poem), when
+each line is translated and kept; URLs, e-mail addresses, numbers with
+units and quote markers ("> ") are kept out of the engine's way and put
+back as they were.
+
+The engine is a plug-in (ENGINES): it stays loaded between requests and is
+asked one thing, translate(texts, src, dst). "stand-in" needs nothing and
+shows the shaping (tests, CI); a real engine is Erez's decision.
+
+The rules are aeragate's: the home network only, or --allow; no connection
+onwards. Nothing is kept: no text, no cache, no session. The log names who
+asked for which pair, the sizes and the time, never a word of the text,
+and neither does any error reply. A closed connection stops the job.
+
+Standard Python 3 only (the stand-in engine).
+"""
+
+import argparse
+import re
+import select
+import socket
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qsl, urlsplit
+
+import aeragate
+
+VERSION = "1.0"
+PROTOCOL = "1"
+
+
+class Config:
+    allow = []
+    max_bytes = 8192            # a request's body
+    seconds = 60                # a request, then 504
+    short = 300                 # a body this small has a worker of its own (a subject, a few words)
+    workers = 2                 # requests translated at once, the short one's included
+    verbose = False
+    engine = None
+
+
+CODE = re.compile(r"[a-z]{2,3}(-[A-Za-z0-9]{2,4})?")
+
+
+class Stop(Exception):
+    """the connection closed or the time ran out: nothing more is done"""
+
+
+# ---------------------------------------------------------------- engines
+
+class StandIn:
+    """No model: a stand-in for the tests and CI. "Translating" puts the
+    target code before the text and capitals its Latin letters, and, like
+    some real engines, loses brackets, so what isn't protected shows."""
+    name, version = "stand-in", "1"
+    NAMES = {"en": "English", "he": "Hebrew", "de": "German"}
+
+    def __init__(self, delay=0.0, load=0.0):
+        self.delay = delay      # seconds a text takes (the tests' slow engine)
+        self.ready_at = time.monotonic() + load
+
+    def ready(self):
+        return time.monotonic() >= self.ready_at
+
+    def languages(self):
+        return sorted(self.NAMES.items())
+
+    def pairs(self):
+        return {(a, b) for a in self.NAMES for b in self.NAMES if a != b}
+
+    def detect(self, text):
+        hebrew = sum(1 for c in text if "֐" <= c <= "׿")
+        latin = sum(1 for c in text if c.isascii() and c.isalpha())
+        if hebrew > latin:
+            return "he"
+        return "de" if re.search(r"\b(der|die|und|nicht|ist)\b", text, re.I) else "en"
+
+    def translate(self, texts, src, dst, check=lambda: None):
+        out = []
+        for t in texts:
+            check()
+            if self.delay:
+                end = time.monotonic() + self.delay
+                while time.monotonic() < end:
+                    check()
+                    time.sleep(min(0.05, max(0.0, end - time.monotonic())))
+            out.append("%s: %s" % (dst, re.sub(r"[\[\]{}<>()]", "", t).upper()) if t.strip() else t)
+        return out
+
+
+ENGINES = {"stand-in": StandIn}
+
+
+# ---------------------------------------------------------------- the text's shape
+
+SHORT_LINE = 40
+PARA_BREAK = re.compile(r"(\r?\n(?:[ \t]*\r?\n)+)")
+QUOTE = re.compile(r"^((?:[ \t]*>)+[ \t]?)")
+KEEP = re.compile(
+    r"(?:https?|ftp)://[^\s<>\"']+"
+    r"|www\.[^\s<>\"']+"
+    r"|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+    r"|[$€£₪]\s?\d+(?:[.,]\d+)*"
+    r"|\d+(?:[.,:]\d+)*\s?(?:%|°[CF]?|[kKMGT]?B\b|[kmcm]?m\b|km/h|kg\b|g\b|mg\b|l\b|ml\b"
+    r"|h\b|min\b|s\b|ms\b|[kMG]?Hz\b|[kKM]?W\b|V\b|A\b|mAh\b|EUR\b|USD\b|ILS\b|NIS\b|GBP\b"
+    r"|[€₪$£]|ש״ח|ש\"ח|שקל(?:ים)?)")
+URL_TAIL = ".,;:!?)]}'\""
+# what stands for a kept piece while the engine works: letters and digits only
+# (brackets and markup are what engines lose), matched again whatever the
+# engine did to its case or spacing
+MARK = "ZQX%dQZ"
+MARK_BACK = re.compile(r"Z\s*Q\s*X\s*(\d+)\s*Q\s*Z", re.I)
+
+
+def protect(text):
+    """(text with each kept piece as a mark, the pieces)"""
+    kept = []
+
+    def one(m):
+        s = m.group(0)
+        tail = ""
+        if s[:1].isalpha() and ("://" in s or s.lower().startswith("www.")):
+            while s and s[-1] in URL_TAIL:
+                pair = {")": "(", "]": "[", "}": "{"}.get(s[-1])
+                if pair and s.count(pair) >= s.count(s[-1]):
+                    break               # a bracket the URL opened: its own
+                tail = s[-1] + tail
+                s = s[:-1]
+        kept.append(s)
+        return MARK % (len(kept) - 1) + tail
+    return KEEP.sub(one, text), kept
+
+
+def restore(text, kept):
+    """the marks back as the pieces; a piece the engine lost goes at the end"""
+    used = set()
+
+    def one(m):
+        i = int(m.group(1))
+        if i >= len(kept) or i in used:
+            return ""
+        used.add(i)
+        return kept[i]
+    text = MARK_BACK.sub(one, text)
+    lost = [kept[i] for i in range(len(kept)) if i not in used]
+    return (text.rstrip() + " " + " ".join(lost)) if lost else text
+
+
+def plan(text):
+    """the request as (pieces, rebuild): the pieces for the engine, and a
+    function that puts their translations back into the request's shape"""
+    parts = PARA_BREAK.split(text)      # paragraph, break, paragraph, ...
+    pieces, slots = [], []
+
+    def piece(s):
+        lead = s[:len(s) - len(s.lstrip())]
+        trail = s[len(s.rstrip()):]
+        core = s.strip()
+        if not core:
+            return lambda got: s
+        body, kept = protect(core)
+        if not re.search(r"\w", MARK_BACK.sub("", body)):
+            return lambda got: s        # nothing to translate: only kept pieces
+        n = len(pieces)
+        pieces.append(body)
+        return lambda got: lead + restore(got[n], kept) + trail
+
+    for i, part in enumerate(parts):
+        if i % 2:                       # a paragraph break: back as it was
+            slots.append(lambda got, part=part: part)
+            continue
+        # the text's own line ends before and after: back as they were
+        head = re.match(r"[\r\n]*", part).group(0)
+        tail = re.search(r"[\r\n]*\Z", part[len(head):]).group(0)
+        slots.append(lambda got, head=head: head)
+        part = part[len(head):len(part) - len(tail)]
+        if part:
+            shape(part, piece, slots)
+        slots.append(lambda got, tail=tail: tail)
+
+    def rebuild(got):
+        return "".join(s(got) for s in slots)
+    return pieces, rebuild
+
+
+def shape(part, piece, slots):
+    """one paragraph (no line ends before or after it) into slots"""
+    lines = re.split(r"(\r?\n)", part)
+    texts, ends = lines[0::2], lines[1::2] + [""]
+    quotes = [QUOTE.match(t) for t in texts]
+    prefix = quotes[0].group(1) if quotes[0] else ""
+    same_quote = all((q.group(1) if q else "") == prefix for q in quotes)
+    inner = [t[len(prefix):] for t in texts] if same_quote else texts
+    if len(texts) > 1 and same_quote and any(len(t.strip()) >= SHORT_LINE for t in inner):
+        # a paragraph of running text: one piece, answered on one line
+        joined = " ".join(t.strip() for t in inner if t.strip())
+        f = piece(joined)
+        slots.append(lambda got, f=f, prefix=prefix: prefix + f(got))
+    else:
+        # short lines (or one line): each translated, the lines kept
+        fs = []
+        for t, end in zip(texts, ends):
+            q = QUOTE.match(t)
+            pre = q.group(1) if q else ""
+            fs.append((pre, piece(t[len(pre):]), end))
+        slots.append(lambda got, fs=fs: "".join(pre + f(got) + end for pre, f, end in fs))
+
+
+# ---------------------------------------------------------------- the service
+
+class Lanes:
+    """Config.workers at once; one of them only for short requests, so a
+    subject is answered while a long letter is being translated"""
+
+    def __init__(self, workers):
+        self.cond = threading.Condition()
+        self.workers = max(2, workers)
+        self.busy = 0
+        self.short_busy = False
+
+    def take(self, short, deadline, check):
+        with self.cond:
+            while True:
+                if self.busy < self.workers - 1:
+                    self.busy += 1
+                    return "any"
+                if short and not self.short_busy:
+                    self.short_busy = True
+                    return "short"
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise Stop("time")
+                self.cond.wait(min(left, 0.2))
+                check()
+
+    def give(self, lane):
+        with self.cond:
+            if lane == "short":
+                self.short_busy = False
+            else:
+                self.busy -= 1
+            self.cond.notify_all()
+
+
+LANES = Lanes(Config.workers)
+
+
+def closed(sock):
+    """has the app closed the connection? (it sends nothing after its body)"""
+    try:
+        r, _, _ = select.select([sock], [], [], 0)
+        if not r:
+            return False
+        return sock.recv(1, socket.MSG_PEEK) == b""
+    except (OSError, ValueError):
+        return True
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
+    server_version = "translategate/" + VERSION
+    sys_version = ""
+    timeout = 30                        # reading the request
+
+    # Python's own lines name the request; ours name only sizes
+    def log_message(self, fmt, *args):
+        pass
+
+    def send_error(self, code, message=None, explain=None):
+        self.reply(code if code in (400, 413) else 400, "bad request")
+
+    def note(self, text):
+        aeragate.say("translategate: %s %s" % (self.client_address[0], text))
+
+    def reply(self, status, why, headers=(), body=None):
+        data = body if body is not None else ("translategate: %s\n" % why).encode()
+        self.close_connection = True
+        try:
+            self.send_response_only(status)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            for k, v in headers:
+                self.send_header(k, v)
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(data)
+            self.wfile.flush()
+        except OSError:
+            pass
+
+    def refuse(self, status, why, n=0, pair=""):
+        self.reply(status, why)
+        self.note("%s%d, %d bytes (%s)" % (pair + " " if pair else "", status, n, why))
+
+    def allowed(self):
+        if aeragate.client_ok(self.client_address[0], Config.allow):
+            return True
+        self.refuse(403, "not from this computer")
+        return False
+
+    def do_GET(self):
+        if not self.allowed():
+            return
+        eng = Config.engine
+        path = urlsplit(self.path).path
+        if path == "/status":
+            text = "translategate %s\nengine %s %s\n%s\n" % (
+                PROTOCOL, eng.name, eng.version, "ready" if eng.ready() else "loading")
+        elif path == "/languages":
+            text = "".join("%s\t%s\n" % kv for kv in eng.languages()) if eng.ready() else ""
+            if not eng.ready():
+                self.refuse(503, "the engine is loading")
+                return
+        else:
+            self.refuse(404, "no such page")
+            return
+        self.reply(200, "", body=text.encode())
+        if Config.verbose:
+            self.note("%s" % path)
+
+    def do_POST(self):
+        if not self.allowed():
+            return
+        url = urlsplit(self.path)
+        if url.path != "/translate":
+            self.refuse(404, "no such page")
+            return
+        q = {}
+        for k, v in parse_qsl(url.query, keep_blank_values=True):
+            if k not in ("to", "from") or k in q:
+                self.refuse(400, "no such option")
+                return
+            q[k] = v
+        to, src = q.get("to", ""), q.get("from", "")
+        if not CODE.fullmatch(to) or (src and not CODE.fullmatch(src)):
+            self.refuse(400, "a language code isn't right")
+            return
+        size = self.headers.get("Content-Length", "")
+        if not size.isdigit():
+            self.refuse(400, "no Content-Length")
+            return
+        size = int(size)
+        if size > Config.max_bytes:
+            self.refuse(413, "the text is over %d KB" % (Config.max_bytes >> 10), size)
+            return
+        data = self.rfile.read(size)
+        if len(data) < size:
+            self.note("dropped, %d bytes" % len(data))
+            return
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            self.refuse(400, "the text isn't UTF-8", size)
+            return
+        del data
+        eng = Config.engine
+        if not eng.ready():
+            self.refuse(503, "the engine is loading", size)
+            return
+        t0 = time.monotonic()
+        used = src or eng.detect(text)
+        pair = "%s>%s" % (used, to)
+        if used == to:
+            self.reply(200, "", headers=[("X-Translate-From", used), ("X-Translate-Same", "1")], body=b"")
+            self.note("%s same, %d bytes" % (pair, size))
+            return
+        langs = dict(eng.languages())
+        if used not in langs or to not in langs or (used, to) not in eng.pairs():
+            self.refuse(422, "that pair of languages isn't installed", size, pair)
+            return
+        deadline = t0 + Config.seconds
+        sock = self.connection
+
+        def check():
+            if closed(sock):
+                raise Stop("dropped")
+            if time.monotonic() > deadline:
+                raise Stop("time")
+        try:
+            pieces, rebuild = plan(text)
+            lane = LANES.take(size < Config.short, deadline, check)
+            try:
+                got = eng.translate(pieces, used, to, check) if pieces else []
+            finally:
+                LANES.give(lane)
+            check()
+            out = rebuild(got).encode("utf-8")
+        except Stop as e:
+            if str(e) == "dropped":
+                self.note("%s dropped, %d bytes" % (pair, size))
+            else:
+                self.refuse(504, "it took over %d s" % Config.seconds, size, pair)
+            return
+        except Exception as e:          # the engine's words could hold the text: its name only
+            self.refuse(500, "the engine failed", size, pair + " (%s)" % type(e).__name__)
+            return
+        if len(out) > 4 * size + 64:
+            self.refuse(422, "the translation came out too long", size, pair)
+            return
+        self.reply(200, "", headers=[("X-Translate-From", used)], body=out)
+        self.note("%s 200, %d bytes in, %d out, %.1f s" % (pair, size, len(out), time.monotonic() - t0))
+
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # never the traceback: its lines and values could quote the text
+        aeragate.say("translategate: %s error (%s)" % (client_address[0], sys.exc_info()[0].__name__))
+
+
+def parser():
+    """the command line (aera-gateway reads a service's settings with it)"""
+    ap = argparse.ArgumentParser(description="text translated on the Pi for the Atari apps")
+    ap.add_argument("--port", type=int, required=True)
+    ap.add_argument("--bind", default="0.0.0.0")
+    ap.add_argument("--allow", action="append", default=[],
+                    help="only this Atari's address may use the gateway (may repeat)")
+    ap.add_argument("--engine", choices=sorted(ENGINES), default="stand-in")
+    ap.add_argument("--workers", type=int, default=2, help="requests at once (one kept for short ones)")
+    ap.add_argument("--time", type=int, default=60, help="seconds a request may take")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    return ap
+
+
+def main(argv=None):
+    a = parser().parse_args(argv)
+    global LANES
+    Config.allow = a.allow
+    Config.seconds = a.time
+    Config.workers = a.workers
+    Config.verbose = a.verbose
+    LANES = Lanes(a.workers)
+    srv = Server((a.bind, a.port), Handler)
+    aeragate.say("translategate %s listening on %s:%d" % (VERSION, a.bind, srv.server_address[1]))
+    Config.engine = ENGINES[a.engine]()
+    aeragate.say("translategate: engine %s %s" % (Config.engine.name, Config.engine.version))
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()
