@@ -80,7 +80,13 @@ int pf_open(const char *path, int mode)
 
 	if (mode == PF_WRITE)
 		h = Fcreate(path, 0);
-	else
+	else if (mode == PF_APPEND) {
+		h = Fopen(path, 1);
+		if (h < 0)
+			h = Fcreate(path, 0);
+		else
+			Fseek(0, (short)h, 2);
+	} else
 		h = Fopen(path, mode == PF_UPDATE ? 2 : 0);
 	return h < 0 ? -1 : (int)h;
 }

@@ -410,7 +410,7 @@ static int rows_samples(PDOC *d, POBJ *o, long obj, long sw, long sh, int bpc, i
 			ROWS *out, long max_bytes, int *why)
 {
 	int comps = nc < 0 ? 1 : nc;
-	long row_bytes = (sw * comps * bpc + 7) / 8, sy, x, *xs;
+	long row_bytes = (sw * comps * bpc + 7) / 8, sy, x, *xs, oom0;
 	PCSRC *src;
 	SBUF whole;
 	unsigned char *rb = NULL;
@@ -422,12 +422,17 @@ static int rows_samples(PDOC *d, POBJ *o, long obj, long sw, long sh, int bpc, i
 		return 0;
 	}
 	sb_init(&whole);
+	oom0 = d->st.oom;
 	src = pdf_stream_open(d, o, obj);
 	if (!src) {
 		const char *term = NULL;
 		long oom = d->st.oom;
+		int r;
 
-		if (pdf_stream(d, o, obj, &whole, &term, max_bytes) != 0) {
+		d->expect = (row_bytes + 1) * sh;	/* (a PNG predictor's tag byte a row) */
+		r = pdf_stream(d, o, obj, &whole, &term, max_bytes);
+		d->expect = 0;
+		if (r != 0) {
 			*why = stream_why(d, &whole, max_bytes, oom);
 			sb_free(&whole);
 			return 0;
@@ -461,7 +466,10 @@ static int rows_samples(PDOC *d, POBJ *o, long obj, long sw, long sh, int bpc, i
 			while (got < row_bytes && (k = pdf_stream_read(src, rb + got, row_bytes - got)) > 0)
 				got += k;
 			if (got < row_bytes) {
-				*why = PIC_DAMAGED;	/* the data stops short: as pdf_image says */
+				/* the data stops short: as pdf_image says, damaged; or
+				   memory was refused while it was inflated (a 1 MB ST,
+				   lowmem.py: a photo given up as damaged), tried again */
+				*why = d->st.oom != oom0 ? PIC_MEMORY : PIC_DAMAGED;
 				ok = 0;
 				break;
 			}
@@ -651,7 +659,7 @@ int pdf_image_raw_rows(PDOC *d, long obj, void (*row)(void *u, long y, const uns
 		       long max_bytes, int *why)
 {
 	POBJ *o = pdf_get(d, obj);
-	long sw, sh, rbytes, y;
+	long sw, sh, rbytes, y, oom0;
 	int bpc, nc, hival = 0, ok = 1;
 	unsigned char pal[256 * 3], *rb;
 	PCSRC *src;
@@ -668,12 +676,17 @@ int pdf_image_raw_rows(PDOC *d, long obj, void (*row)(void *u, long y, const uns
 		return 0;
 	rbytes = (sw * (nc < 0 ? 1 : nc) * bpc + 7) / 8;
 	sb_init(&whole);
+	oom0 = d->st.oom;
 	src = pdf_stream_open(d, o, obj);
 	if (!src) {
 		const char *term = NULL;
 		long oom = d->st.oom;
+		int r;
 
-		if (pdf_stream(d, o, obj, &whole, &term, max_bytes) != 0 || term || rbytes * sh > whole.len) {
+		d->expect = (rbytes + 1) * sh;		/* (as rows_samples) */
+		r = pdf_stream(d, o, obj, &whole, &term, max_bytes);
+		d->expect = 0;
+		if (r != 0 || term || rbytes * sh > whole.len) {
 			*why = term ? PIC_UNSUPPORTED : stream_why(d, &whole, max_bytes, oom);
 			sb_free(&whole);
 			return 0;
@@ -692,6 +705,7 @@ int pdf_image_raw_rows(PDOC *d, long obj, void (*row)(void *u, long y, const uns
 			while (got < rbytes && (k = pdf_stream_read(src, rb + got, rbytes - got)) > 0)
 				got += k;
 			if (got < rbytes) {
+				*why = d->st.oom != oom0 ? PIC_MEMORY : PIC_DAMAGED;	/* (as above) */
 				ok = 0;
 				break;
 			}

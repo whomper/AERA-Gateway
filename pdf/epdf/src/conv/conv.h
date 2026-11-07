@@ -32,6 +32,7 @@ typedef struct {
 	   it (256 KB without it), and the rest of the file so */
 	long (*mem_free)(void);
 	const char *fontdir;		/* the standard fonts' files (Liberation*.ttf), or NULL */
+	long font_budget;		/* with no mem_free: the fonts' bytes kept at most (0 any) */
 	/* asked between pieces of work: done and total for this file, in
 	   thousandths of its pages; 1 stops the conversion */
 	int (*progress)(void *u, long done, long total);

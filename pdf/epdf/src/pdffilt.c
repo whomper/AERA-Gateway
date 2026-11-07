@@ -114,6 +114,44 @@ static const char *image_name(const char *n)
 }
 
 /* ------------------------------------------------------------------ predictors */
+/* one PNG row undone in place (its tag apart): prev is the row above, or
+   NULL for the first; pdf_stream_read's rows a piece at a time too */
+static void png_row(unsigned char *cur, const unsigned char *prev, long row, long bpp, int tag)
+{
+	long i;
+
+	switch (tag) {
+	case 1:
+		for (i = bpp; i < row; i++)
+			cur[i] = (unsigned char)(cur[i] + cur[i - bpp]);
+		break;
+	case 2:
+		if (prev)
+			for (i = 0; i < row; i++)
+				cur[i] = (unsigned char)(cur[i] + prev[i]);
+		break;
+	case 3:
+		for (i = 0; i < row; i++) {
+			int l = i >= bpp ? cur[i - bpp] : 0, u = prev ? prev[i] : 0;
+
+			cur[i] = (unsigned char)(cur[i] + ((l + u) >> 1));
+		}
+		break;
+	case 4:
+		for (i = 0; i < row; i++) {
+			int a = i >= bpp ? cur[i - bpp] : 0, bb = prev ? prev[i] : 0, c = (i >= bpp && prev) ? prev[i - bpp] : 0;
+			int pp = a + bb - c, pa = pp > a ? pp - a : a - pp, pb = pp > bb ? pp - bb : bb - pp,
+			    pc = pp > c ? pp - c : c - pp;
+			int pr = (pa <= pb && pa <= pc) ? a : (pb <= pc ? bb : c);
+
+			cur[i] = (unsigned char)(cur[i] + pr);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
 static int predictor(PDOC *d, SBUF *b, long pred, long colors, long bpc, long columns)
 {
 	long bpp, row, rows, i, y;
@@ -169,36 +207,7 @@ static int predictor(PDOC *d, SBUF *b, long pred, long colors, long bpc, long co
 			memmove(cur, in + y * (row + 1) + 1, (size_t)avail);	/* in place: out never passes in */
 			if (avail < row)
 				memset(cur + avail, 0, (size_t)(row - avail));
-			switch (tag) {
-			case 1:
-				for (i = bpp; i < row; i++)
-					cur[i] = (unsigned char)(cur[i] + cur[i - bpp]);
-				break;
-			case 2:
-				if (prev)
-					for (i = 0; i < row; i++)
-						cur[i] = (unsigned char)(cur[i] + prev[i]);
-				break;
-			case 3:
-				for (i = 0; i < row; i++) {
-					int l = i >= bpp ? cur[i - bpp] : 0, u = prev ? prev[i] : 0;
-
-					cur[i] = (unsigned char)(cur[i] + ((l + u) >> 1));
-				}
-				break;
-			case 4:
-				for (i = 0; i < row; i++) {
-					int a = i >= bpp ? cur[i - bpp] : 0, bb = prev ? prev[i] : 0, c = (i >= bpp && prev) ? prev[i - bpp] : 0;
-					int pp = a + bb - c, pa = pp > a ? pp - a : a - pp, pb = pp > bb ? pp - bb : bb - pp,
-					    pc = pp > c ? pp - c : c - pp;
-					int pr = (pa <= pb && pa <= pc) ? a : (pb <= pc ? bb : c);
-
-					cur[i] = (unsigned char)(cur[i] + pr);
-				}
-				break;
-			default:
-				break;
-			}
+			png_row(cur, prev, row, bpp, tag);
 			prev = cur;
 			o += row;
 		}
@@ -426,12 +435,20 @@ static int f_lzw(PDOC *d, SBUF *in, int early)
 	return 0;
 }
 
-static int f_flate(SBUF *in, long max)
+static int f_flate(PDOC *d, SBUF *in, long max)
 {
 	SBUF out;
 	int r;
 
 	sb_init(&out);
+	if (d && d->expect > 0 && d->expect <= max) {
+		/* its size known: room for it in one piece (pdf.h's expect) */
+		if (!sb_reserve(&out, d->expect + 64)) {
+			d->st.oom++;
+			sb_free(in);
+			return -1;
+		}
+	}
 	r = inflate_zlib((const unsigned char *)in->s, in->len, &out, max);
 	sb_free(in);
 	*in = out;
@@ -443,7 +460,7 @@ int filt_apply(PDOC *d, const char *name, POBJ *parms, SBUF *io, long max)
 	int r = 0;
 
 	if (!strcmp(name, "FlateDecode") || !strcmp(name, "Fl"))
-		r = f_flate(io, max);
+		r = f_flate(d, io, max);
 	else if (!strcmp(name, "ASCIIHexDecode") || !strcmp(name, "AHx"))
 		r = f_hex(io);
 	else if (!strcmp(name, "ASCII85Decode") || !strcmp(name, "A85"))
@@ -587,6 +604,13 @@ struct PCSRC {
 	long ask;			/* bytes the caller will take in all (0: all of it), less those given */
 	unsigned char *q;		/* AES: what came out, the last block held back */
 	int qh, qn, qfin;		/* until the end (its padding) */
+	/* a PNG predictor (DecodeParms /Predictor 10-15) undone a row at a
+	   time: a picture's rows needn't be unpacked whole first (a 1.3 MB
+	   CMYK photo on a 1 MB ST, lowmem.py) */
+	long prow, pbpp;		/* a row's bytes, a pixel's; 0: no predictor */
+	unsigned char *pcur, *pprev;	/* this row (after its tag byte) and the one above */
+	long pgiven, pfill;		/* of pcur: bytes given out, bytes in it (with its tag) */
+	int phave;			/* pprev holds a row */
 };
 
 long pdf_stream_left(const PCSRC *s)
@@ -681,6 +705,7 @@ static void src_free(PCSRC *s)
 	if (s->cs)
 		pc_stream_close(s->cs);
 	free(s->q);
+	free(s->pcur);
 	pdf_free(s->d, s, (long)sizeof *s);
 }
 
@@ -697,7 +722,7 @@ static PCSRC *src_open(PDOC *d, POBJ *o, int image, long onum)
 {
 	POBJ *filter, *parms;
 	PCSRC *s;
-	long off, len;
+	long off, len, prow = 0, pbpp = 0;
 	int flate = 0, crypt = 0;
 
 	if (!o || o->t != PO_DICT || !o->flag)
@@ -726,8 +751,17 @@ static PCSRC *src_open(PDOC *d, POBJ *o, int image, long onum)
 			return NULL;
 		if (parms && parms->t == PO_ARR && parms->a == 1)
 			parms = pdf_res(d, pa_at(parms, 0));
-		if (parms && parms->t == PO_DICT && pd_int(d, parms, "Predictor", 1) > 1)
-			return NULL;
+		if (parms && parms->t == PO_DICT && pd_int(d, parms, "Predictor", 1) > 1) {
+			long colors = pd_int(d, parms, "Colors", 1), bpc = pd_int(d, parms, "BitsPerComponent", 8),
+			     cols = pd_int(d, parms, "Columns", 1);
+
+			/* PNG's (10-15) a row at a time; TIFF's (2) decoded whole */
+			if (pd_int(d, parms, "Predictor", 1) < 10 || colors < 1 || colors > 4 || cols < 1 ||
+			    !(bpc == 1 || bpc == 2 || bpc == 4 || bpc == 8 || bpc == 16) || cols > 65536)
+				return NULL;
+			prow = (colors * bpc * cols + 7) / 8;
+			pbpp = (colors * bpc + 7) / 8;
+		}
 		flate = 1;
 	}
 	if (stream_span(d, o, &off, &len))
@@ -745,6 +779,19 @@ static PCSRC *src_open(PDOC *d, POBJ *o, int image, long onum)
 	s->d = d;
 	s->off = off;
 	s->left = len;
+	if (prow) {
+		/* this row with its tag byte, and the one above */
+		s->pcur = malloc((size_t)(2 * prow + 1));
+		if (!s->pcur) {
+			d->st.oom++;
+			pdf_free(d, s, (long)sizeof *s);
+			return NULL;
+		}
+		s->pprev = s->pcur + prow + 1;
+		s->prow = prow;
+		s->pbpp = pbpp;
+		s->pgiven = s->pfill = 0;	/* (no row yet: the first read fetches one) */
+	}
 	if (crypt) {
 		uint32_t ea = 0;
 		uint16_t eb = 0;
@@ -849,9 +896,50 @@ static long piece_read(PCSRC *s, unsigned char *out, long n)
 	return k;
 }
 
+static long raw_read(PCSRC *s, unsigned char *out, long n)
+{
+	return s->z ? piece_read(s, out, n) : pcsrc_get(s, out, n);
+}
+
+/* a PNG predictor's stream: its rows read whole (tag and bytes), undone
+   against the one above, and given out as the caller asks */
+static long pred_read(PCSRC *s, unsigned char *out, long n)
+{
+	long done = 0;
+
+	while (done < n) {
+		long k;
+
+		if (s->pfill == s->prow + 1 && s->pgiven == s->prow) {
+			/* this row given out: it becomes the one above (pcur's
+			   bytes after its tag), the next one read */
+			memcpy(s->pprev, s->pcur + 1, (size_t)s->prow);
+			s->phave = 1;
+			s->pfill = 0;
+			s->pgiven = 0;
+		}
+		if (s->pfill < s->prow + 1) {
+			k = raw_read(s, s->pcur + s->pfill, s->prow + 1 - s->pfill);
+			if (k <= 0)
+				break;		/* the end (or the stop hook): what is given stays */
+			s->pfill += k;
+			if (s->pfill < s->prow + 1)
+				continue;
+			png_row(s->pcur + 1, s->phave ? s->pprev : NULL, s->prow, s->pbpp, s->pcur[0]);
+		}
+		k = s->prow - s->pgiven;
+		if (k > n - done)
+			k = n - done;
+		memcpy(out + done, s->pcur + 1 + s->pgiven, (size_t)k);
+		s->pgiven += k;
+		done += k;
+	}
+	return done;
+}
+
 long pdf_stream_read(PCSRC *s, unsigned char *out, long n)
 {
-	long k = s->z ? piece_read(s, out, n) : pcsrc_get(s, out, n);
+	long k = s->prow ? pred_read(s, out, n) : raw_read(s, out, n);
 
 	if (k > 0) {
 		s->d->st.out += k;

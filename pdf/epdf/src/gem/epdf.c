@@ -38,6 +38,8 @@
 #include "epdf.h"
 #include "progbar.h"
 #include "badge.h"
+#include "gwopen.h"
+#include "gatedlg.h"
 
 short ap_id;
 short pix_aspect = 16;
@@ -51,6 +53,11 @@ static char start_dir[160];		/* EPDF.PRG's folder: EPDF.INF, CRASH.LOG, EPDF.TXC
 static char inf_path[180], cache_path[180];
 static INF inf;
 static int lines_mode;
+/* File > Open on the Gateway (Erez, 7 Nov 2026): a PDF that isn't
+   converted is converted by the Gateway while it is shown (gwopen.c) */
+static int gw_on;
+static char gate_host[64];
+static unsigned short gate_port = GATE_PORT;
 static char open_dir[160] = "";		/* where Open looks first (FOLDER=) */
 static int find_dir;			/* a search runs: 1 forwards, -1 back; 0 none */
 static void menu_states(void);
@@ -97,6 +104,12 @@ static void settings_read(void)
 		lines_mode = v[0] == '1';
 	if ((v = inf_get(&inf, "FOLDER")) != NULL && strlen(v) < sizeof open_dir)
 		strcpy(open_dir, v);
+	if ((v = inf_get(&inf, "GATEWAY")) != NULL)
+		gw_on = v[0] == '1';
+	if ((v = inf_get(&inf, "GATE")) != NULL && strlen(v) < sizeof gate_host)
+		strcpy(gate_host, v);
+	if ((v = inf_get(&inf, "GATEPORT")) != NULL && atol(v) > 0 && atol(v) < 65536)
+		gate_port = (unsigned short)atol(v);
 }
 
 static void settings_write(void)
@@ -152,6 +165,13 @@ static void open_failed(void)
    window saying so, and opened() follows when it is done */
 static void open_doc(const char *p)
 {
+	char copy[256];
+
+	if (gw_on && !gw_in_copy_folder(p) && gw_copy(p, copy, sizeof copy)) {
+		log_event("gateway-copy", NULL, NULL);
+		p = copy;		/* converted before: that copy, at once */
+	}
+	gw_stop();			/* (another document's conversion: given up) */
 	copy_end(NULL);			/* a copy of the old document's text: given up */
 	if (doc_open(p, win_cols(), lines_mode, cache_path) != 0) {
 		open_failed();
@@ -165,9 +185,50 @@ static void open_doc(const char *p)
 	win_draw_all();
 }
 
+static int settings_dialog(void);
+
+/* the document open isn't converted: the Gateway converts it while it is
+   shown (File > Open on the Gateway ticked) */
+static void gateway_begin(void)
+{
+	int r;
+
+	if (!gw_on || !doc_is_open() || doc_prepared() || gw_busy() || gw_in_copy_folder(doc_path()))
+		return;
+	r = gw_start(doc_path(), gate_host, gate_port);
+	if (r == GW_NO_ADDRESS && settings_dialog())
+		r = gw_start(doc_path(), gate_host, gate_port);
+	if (r == GW_NO_FOLDER)
+		alert(1, "[1][The folder atari can't be made beside %.20s: the disk is write-protected.][ OK ]", doc_name());
+	else if (r == GW_NO_NETWORK)
+		alert(1, "[1][The Gateway is reached through STinG, MiNTnet or MagiC-Net, and none of them is running.][ OK ]");
+	else if (r == GW_NO_MEMORY)
+		alert(1, "[3][Not enough memory to send it to the Gateway.][ OK ]");
+	log_event("gateway", r == GW_STARTED ? "started" : "not-started", NULL);
+}
+
+/* the Gateway has done: its copy opened in place of the PDF, or why not */
+static void gateway_end(void)
+{
+	char copy[256], why[120];
+	int r = gw_result(copy, sizeof copy, why, sizeof why);
+	char q[8];
+
+	snprintf(q, sizeof q, "%d", r);
+	log_event("gateway-done", q, NULL);
+	if (r == 0)
+		open_doc(copy);
+	else if (r == -3)
+		alert(1, "[1][The Gateway at %.24s doesn't answer. Check that it is on and that the PDF converter is installed on it.][ OK ]",
+		      gw_host());
+	else if (r == -1)
+		alert(1, "[1][%.110s][ OK ]", why);
+}
+
 static void opened(void)
 {
 	bg_opened();
+	gateway_begin();
 	win_title();
 	menu_states();
 	win_layout();
@@ -655,6 +716,19 @@ static void command(int c)
 	case CMD_OPEN:
 		open_dialog();
 		break;
+	case CMD_GATEWAY:
+		gw_on = !gw_on;
+		setting("GATEWAY", gw_on ? "1" : "0", "1: a PDF opened that isn't converted is converted by the Gateway (Open on the Gateway)");
+		if (has_menu)
+			menu_icheck(menu.tree, mbar_object(&menu, CMD_GATEWAY), gw_on);
+		if (gw_on)
+			gateway_begin();
+		else
+			gw_stop();
+		break;
+	case CMD_SETTINGS:
+		settings_dialog();
+		break;
 	case CMD_CLOSE:
 	case CMD_QUIT:
 		quit_now = 1;
@@ -727,6 +801,19 @@ static void command(int c)
 	}
 }
 
+/* File > Settings... (^,): where the Gateway is; 1 when OK */
+static int settings_dialog(void)
+{
+	char port[8];
+
+	if (!gate_dialog(gate_host, (int)sizeof gate_host, &gate_port))
+		return 0;
+	setting("GATE", gate_host, "the Gateway's address (Through the Gateway)");
+	snprintf(port, sizeof port, "%u", (unsigned)gate_port);
+	setting("GATEPORT", port, "the Gateway's port for PDFs (8380)");
+	return 1;
+}
+
 static int shift(short kstate)
 {
 	return (kstate & (K_LSHIFT | K_RSHIFT)) != 0;
@@ -740,6 +827,11 @@ static void key(short kstate, short k)
 		return;			/* an iconified window takes no keys (5.1) */
 	if (win_zoom_key(scan))
 		return;			/* a picture shown whole takes them */
+	if (gw_busy() && scan == 0x01 && !cp.on && !find_dir) {
+		gw_stop();		/* Esc: the Gateway's conversion given up */
+		log_event("gateway-stopped", NULL, NULL);
+		return;
+	}
 	if (cp.on && (scan == 0x01 || scan == 0x61)) {
 		copy_end("copy stopped");	/* Esc or Undo: the copy given up */
 		log_event("copy-stopped", NULL, NULL);
@@ -759,6 +851,7 @@ static void key(short kstate, short k)
 	if (key_ctrl(kstate, k)) {
 		switch (scan) {
 		case 0x18: command(CMD_OPEN); return;		/* ^O */
+		case 0x33: command(CMD_SETTINGS); return;	/* ^, */
 		case 0x16: command(CMD_CLOSE); return;		/* ^U: one window, so quit (3.2) */
 		case 0x11: return;				/* ^W: one window, so nothing */
 		case 0x10: command(CMD_QUIT); return;		/* ^Q */
@@ -867,6 +960,11 @@ static void progress(void)
 		win_progress(3, w, n + 1 - find_left, n);
 	} else if (doc_opening()) {
 		win_progress(5, "Opening the document", 0, 0);
+	} else if (gw_busy()) {
+		long d, t;
+
+		gw_words(w, sizeof w, &d, &t);	/* (the three phases: guideline 7.3) */
+		win_progress(6, w, d, t);
 	} else if (rp >= 0 && (!pic || (rp >= p0 && rp <= p1))) {
 		snprintf(w, sizeof w, "Reading page %ld of %ld", rp + 1, n);
 		win_progress(1, w, doc_read() * 1000L + pm, n * 1000L);
@@ -893,6 +991,7 @@ static long arrived = -1;		/* a page read, its rows still to draw */
 static long arrived_pic = -1;		/* a picture made, its rows still to draw */
 static long rows_pic = -1, rows_from, rows_to;	/* a picture being made: its new rows, to draw */
 static int pic_turn;			/* pictures and pages take turns */
+static int gw_turn;			/* the Gateway's exchange and the reading take turns */
 
 /* the reading on for a piece of the slice; 1 when a page came, whose rows
    are drawn in a turn of their own (a page's rows and the slice that read
@@ -1014,8 +1113,10 @@ int main(void)
 			snprintf(m, sizeof m, "%ld", (long)Malloc(-1L) / 1024);
 			log_event("menu-bar-failed", m, NULL);
 		}
-		if (has_menu)
+		if (has_menu) {
 			menu_icheck(menu.tree, mbar_object(&menu, CMD_LINES), lines_mode);
+			menu_icheck(menu.tree, mbar_object(&menu, CMD_GATEWAY), gw_on);
+		}
 		menu_states();
 	}
 	/* the arrow: the desktop leaves the busy bee it showed while EPDF
@@ -1047,7 +1148,7 @@ int main(void)
 	while (!quit_now) {
 		short which, flags = MU_MESAG | MU_KEYBD | MU_BUTTON;
 		unsigned long t;
-		int pending = doc_pending() || find_dir || doc_pic_busy() || pics_waiting() || cp.on;
+		int pending = doc_pending() || find_dir || doc_pic_busy() || pics_waiting() || cp.on || gw_busy();
 
 		progress();
 
@@ -1143,6 +1244,11 @@ int main(void)
 						}
 					}
 				}
+			} else if (gw_busy() && bg_may_work() && ((gw_turn ^= 1) || !doc_pending())) {
+				/* the Gateway's exchange, every other turn with the reading */
+				bg_begin();
+				if (gw_slice(40))
+					gateway_end();
 			} else if (pending && bg_may_work()) {
 				bg_begin();
 				/* a search first: the user waits for it; the reading after */

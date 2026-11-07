@@ -474,6 +474,12 @@ int doc_is_open(void)
 	return doc != NULL;
 }
 
+/* the open document's path (the one being opened, or open) */
+const char *doc_path(void)
+{
+	return opath;
+}
+
 const char *doc_name(void)
 {
 	return name;

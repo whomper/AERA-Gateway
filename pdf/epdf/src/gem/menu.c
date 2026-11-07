@@ -14,6 +14,8 @@ static const MBAR_ITEM desk_items[] = {
 
 static const MBAR_ITEM file_items[] = {
 	{ "Open...", "^O", CMD_OPEN },
+	{ "Open on the Gateway", NULL, CMD_GATEWAY },	/* a tick: on (Erez, 7 Nov 2026) */
+	{ "Settings...", "^,", CMD_SETTINGS },
 	{ "-", NULL, CMD_NONE },
 	{ "Quit", "^Q", CMD_QUIT },
 	{ NULL, NULL, CMD_NONE }

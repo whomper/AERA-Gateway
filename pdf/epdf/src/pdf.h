@@ -135,6 +135,11 @@ typedef struct pdoc {
 	long os_len, os_n, os_first;
 	long *os_off;			/* os_n numbers, os_n offsets (pairs) */
 	PSTAT st;
+	/* the bytes the next whole stream unpacks to, when the caller knows
+	   (a picture's rows): its Flate output taken in one piece of that
+	   size, not doubled up to it (a 1.3 MB CMYK photo needed 2 MB beside
+	   1 MB on an ST, refused, and was shown as damaged); 0 unknown */
+	long expect;
 	int ver;			/* %PDF-1.x */
 	long npages;
 	long (*clock)(void);		/* a clock for the t_ counters, or NULL */

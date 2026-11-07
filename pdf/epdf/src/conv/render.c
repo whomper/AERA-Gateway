@@ -121,6 +121,9 @@ struct RFONTS {
 	unsigned long clock;
 };
 
+/* the font programs' bytes kept at most (render_font_budget; 0: any) */
+long render_font_budget;
+
 typedef struct {
 	RPAGE *r;
 	RGS gs[32];
@@ -885,6 +888,30 @@ static FT_Face face_for(RPAGE *r, long prog, const char *base)
 	cv_phase = "render";
 	if (cv_turn)
 		cv_turn();
+	{
+		/* the font programs kept within render_font_budget, the least
+		   lately used let go first (each standard font is a Liberation
+		   file of some 400 KB: the rigs' showcase, six of them, held 2.4
+		   MB and a 4 MB Falcon's page found no room) */
+		long total = 0;
+
+		for (i = 0; i < 24; i++)
+			total += f->e[i].buf ? f->e[i].len : 0;
+		while (render_font_budget > 0 && total > render_font_budget) {
+			int lru = -1;
+
+			for (i = 0; i < 24; i++)
+				if (i != v && f->e[i].buf && (lru < 0 || f->e[i].used < f->e[lru].used))
+					lru = i;
+			if (lru < 0)
+				break;
+			total -= f->e[lru].len;
+			gc_flush(f);		/* (its glyphs go too: their face is gone) */
+			FT_Done_Face(f->e[lru].face);
+			free(f->e[lru].buf);
+			memset(&f->e[lru], 0, sizeof f->e[lru]);
+		}
+	}
 	return f->e[v].face;
 }
 

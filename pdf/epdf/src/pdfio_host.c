@@ -53,7 +53,8 @@ long pdf_ms(void)
 
 int pf_open(const char *path, int mode)
 {
-	int fl = mode == PF_WRITE ? O_WRONLY | O_CREAT | O_TRUNC : mode == PF_UPDATE ? O_RDWR : O_RDONLY;
+	int fl = mode == PF_WRITE ? O_WRONLY | O_CREAT | O_TRUNC : mode == PF_UPDATE ? O_RDWR :
+		 mode == PF_APPEND ? O_WRONLY | O_CREAT | O_APPEND : O_RDONLY;
 
 	return open(path, fl, 0644);
 }

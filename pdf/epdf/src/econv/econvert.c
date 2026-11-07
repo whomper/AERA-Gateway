@@ -40,6 +40,9 @@
 #include "plat.h"
 #include "coro.h"
 #include "conv.h"
+#include "pigate.h"
+#include "conn.h"
+#include "gatedlg.h"
 #include "icon.h"
 #include "icon16.h"
 #include "icon256.h"
@@ -74,6 +77,12 @@ static const char inf_head[] =
 	"; EConvert's settings. EConvert writes this file itself; a line it doesn't know is kept.\r\n\r\n";
 static int pages_set = CV_PAGES_MONO, photos_set = CV_PHOTOS_INDEXED;
 static char out_dir[160], in_dir[160];
+/* Gateway mode (Erez, 7 Nov 2026): the PDFs converted by the Gateway
+   (AERA-Gateway's pdfgate) instead of here. A Falcon or a TT converts here
+   by default; an ST can only send (its converter needs a 68030) */
+static int has_030, on_gateway;
+static char gate_host[64];
+static unsigned short gate_port = GATE_PORT;
 
 static void settings_read(void)
 {
@@ -95,6 +104,13 @@ static void settings_read(void)
 		strcpy(out_dir, v);
 	if ((v = inf_get(&inf, "FOLDER")) != NULL && strlen(v) < sizeof in_dir)
 		strcpy(in_dir, v);
+	on_gateway = !has_030;
+	if (has_030 && (v = inf_get(&inf, "CONVERT")) != NULL)
+		on_gateway = !strcmp(v, "gateway");
+	if ((v = inf_get(&inf, "GATE")) != NULL && strlen(v) < sizeof gate_host)
+		strcpy(gate_host, v);
+	if ((v = inf_get(&inf, "GATEPORT")) != NULL && atol(v) > 0 && atol(v) < 65536)
+		gate_port = (unsigned short)atol(v);
 }
 
 static void setting(const char *name, const char *value, const char *note)
@@ -143,7 +159,7 @@ static struct {
 	char path[160];
 	long bytes;
 	int state;			/* 0 to do, 1 done, 2 failed, 3 stopped */
-	char why[60];
+	char why[120];
 } files[MAXF];
 static int nfiles;
 
@@ -207,10 +223,11 @@ enum {
 	BOX, T_FILES, B_ADD, B_FOLDER, B_CLEAR, T_OUT, B_OUT,
 	T_PAGES, G_PAGES, P_NONE, P_MONO, P_COLOUR,
 	T_PHOTOS, G_PHOTOS, F_256, F_JPEG,
+	T_ON, G_ON, O_ATARI, O_GATE,
 	T_FILE, BAR1, T_BATCH, BAR2, B_GO, NOBJ
 };
 #define COLS 58
-#define ROWS 19
+#define ROWS 21
 
 static OBJECT tree[NOBJ];
 static char s_files[COLS + 1], s_out[COLS + 1], s_file[COLS + 1], s_batch[COLS + 1];
@@ -271,11 +288,17 @@ static void build(void)
 	obj(G_PHOTOS, BOX, G_IBOX, 0, 0, 16, 9, COLS - 18, 1);
 	obj(F_256, G_PHOTOS, G_BUTTON, SELECTABLE | RBUTTON, (long)"256 colours (fast)", 0, 0, 20, 1);
 	obj(F_JPEG, G_PHOTOS, G_BUTTON, SELECTABLE | RBUTTON, (long)"JPEG (small)", 22, 0, 16, 1);
-	obj(T_FILE, BOX, G_STRING, 0, (long)s_file, 2, 11, COLS - 4, 1);
-	obj(BAR1, BOX, G_IBOX, 0, 0, 2, 12, COLS - 4, 1);
-	obj(T_BATCH, BOX, G_STRING, 0, (long)s_batch, 2, 14, COLS - 4, 1);
-	obj(BAR2, BOX, G_IBOX, 0, 0, 2, 15, COLS - 4, 1);
-	obj(B_GO, BOX, G_BUTTON, SELECTABLE | EXIT | DEFAULT, (long)"Convert", COLS - 14, 17, 12, 1);
+	obj(T_ON, BOX, G_STRING, 0, (long)"Convert on:", 2, 11, 13, 1);
+	obj(G_ON, BOX, G_IBOX, 0, 0, 16, 11, COLS - 18, 1);
+	obj(O_ATARI, G_ON, G_BUTTON, SELECTABLE | RBUTTON, (long)"This Atari", 0, 0, 14, 1);
+	obj(O_GATE, G_ON, G_BUTTON, SELECTABLE | RBUTTON, (long)"Gateway", 16, 0, 12, 1);
+	obj(T_FILE, BOX, G_STRING, 0, (long)s_file, 2, 13, COLS - 4, 1);
+	obj(BAR1, BOX, G_IBOX, 0, 0, 2, 14, COLS - 4, 1);
+	obj(T_BATCH, BOX, G_STRING, 0, (long)s_batch, 2, 16, COLS - 4, 1);
+	obj(BAR2, BOX, G_IBOX, 0, 0, 2, 17, COLS - 4, 1);
+	obj(B_GO, BOX, G_BUTTON, SELECTABLE | EXIT | DEFAULT, (long)"Convert", COLS - 14, 19, 12, 1);
+	if (!has_030)
+		tree[O_ATARI].ob_state |= DISABLED;	/* (an ST's converter: none) */
 	link_tree();
 	rsrc_obfix_all(tree, NOBJ);
 	tree[BOX].ob_state = 0;
@@ -348,6 +371,71 @@ static void out_path(const char *in, char *out, long n)
 	snprintf(out, (size_t)n, "%s\\%s", out_dir, base_of(in));
 }
 
+/* ---- Gateway mode: the file sent, the Gateway's progress as the file's
+   (sending its first tenth, the Gateway's work the next eight, the
+   converted PDF the last), conn.c's waits a turn each (pf_idle) */
+static int gate_waiting;		/* the Gateway hasn't begun this one yet */
+static int gate_phase = -1;		/* PG_SEND, PG_WORK, PG_RECV; -1 none */
+static long gate_part;			/* the bytes of the phase so far */
+static int net_ready;
+
+static void gate_idle(void)
+{
+	if (turn(NULL))
+		conn_stop = 1;
+}
+
+static int gate_progress(void *u, int phase, long done, long total)
+{
+	(void)u;
+	if (total <= 0)
+		total = 1;
+	gate_waiting = phase == PG_WORK && done == 0;
+	gate_phase = phase;
+	if (phase != PG_WORK)
+		gate_part = done;
+	cur_total = 1000;
+	cur_done = phase == PG_SEND ? done * 100 / total : phase == PG_WORK ? 100 + done * 800 / total :
+		   900 + done * 100 / total;
+	return turn(NULL);
+}
+
+static int gate_off;			/* the Gateway didn't answer: the batch stops */
+static char gate_why[80];
+
+static int on_the_gateway(const char *in, const char *out, char *err, int errlen)
+{
+	PGOPT po;
+	int pw, iw, r;
+	static const char *pages[] = { "none", "mono", "colour" };
+
+	memset(&po, 0, sizeof po);
+	po.pages = pages[pages_set];
+	po.photos = photos_set == CV_PHOTOS_JPEG ? "jpeg" : "indexed";
+	po.pictures = "screen";
+	screen_sizes(&pw, &iw);
+	po.page_w = pw;
+	po.pic_w = iw;
+	po.page_double = -1;
+	{
+		char q[40];
+
+		snprintf(q, sizeof q, "%d %d", pw, iw);	/* (the rigs' direct conversion takes the same) */
+		log_event("gateway-sizes", q, NULL);
+	}
+	conn_stop = 0;
+	pf_idle = gate_idle;
+	r = pg_convert(gate_host, gate_port, &po, in, out, gate_progress, NULL, err, errlen);
+	pf_idle = NULL;
+	gate_waiting = 0;
+	gate_phase = -1;
+	if (r == -3) {
+		gate_off = 1;
+		snprintf(gate_why, sizeof gate_why, "%s", err);
+	}
+	return r == -3 ? -1 : r;
+}
+
 static void worker(void)
 {
 	for (;;) {
@@ -356,7 +444,7 @@ static void worker(void)
 		for (i = 0; i < nfiles && !stop_now; i++) {
 			CVOPT o;
 			CVSTAT st;
-			char outp[200], err[60];
+			char outp[200], err[120];
 			int r;
 
 			if (files[i].state == 1)
@@ -365,7 +453,13 @@ static void worker(void)
 			cur_done = 0;
 			cur_total = 1000;
 			t_file = tos_ms();
-			cv_defaults(&o);
+			if (on_gateway) {
+				out_path(files[i].path, outp, sizeof outp);
+				memset(&st, 0, sizeof st);
+				r = on_the_gateway(files[i].path, outp, err, sizeof err);
+				goto done_one;
+			}
+			cv_defaults(&o);	/* (a 68030's: the window allows This Atari only there) */
 			o.pages = pages_set;
 			o.photos = photos_set;
 			o.mem_free = mem_free;	/* (a page refused memory: made again in bands) */
@@ -375,6 +469,7 @@ static void worker(void)
 			o.turn = turn;
 			out_path(files[i].path, outp, sizeof outp);
 			r = cv_convert(files[i].path, outp, &o, &st, err, sizeof err);
+done_one:
 			files[i].state = r == 0 ? 1 : r == -2 ? 3 : 2;
 			if (r == 0)
 				n_ok++;
@@ -390,6 +485,8 @@ static void worker(void)
 				log_event("converted", base_of(files[i].path), a);
 			}
 			bytes_done += files[i].bytes;
+			if (gate_off)
+				break;
 		}
 		work_done = 1;
 		coro_switch(&work_co, &main_co);
@@ -436,6 +533,7 @@ static void texts(void)
 		tree[B_GO].ob_spec = (long)"Stop";
 	set_radio(P_NONE, P_COLOUR, (short)(P_NONE + pages_set));
 	set_radio(F_256, F_JPEG, (short)(F_256 + photos_set));
+	set_radio(O_ATARI, O_GATE, (short)(on_gateway ? O_GATE : O_ATARI));
 }
 
 /* "45 %, 2 min left" from the share done (thousandths) and the time it took */
@@ -477,7 +575,16 @@ static void progress_texts(void)
 	if (!working)
 		return;
 	left(a, sizeof a, share_file(), t_file);
-	snprintf(s_file, sizeof s_file, "File %d of %d: %.24s  %s", cur + 1, nfiles, base_of(files[cur].path), a);
+	/* the three phases (guideline 7.3, Erez 7 Nov 2026) */
+	if (gate_phase == PG_SEND || gate_phase == PG_RECV)
+		snprintf(a, sizeof a, "%s the Gateway... %ld KB", gate_phase == PG_SEND ? "Sending to" : "Receiving from",
+			 (gate_part + 1023) / 1024);
+	else if (gate_phase == PG_WORK)
+		snprintf(a, sizeof a, gate_waiting ? "Waiting for the Gateway" : "The Gateway is converting...");
+	if (gate_phase >= 0)	/* (the phase's words take the name's room) */
+		snprintf(s_file, sizeof s_file, "File %d of %d: %s", cur + 1, nfiles, a);
+	else
+		snprintf(s_file, sizeof s_file, "File %d of %d: %.24s  %s", cur + 1, nfiles, base_of(files[cur].path), a);
 	left(a, sizeof a, share_batch(), t_batch);
 	snprintf(s_batch, sizeof s_batch, "The batch: %s", a);
 }
@@ -647,6 +754,8 @@ static void cmd_out(void)
 	redraw_obj(T_OUT);
 }
 
+static int settings_dialog(void);
+
 static void begin(void)
 {
 	int i, there = 0;
@@ -661,6 +770,17 @@ static void begin(void)
 		if (!out_dir[0])
 			return;
 	}
+	if (on_gateway) {
+		if (!gate_host[0] && !settings_dialog())
+			return;
+		if (!gate_host[0])
+			return;
+		if (!net_ready && !(net_ready = net_init())) {
+			alert(1, "[1][The Gateway is reached through STinG, MiNTnet or MagiC-Net, and none of them is running.][ OK ]");
+			return;
+		}
+	}
+	gate_off = 0;
 	for (i = 0; i < nfiles; i++) {
 		char d[160];
 
@@ -733,7 +853,13 @@ static void finished(void)
 	for (i = 0; i < nfiles && failed < 0; i++)
 		if (files[i].state == 2)
 			failed = i;
-	if (failed >= 0)
+	if (gate_off) {
+		log_event("gateway-off", gate_why, NULL);
+		alert(1, "[1][The Gateway at %.24s doesn't answer. Check that it is on and that the PDF converter is installed on it.][ OK ]", gate_host);
+		for (i = 0; i < nfiles; i++)
+			if (files[i].state == 2 && !strcmp(files[i].why, gate_why))
+				files[i].state = 0;	/* (not its fault: kept, to try again) */
+	} else if (failed >= 0)
 		alert(1, "[1][%d converted.|%.30s couldn't be:|%.30s][ OK ]", n_ok, base_of(files[failed].path),
 		      files[failed].why);
 	else if (stop_now)
@@ -761,7 +887,7 @@ static void about_box(void)
 	about_show(&a);
 }
 
-enum { CMD_NONE, CMD_ABOUT, CMD_ADD, CMD_FOLDER, CMD_CLEAR, CMD_OUT, CMD_GO, CMD_QUIT, CMD_GUIDE };
+enum { CMD_NONE, CMD_ABOUT, CMD_ADD, CMD_FOLDER, CMD_CLEAR, CMD_OUT, CMD_GO, CMD_QUIT, CMD_GUIDE, CMD_SETTINGS };
 
 static const MBAR_ITEM desk_items[] = { { "About EConvert...", NULL, CMD_ABOUT }, { NULL, NULL, CMD_NONE } };
 static const MBAR_ITEM file_items[] = {
@@ -772,15 +898,35 @@ static const MBAR_ITEM file_items[] = {
 	{ "Write to...", NULL, CMD_OUT },
 	{ "Convert", "^R", CMD_GO },
 	{ "-", NULL, CMD_NONE },
+	{ "Settings...", "^,", CMD_SETTINGS },
+	{ "-", NULL, CMD_NONE },
 	{ "Quit", "^Q", CMD_QUIT },
 	{ NULL, NULL, CMD_NONE } };
 static const MBAR_ITEM help_items[] = { { "EConvert in the EPDF guide", NULL, CMD_GUIDE }, { NULL, NULL, CMD_NONE } };
 static const MBAR_TITLE titles[] = { { " EConvert ", desk_items }, { " File ", file_items }, { " Help ", help_items },
 				     { NULL, NULL } };
 
+/* File > Settings... (^,): where the Gateway is; 1 when OK */
+static int settings_dialog(void)
+{
+	char port[8];
+
+	if (working)
+		return 0;
+	if (!gate_dialog(gate_host, (int)sizeof gate_host, &gate_port))
+		return 0;
+	setting("GATE", gate_host, "the Gateway's address (Through the Gateway)");
+	snprintf(port, sizeof port, "%u", (unsigned)gate_port);
+	setting("GATEPORT", port, "the Gateway's port for PDFs (8380)");
+	return 1;
+}
+
 static void command(int c)
 {
 	switch (c) {
+	case CMD_SETTINGS:
+		settings_dialog();
+		break;
 	case CMD_ABOUT:
 		about_box();
 		break;
@@ -858,6 +1004,15 @@ static void click(short mx, short my)
 			redraw_obj(G_PAGES);
 		}
 		break;
+	case O_ATARI: case O_GATE:
+		if (!working && !(tree[o].ob_state & DISABLED)) {
+			on_gateway = o == O_GATE;
+			setting("CONVERT", on_gateway ? "gateway" : "atari",
+				"where the PDFs are converted: atari (this Falcon or TT) or gateway");
+			texts();
+			redraw_obj(G_ON);
+		}
+		break;
 	case F_256: case F_JPEG:
 		if (!working) {
 			photos_set = o - F_256;
@@ -876,6 +1031,10 @@ static void key(short kstate, short k)
 
 	if (scan == 0x62) {		/* Help */
 		command(CMD_GUIDE);
+		return;
+	}
+	if ((kstate & K_CTRL) && scan == 0x33) {	/* ^, : Settings (the comma's key) */
+		command(CMD_SETTINGS);
 		return;
 	}
 	if (key_ctrl(kstate, k)) {
@@ -1004,12 +1163,9 @@ int main(void)
 	text_font(vdi_h, 1, cw, ch);
 	wind_get(0, WF_WORKXYWH, &desk_x, &desk_y, &desk_w, &desk_h);
 	graf_mouse(ARROW, 0);
-	if (get_cookie(0x5F435055L) < 20) {	/* _CPU: a 68000 */
-		alert(1, "[1][EConvert needs a Falcon or a TT|(a 68030). On an ST, EPDF reads|the PDFs EConvert made elsewhere.][ Quit ]");
-		v_clsvwk(vdi_h);
-		appl_exit();
-		return 0;
-	}
+	/* _CPU: a 68030 converts here; an ST only through the Gateway (its
+	   converter is built for the 68030: Makefile, build/m68030cv) */
+	has_030 = get_cookie(0x5F435055L) >= 20;
 	if (!screen_check("EConvert", scr_w)) {
 		v_clsvwk(vdi_h);
 		appl_exit();

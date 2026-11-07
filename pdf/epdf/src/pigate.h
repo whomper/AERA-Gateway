@@ -31,9 +31,10 @@ enum { PG_SEND, PG_WORK, PG_RECV };
    stops the job */
 typedef int (*pg_progress)(void *u, int phase, long done, long total);
 
-/* in converted by the Pi at host:port into out. 0 done; -1 failed (err:
-   the Pi's own "pdfgate: ..." line, or what the network said); -2
-   stopped (conn_stop or progress). out is removed unless it is whole */
+/* in converted by the Gateway at host:port into out. 0 done; -1 failed
+   (err: the Gateway's own "pdfgate: ..." line, or what the network
+   said); -2 stopped (conn_stop or progress); -3 the Gateway didn't
+   answer (no connection: err says why). out is removed unless whole */
 int pg_convert(const char *host, unsigned short port, const PGOPT *o, const char *in, const char *out,
 	       pg_progress progress, void *u, char *err, int errlen);
 

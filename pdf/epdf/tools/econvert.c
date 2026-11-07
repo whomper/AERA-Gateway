@@ -72,6 +72,8 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--pages") && i + 1 < argc) {
 			i++;
 			o.pages = !strcmp(argv[i], "none") ? CV_PAGES_NONE : !strcmp(argv[i], "colour") ? CV_PAGES_COLOUR : CV_PAGES_MONO;
+		} else if (!strcmp(argv[i], "--font-kb") && i + 1 < argc) {
+			o.font_budget = atol(argv[++i]) * 1024L;	/* (as EConvert's quarter of what is free) */
 		} else if (!strcmp(argv[i], "--progress")) {
 			o.progress = show_progress;
 		} else if (!strcmp(argv[i], "--normal-pages")) {

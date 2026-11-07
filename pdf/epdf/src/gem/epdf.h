@@ -31,6 +31,7 @@ int doc_open(const char *path, int cols, int lines_mode, const char *cache);
 int doc_opening(void);
 void doc_close(void);
 int doc_is_open(void);
+const char *doc_path(void);
 const char *doc_name(void);
 long doc_pages(void);
 long doc_read(void);			/* pages whose text is read */

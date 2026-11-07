@@ -888,7 +888,10 @@ static int convert_page(CV *c, long n)
 			if (mono >= 0 && c->o->page_double && !c->banded && (!c->o->mem_free || c->o->mem_free() > need * 5 / 2)) {
 				r->mono_glyphs = 1;
 				cv_phase = "render-double";
-				if (render_page(r, n, dw2) == 0) {
+				/* (only whole: a canvas held to bands, canvas_max, has
+				   fewer rows than the page; dithered as one piece it read
+				   past them, ASan with --canvas on the rigs' showcase) */
+				if (render_page(r, n, dw2) == 0 && r->c.y0 == 0 && r->c.rows >= r->c.h) {
 					long rb2 = (r->c.w + 7) / 8;
 					unsigned char *d2 = malloc((size_t)rb2 * r->c.h);
 
@@ -997,6 +1000,14 @@ int cv_convert(const char *in, const char *out, const CVOPT *o, CVSTAT *st, char
 		return -1;
 	}
 	c->o = o;
+	if (o->mem_free) {
+		/* the fonts' share: a quarter of what is free, 500 KB at least
+		   (render.c lets the least lately used go above it) */
+		long fr = o->mem_free() / 4;
+
+		render_font_budget = fr > 500L * 1024 ? fr : 500L * 1024;
+	} else if (o->font_budget > 0)
+		render_font_budget = o->font_budget;
 	c->page_w = o->page_w >= 64 ? o->page_w : PAGE_W;
 	c->pic_w = o->pic_w >= 64 ? o->pic_w : c->page_w;
 	c->st = st;

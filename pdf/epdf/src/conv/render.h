@@ -44,6 +44,9 @@ typedef struct {
 /* the fonts are kept from page to page: render_init once, render_done at
    the end */
 int render_init(RPAGE *r, PDOC *d, const char *fontdir);
+/* the font programs' bytes the renderer keeps at most between pages, the
+   least lately used let go first; 0 (the default): any */
+extern long render_font_budget;
 void render_done(RPAGE *r);
 /* page n drawn width pixels wide (its height from its shape): r->c
    holds it; 0 ok */

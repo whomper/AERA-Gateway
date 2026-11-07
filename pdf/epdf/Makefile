@@ -29,7 +29,7 @@ COMMON_SRC = common/src/inflate.c common/src/util.c common/src/futil.c
 BSSL_SRC = $(addprefix $(BSSL)/src/, hash/md5.c hash/sha2small.c hash/sha2big.c \
            symcipher/aes_big_cbcdec.c symcipher/aes_big_cbcenc.c symcipher/aes_big_dec.c symcipher/aes_big_enc.c symcipher/aes_common.c \
            codec/dec32be.c codec/enc32be.c codec/dec32le.c codec/enc32le.c codec/dec64be.c codec/enc64be.c)
-HDRS     = $(wildcard src/*.h src/gem/*.h src/view/*.h src/econv/*.h common/src/*.h common/ui/*.h common/atari/*.h common/atari/include/*.h)
+HDRS     = $(wildcard src/*.h src/conv/*.h src/gem/*.h src/view/*.h src/econv/*.h common/src/*.h common/ui/*.h common/atari/*.h common/atari/include/*.h)
 
 .PHONY: all test measure dist help clean atari measure-atari fttest imgbench gui-test files-test viewtest
 all: build/pdfmeasure build/pdftext build/pdfmem build/glyphjob build/imgdump binary/EPDF.PRG
@@ -134,6 +134,7 @@ endef
 build/m68000/%: XCPU = -m68000 -mstrict-align -fdisable-tree-bswap
 build/m68030/%: XCPU = -m68030 -msoft-float
 build/m68030lj/%: XCPU = -m68030 -msoft-float
+build/m68000ec/%: XCPU = -m68000 -mstrict-align -fdisable-tree-bswap
 build/m68030cv/%: XCPU = -m68030 -msoft-float
 binary/LAUNCH.PRG: XCPU = -m68000 -mstrict-align -fdisable-tree-bswap
 # the GEM building blocks as the family builds them, for size (at -O2 GCC 13
@@ -144,6 +145,7 @@ $(eval $(call ATARI_BUILD,m68000))
 $(eval $(call ATARI_BUILD,m68030))
 $(eval $(call ATARI_BUILD,m68030cv))
 $(eval $(call ATARI_BUILD,m68030lj))
+$(eval $(call ATARI_BUILD,m68000ec))
 
 OBJS = $(patsubst %.c,%.o,$(ATARI_SRC))
 binary:
@@ -289,7 +291,7 @@ binary/MEAS30F.PRG: build/m68030/measure.elf | binary
 	PRGFLAGS=7 python3 common/tools/elf2tos.py $< $@
 binary/FTTEST30F.PRG: build/m68030/fttest.elf | binary
 	PRGFLAGS=7 python3 common/tools/elf2tos.py $< $@
-atari: binary/EPDF.PRG binary/LAUNCH.PRG
+atari: binary/EPDF.PRG binary/LAUNCH.PRG binary/ECONVERT.PRG
 measure-atari: binary/MEASURE.PRG binary/MEAS30.PRG binary/MEAS30F.PRG
 fttest: binary/FTTEST.PRG binary/FTTEST30.PRG
 
@@ -314,26 +316,40 @@ binary/CONVTEST.PRG: $(CV_ATARI_OBJ) build/m68030cv/atari/convtest.o build/m6803
 	PRGFLAGS=7 python3 common/tools/elf2tos.py build/m68030/convtest.elf $@
 
 # ---------------------------------------------------------------- ECONVERT.PRG (the converter's window)
+# One program for every machine (Erez, 7 Nov 2026: Gateway mode on an ST
+# too): its window, files and the Gateway's exchange built for the 68000
+# (build/m68000ec), the converter for the 68030 (build/m68030cv) as before,
+# so a Falcon's own conversions lose nothing (a 68000 converter: the test
+# book 29.7 -> 32.1 s on Falcon-4). The converter runs only where the
+# window has found a 68030 (Convert on: This Atari); an ST only sends.
 EC_GEM_SRC = src/econv/econvert.c src/gem/gemui.c src/view/inf.c common/atari/gem.c common/atari/crash.c \
              common/ui/mbar.c common/ui/aboutbox.c common/ui/aboutline.c common/ui/alert.c common/ui/dialog.c \
              common/ui/field.c common/ui/av.c common/ui/text.c common/ui/help.c common/ui/dd.c common/ui/progbar.c \
-             common/ui/click.c common/ui/clip.c common/ui/accmem.c common/src/bidi.c common/ui/fsel.c common/ui/scrsize.c
-$(patsubst %.c,build/m68030cv/%.o,$(EC_GEM_SRC)): XFLAGS += -Isrc/gem -Isrc/view -Icommon/ui -Isrc/conv
-build/m68030cv/version.o: build/m68000/version.c | build/m68030cv
+             common/ui/click.c common/ui/clip.c common/ui/accmem.c common/src/bidi.c common/ui/fsel.c common/ui/scrsize.c \
+             src/pdfio_tos.c src/conv/cvio_tos.c common/src/util.c common/src/futil.c $(RT_C) \
+             $(BSSL_SRC) src/pigate.c src/pftime_tos.c common/src/conn.c common/src/tls_none.c src/gem/gatedlg.c \
+             common/atari/net_tos.c common/atari/sting.c
+EC_CV_SRC  = $(filter-out src/conv/cvio_tos.c src/pdfio_tos.c common/src/util.c common/src/futil.c \
+               $(RT_C) $(BSSL_SRC),$(CV_ATARI_SRC))
+build/m68000ec/%.o: XFLAGS += -DPDF_DRAW -DAERA_NO_FLOAT -Isrc/gem -Isrc/view -Icommon/ui -Isrc/conv
+build/m68000ec/version.o: build/m68000/version.c | build/m68000ec
 	$(XCC) $(XFLAGS) -c -o $@ $<
-build/m68030cv/coro.o: src/gem/coro.S | build/m68030cv
-	$(XCC) -m68030 -c -o $@ $<
-build/m68030cv/crash_s.o: common/atari/crash.S | build/m68030cv
-	$(XCC) -m68030 -c -o $@ $<
-build/m68030cv/crt0_ec.o: common/atari/crt0.S | build/m68030cv
-	$(XCC) -m68030 -DSTACK_SIZE=16384 -c -o $@ $<
-EC_OBJS = $(patsubst %.c,build/m68030cv/%.o,$(EC_GEM_SRC) common/src/charset.c) $(filter-out build/m68030cv/common/src/charset.o,$(CV_ATARI_OBJ)) \
-          build/m68030cv/version.o
-binary/ECONVERT.PRG: XCPU = -m68030 -msoft-float
-binary/ECONVERT.PRG: $(EC_OBJS) build/m68030cv/crt0_ec.o build/m68030/nf.o build/m68030cv/crash_s.o build/m68030cv/coro.o common/atari/link.ld | binary
+build/m68000ec/coro.o: src/gem/coro.S | build/m68000ec
+	$(XCC) -m68000 -c -o $@ $<
+build/m68000ec/crash_s.o: common/atari/crash.S | build/m68000ec
+	$(XCC) -m68000 -c -o $@ $<
+build/m68000ec/sting_s.o: common/atari/sting.S | build/m68000ec
+	$(XCC) -m68000 -c -o $@ $<
+build/m68000ec/crt0_ec.o: common/atari/crt0.S | build/m68000ec
+	$(XCC) -m68000 -DSTACK_SIZE=16384 -c -o $@ $<
+EC_OBJS = $(patsubst %.c,build/m68000ec/%.o,$(EC_GEM_SRC)) build/m68000ec/version.o build/m68000ec/sting_s.o \
+          $(addprefix build/m68030cv/,$(patsubst %.c,%.o,$(EC_CV_SRC))) build/m68030/inflate_fast.o \
+          $(addprefix build/m68030/,$(FT_OBJS))
+binary/ECONVERT.PRG: XCPU = -m68000
+binary/ECONVERT.PRG: $(EC_OBJS) build/m68000ec/crt0_ec.o build/m68000/nf.o build/m68000ec/crash_s.o build/m68000ec/coro.o common/atari/link.ld | binary
 	$(XCC) $(XCPU) -nostdlib -static -no-pie -Wl,--emit-relocs -Wl,-T,common/atari/link.ld -Wl,--gc-sections \
 	  -Wl,--build-id=none -Wl,-z,noexecstack -Wl,--no-warn-rwx-segments -o build/m68030/econvert.elf \
-	  build/m68030cv/crt0_ec.o build/m68030/nf.o build/m68030cv/crash_s.o build/m68030cv/coro.o $(EC_OBJS) -lgcc
+	  build/m68000ec/crt0_ec.o build/m68000/nf.o build/m68000ec/crash_s.o build/m68000ec/coro.o $(EC_OBJS) -lgcc
 	PRGFLAGS=7 python3 common/tools/elf2tos.py build/m68030/econvert.elf $@
 
 # ---------------------------------------------------------------- EPDF.PRG (the GEM program)
@@ -348,8 +364,12 @@ GEM_SRC = src/gem/epdf.c src/gem/doc.c src/gem/textwin.c src/gem/badge.c src/gem
           src/pdfimg.c src/ccitt.c src/rscale.c $(PIC_SRC) \
           common/atari/gem.c common/atari/crash.c common/ui/mbar.c common/ui/aboutbox.c common/ui/aboutline.c \
           common/ui/alert.c common/ui/dialog.c common/ui/field.c common/ui/av.c common/ui/text.c common/ui/clip.c common/ui/iconify.c common/ui/help.c common/ui/dd.c common/ui/popup.c common/ui/fontsel.c common/ui/click.c common/ui/progbar.c common/ui/enlarge.c \
-          common/src/charset.c common/src/bidi.c common/ui/accmem.c common/atari/bigbuf.c common/atari/dspjpeg.c
-GEM_OBJ = $(patsubst %.c,build/m68000/%.o,$(GEM_SRC)) build/m68000/version.o
+          common/src/charset.c common/src/bidi.c common/ui/accmem.c common/atari/bigbuf.c common/atari/dspjpeg.c \
+          src/gem/gwopen.c src/gem/gatedlg.c src/pigate.c src/pftime_tos.c src/conv/cvio_tos.c common/src/conn.c \
+          common/src/tls_none.c common/atari/net_tos.c common/atari/sting.c common/ui/scrsize.c
+GEM_OBJ = $(patsubst %.c,build/m68000/%.o,$(GEM_SRC)) build/m68000/version.o build/m68000/sting_s.o
+build/m68000/sting_s.o: common/atari/sting.S | build/m68000
+	$(XCC) -m68000 -c -o $@ $<
 $(patsubst %.c,build/m68000/%.o,$(GEM_SRC)): XFLAGS += -Isrc/gem -Isrc/view -Icommon/ui -I$(T)/tjpgd -I$(T)/nsgif/include -I$(T)/nsgif/src
 # the Falcon's DSP for JPEGs, from pic.c's own header reader (one 68000
 # program for every Atari, guideline 7.4); no PNG or GIF decoder (a PDF's
