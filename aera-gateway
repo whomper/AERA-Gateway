@@ -9,6 +9,7 @@ says how they are.
   sudo ./aera-gateway install dav                           ECal's and EContact's (ecalgate)
   sudo ./aera-gateway install ftp                           EFTP's (eftpgate)
   sudo ./aera-gateway install web                           EWeb's (webgate)
+  sudo ./aera-gateway install translate                     translation for the apps (translategate)
   sudo ./aera-gateway install claude --network --atari ATARI_IP
                                                             ClaudeST's bridge (claude-st)
   sudo ./aera-gateway install all --allow ATARI_IP --mail IMAP SMTP[:587] [POP3] [--browser]
@@ -48,6 +49,7 @@ import tarfile
 import tempfile
 import time
 import urllib.request
+import zipfile
 
 VERSION = "1.18"                         # AERA-Gateway's release: the Release workflow tags it vX.Y
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -55,7 +57,7 @@ PROG = sys.argv[0] if sys.argv[0].endswith("aera-gateway") else "aera-gateway"  
 OPT = "/opt/aera-gateway"                   # the gateways' code on the Pi
 UNITS = "/etc/systemd/system"
 OLD_BIN = "/usr/local/bin"                  # where the apps' own install.sh put them
-FILES = ("aeragate.py", "emailgate.py", "ecalgate.py", "eftpgate.py", "webgate.py")
+FILES = ("aeragate.py", "emailgate.py", "ecalgate.py", "eftpgate.py", "webgate.py", "translategate.py")
 EXT = "webgate-ext"                         # webgate's browser extension, a folder next to them
 HOME_NETS = ("192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8")
 CLAUDEST = "whomper/ClaudeST"
@@ -1082,8 +1084,164 @@ class Web(Gateway):
             "Check it from any browser on your network: http://%s:%s/" % (ip, ns.port)])
 
 
+class Translate(Gateway):
+    """translategate: text translated on the Pi for the Atari apps, by a
+    local engine (no text leaves the home network). The engine, Argos
+    Translate's models run by CTranslate2, is in a venv of its own under
+    /opt/translategate with its models, downloaded once here and offline
+    after (Erez, 7 Nov 2026); "stand-in" needs nothing (CI)."""
+    key, name, script = "translate", "translategate", "translategate.py"
+    title = "Translation for the Atari apps (a local engine, nothing leaves the home network)"
+    removed = "translategate removed."
+    DIR = "/opt/translategate"
+    VENV = DIR + "/venv"
+    MODELS = DIR + "/models"
+    INDEX = "https://raw.githubusercontent.com/argosopentech/argospm-index/main/index.json"
+    LANGUAGES = "en,he"
+    PIP = ("ctranslate2>=4,<5", "sentencepiece>=0.2,<0.3")
+    MIN_MEMORY = 3500                       # MB: the models loaded beside the other gateways
+
+    def options(self, ap):
+        super().options(ap)
+        ap.add_argument("--port", type=int, help="the port on the Pi (8480 is the default)")
+        ap.add_argument("--engine", choices=("argos", "stand-in"),
+                        help="argos (the default): Argos Translate's models; stand-in: no engine, for tests")
+        ap.add_argument("--languages", metavar="CODES",
+                        help="the languages to translate between, e.g. en,he (the default), en,he,de")
+        ap.add_argument("-v", "--verbose", action="store_true", default=None, help="log every request")
+        ap.add_argument("--no-verbose", dest="verbose", action="store_false")
+
+    def take_over(self, pi, ns):
+        ns.engine = "argos"
+
+    def apply(self, ns, o):
+        super().apply(ns, o)
+        if o.port is not None:
+            ns.port = o.port
+        if o.engine is not None:
+            ns.engine = o.engine
+        if o.verbose is not None:
+            ns.verbose = o.verbose
+        self.languages = None
+        if o.languages is not None:
+            codes = [c.strip() for c in o.languages.split(",") if c.strip()]
+            if len(codes) < 2 or not all(re.fullmatch(r"[a-z]{2,3}", c) for c in codes):
+                raise Usage("--languages: two or more codes, e.g. en,he")
+            self.languages = codes
+
+    def args(self, ns):
+        out = ["--port", str(ns.port)] + super().args(ns)
+        if ns.engine != ns.default["engine"]:
+            out += ["--engine", ns.engine]
+        out += ["-v"] if ns.verbose else []
+        return out + ns.extra
+
+    def ports(self, ns):
+        return [str(ns.port)]
+
+    def unit(self, ns, keep):
+        text = super().unit(ns, keep)
+        if ns.engine == "argos":
+            text = text.replace("ExecStart=/usr/bin/python3 ", "ExecStart=%s/bin/python3 " % self.VENV)
+        # the engine's memory, beside the other gateways on one Pi
+        return text.replace("Restart=always", "MemoryMax=2G\nRestart=always", 1)
+
+    def describe(self, ns):
+        return "engine " + ns.engine
+
+    def prepare(self, pi, ns):
+        """the engine: the memory for it (before anything changes), its venv
+        and its models; kept as they are on an update"""
+        if ns.engine != "argos":
+            return
+        if not self.memory_ok(pi):
+            raise Failed("translategate's engine needs a Pi with 4 GB of memory or more; this one has %d MB."
+                         % self.memory(pi))
+        venv = pi.path(self.VENV)
+        if not pi.ok(venv + "/bin/python3", "-c", "import ctranslate2, sentencepiece"):
+            heading("Setting up translategate's engine (CTranslate2, in %s)" % self.VENV)
+            if not pi.ok("python3", "-c", "import venv, ensurepip"):
+                pi.run("apt-get", "update", "-qq")
+                pi.run("apt-get", "install", "-y", "-qq", "python3-venv", "python3-pip")
+            pi.rmtree(self.VENV)
+            pi.run("python3", "-m", "venv", venv)
+            pi.run(venv + "/bin/pip", "install", "-q", *self.PIP)
+        have = {os.path.basename(os.path.dirname(f))
+                for f in glob.glob(pi.path(self.MODELS) + "/*/metadata.json")}
+        want = self.languages or sorted({c for p in have for c in p.split("_")}) or self.LANGUAGES.split(",")
+        missing = [(a, b) for a in want for b in want if a != b and "%s_%s" % (a, b) not in have]
+        if missing:
+            self.fetch(pi, missing)
+
+    def memory(self, pi):
+        m = re.search(r"^MemTotal:\s+(\d+) kB", pi.read("/proc/meminfo") or "", re.M)
+        return int(m.group(1)) // 1024 if m else None
+
+    def memory_ok(self, pi):
+        mb = self.memory(pi)
+        return mb is None or mb >= self.MIN_MEMORY
+
+    def fetch(self, pi, pairs):
+        """Argos Translate's models for pairs, from its index (once; offline after)"""
+        heading("Downloading the translation models: %s" % ", ".join("%s>%s" % p for p in pairs))
+        try:
+            with urllib.request.urlopen(self.INDEX, timeout=60) as r:
+                index = json.load(r)
+        except (OSError, ValueError) as e:
+            raise Failed("can't read Argos Translate's list of models (%s)" % e)
+        newest = {}
+        for p in index:
+            k = (p.get("from_code"), p.get("to_code"))
+            links = [u for u in p.get("links", []) if u.startswith("https://")]
+            if k in pairs and links:
+                v = tuple(int(x) for x in re.findall(r"\d+", str(p.get("package_version", "0"))))
+                if k not in newest or v > newest[k][0]:
+                    newest[k] = (v, links[0])
+        gone = [p for p in pairs if p not in newest]
+        if gone:
+            raise Failed("Argos Translate has no model for %s" % ", ".join("%s>%s" % p for p in gone))
+        for (a, b), (_, url) in sorted(newest.items()):
+            tmp = tempfile.mkdtemp(prefix="translategate-")
+            try:
+                say("   %s>%s from %s" % (a, b, url))
+                # (its server turns away Python's own User-Agent)
+                req = urllib.request.Request(url, headers={"User-Agent": "aera-gateway/" + VERSION})
+                with urllib.request.urlopen(req, timeout=600) as r, open(os.path.join(tmp, "m.zip"), "wb") as f:
+                    shutil.copyfileobj(r, f)
+                with zipfile.ZipFile(os.path.join(tmp, "m.zip")) as z:
+                    names = z.namelist()
+                    top = names[0].split("/")[0]
+                    want = ("%s/metadata.json" % top, "%s/sentencepiece.model" % top,
+                            "%s/model/model.bin" % top)
+                    if any(n not in names for n in want) or any(n.startswith("/") or ".." in n.split("/")
+                                                                for n in names):
+                        raise Failed("the %s>%s model isn't one translategate can use" % (a, b))
+                    z.extractall(tmp, [n for n in names if n.startswith(top + "/model/") or n in want])
+                dst = "%s/%s_%s" % (self.MODELS, a, b)
+                pi.rmtree(dst)
+                pi.makedirs(self.MODELS)
+                shutil.copytree(os.path.join(tmp, top), pi.path(dst))
+            except (OSError, zipfile.BadZipFile) as e:
+                raise Failed("can't download the %s>%s model (%s)" % (a, b, e))
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+
+    def after_remove(self, pi):
+        pi.rmtree(self.DIR)
+
+    def tell(self, ns, ip):
+        return "\n".join([
+            "",
+            "translategate is running%s. In the apps on the Atari, Translate:" % (
+                "" if ns.engine == "argos" else " (engine: %s)" % ns.engine),
+            "   Gateway:  %s" % ip,
+            "   Port:     %s" % ns.port,
+            "",
+            "Check it from any browser on your network: http://%s:%s/status" % (ip, ns.port)])
+
+
 MAIL = Mail()
-GATEWAYS = [MAIL, Dav(), Ftp(), Web()]
+GATEWAYS = [MAIL, Dav(), Ftp(), Web(), Translate()]
 
 
 def put_files(pi, src):
@@ -1433,7 +1591,8 @@ CLAUDE = Claude()
 SERVICES = {g.key: g for g in GATEWAYS + [CLAUDE]}
 NAMES = {"email": "mail", "emailgate": "mail", "cal": "dav", "ecal": "dav", "econtact": "dav",
          "contacts": "dav", "ecalgate": "dav", "eftp": "ftp", "eftpgate": "ftp",
-         "claudest": "claude", "claude-st": "claude", "eweb": "web", "webgate": "web"}
+         "claudest": "claude", "claude-st": "claude", "eweb": "web", "webgate": "web",
+         "translation": "translate", "translategate": "translate"}
 
 
 def service(name):
@@ -1500,6 +1659,9 @@ def install_all(pi, o, src=HERE):
     for svc in GATEWAYS + [CLAUDE]:
         if svc is MAIL and not o.mail and not svc.installed(pi) and not pi.exists(Mail.STUNNEL):
             skipped.append("mail (name your provider's servers: --mail IMAP SMTP[:587] [POP3])")
+            continue
+        if svc.key == "translate" and not svc.installed(pi) and not svc.memory_ok(pi):
+            skipped.append("translate (its engine needs a Pi with 4 GB of memory or more)")
             continue
         if svc is CLAUDE:
             argv = ["--from", o.source] if o.source else []

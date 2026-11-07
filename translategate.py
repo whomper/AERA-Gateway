@@ -26,14 +26,16 @@ back as they were.
 
 The engine is a plug-in (ENGINES): it stays loaded between requests and is
 asked one thing, translate(texts, src, dst). "stand-in" needs nothing and
-shows the shaping (tests, CI); a real engine is Erez's decision.
+shows the shaping (tests, CI); "argos" is Argos Translate's models run
+by CTranslate2, in the venv `aera-gateway install translate` makes.
 
 The rules are aeragate's: the home network only, or --allow; no connection
 onwards. Nothing is kept: no text, no cache, no session. The log names who
 asked for which pair, the sizes and the time, never a word of the text,
 and neither does any error reply. A closed connection stops the job.
 
-Standard Python 3 only (the stand-in engine).
+Standard Python 3 only, but for the argos engine's ctranslate2 and
+sentencepiece in its own venv (Erez, 7 Nov 2026).
 """
 
 import argparse
@@ -111,7 +113,131 @@ class StandIn:
         return out
 
 
-ENGINES = {"stand-in": StandIn}
+SENTENCE_END = re.compile(r"[.!?\u2026]+[\"'\u201d\u2019)\]]*\s+(?=[A-Z\u00c0-\u00de0-9\u0590-\u05ff\"'\u201c(\[])")
+STOPWORDS = {
+    "en": "the and of to is in that it you for with this are be not have",
+    "de": "der die das und ist nicht ich sie mit den ein eine zu von auf",
+    "fr": "le la les et est pas je vous une des du que qui pour dans",
+    "es": "el la los las y es no que de en un una por con para",
+    "it": "il la che e di non un una per sono con mi ti gli",
+    "nl": "de het een en is niet ik je van op dat met voor zijn",
+    "pt": "o a os as e que de do da em um uma para com nao",
+}
+SCRIPTS = (("he", "\u0590", "\u05ff"), ("ar", "\u0600", "\u06ff"), ("ru", "\u0400", "\u04ff"),
+           ("el", "\u0370", "\u03ff"), ("ja", "\u3040", "\u30ff"), ("zh", "\u4e00", "\u9fff"))
+
+
+def sentences(text):
+    """a paragraph's sentences, for an engine that takes one at a time"""
+    out, at = [], 0
+    for m in SENTENCE_END.finditer(text):
+        out.append(text[at:m.end()].strip())
+        at = m.end()
+    out.append(text[at:].strip())
+    return [s for s in out if s]
+
+
+def detect(text, codes):
+    """the language of text, among codes: by its letters, then, for the
+    Latin ones, by its commonest words"""
+    counts = {code: sum(1 for c in text if lo <= c <= hi) for code, lo, hi in SCRIPTS}
+    latin = sum(1 for c in text if c.isalpha() and c < "\u0250")
+    code, n = max(counts.items(), key=lambda kv: kv[1])
+    if n > latin and code in codes:
+        return code
+    words = re.findall(r"[a-z]+", text.lower())
+    best, score = None, -1
+    for c in codes:
+        if c in STOPWORDS:
+            stop = set(STOPWORDS[c].split())
+            k = sum(1 for w in words if w in stop)
+            if k > score or (k == score and c == "en"):
+                best, score = c, k
+    return best or ("en" if "en" in codes else sorted(codes)[0])
+
+
+REPEAT = re.compile(r"(?<!\S)(\S+)(?:\s+\1)+(?!\S)")
+
+
+def unrepeat(src, out):
+    """a word said again and again where the source said it once: once
+    (small models do this with a name or a word alone: "Dana" -> "Dana Dana")"""
+    return out if REPEAT.search(src) else REPEAT.sub(r"\1", out)
+
+
+class Argos:
+    """Argos Translate's models (OpenNMT, one a pair) run by CTranslate2,
+    from the venv `aera-gateway install translate` made: loaded once, in
+    the background (503 until then), kept loaded between requests"""
+    name = "argos"
+    BEAM = 4
+    BATCH = 8               # sentences the engine is given at once, between looks at the socket
+
+    def __init__(self, models="/opt/translategate/models", threads=2, workers=2):
+        self.version = "?"
+        self.pair = {}
+        self.names = {}
+        self.loaded = False
+        threading.Thread(target=self.load, args=(models, threads, workers), daemon=True).start()
+
+    def load(self, models, threads, workers):
+        import glob
+        import json
+        import os
+        try:
+            import ctranslate2
+            import sentencepiece
+            versions = set()
+            for meta in sorted(glob.glob(os.path.join(models, "*", "metadata.json"))):
+                d = os.path.dirname(meta)
+                with open(meta, encoding="utf-8") as f:
+                    m = json.load(f)
+                tr = ctranslate2.Translator(os.path.join(d, "model"), device="cpu",
+                                            inter_threads=workers, intra_threads=threads)
+                sp = sentencepiece.SentencePieceProcessor(model_file=os.path.join(d, "sentencepiece.model"))
+                self.pair[(m["from_code"], m["to_code"])] = (tr, sp)
+                self.names[m["from_code"]], self.names[m["to_code"]] = m["from_name"], m["to_name"]
+                versions.add(str(m.get("package_version", "?")))
+            self.version = "/".join(sorted(versions)) or "none"
+            aeragate.say("translategate: argos %s, CTranslate2 %s, %d pairs: %s" % (
+                self.version, ctranslate2.__version__, len(self.pair),
+                " ".join("%s>%s" % p for p in sorted(self.pair))))
+            if self.pair:
+                self.loaded = True
+        except Exception as e:
+            aeragate.say("translategate: the engine didn't load (%s)" % type(e).__name__)
+
+    def ready(self):
+        return self.loaded
+
+    def languages(self):
+        return sorted(self.names.items())
+
+    def pairs(self):
+        return set(self.pair)
+
+    def detect(self, text):
+        return detect(text, {a for a, _ in self.pair})
+
+    def translate(self, texts, src, dst, check=lambda: None):
+        tr, sp = self.pair[(src, dst)]
+        out = []
+        for t in texts:
+            check()
+            ss = sentences(t)
+            done = []
+            for i in range(0, len(ss), self.BATCH):
+                toks = [sp.encode(s, out_type=str)[:400] for s in ss[i:i + self.BATCH]]
+                r = tr.translate_batch(toks, beam_size=self.BEAM,
+                                       max_decoding_length=min(512, 2 * max(len(x) for x in toks) + 16))
+                done += [unrepeat(src_s, sp.decode(x.hypotheses[0]))
+                         for src_s, x in zip(ss[i:i + self.BATCH], r)]
+                check()
+            out.append(" ".join(done))
+        return out
+
+
+ENGINES = {"stand-in": StandIn, "argos": Argos}
 
 
 # ---------------------------------------------------------------- the text's shape
@@ -435,11 +561,12 @@ class Server(ThreadingHTTPServer):
 def parser():
     """the command line (aera-gateway reads a service's settings with it)"""
     ap = argparse.ArgumentParser(description="text translated on the Pi for the Atari apps")
-    ap.add_argument("--port", type=int, required=True)
+    ap.add_argument("--port", type=int, default=8480)
     ap.add_argument("--bind", default="0.0.0.0")
     ap.add_argument("--allow", action="append", default=[],
                     help="only this Atari's address may use the gateway (may repeat)")
     ap.add_argument("--engine", choices=sorted(ENGINES), default="stand-in")
+    ap.add_argument("--models", default="/opt/translategate/models", help="argos: its models, one folder a pair")
     ap.add_argument("--workers", type=int, default=2, help="requests at once (one kept for short ones)")
     ap.add_argument("--time", type=int, default=60, help="seconds a request may take")
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -456,8 +583,9 @@ def main(argv=None):
     LANES = Lanes(a.workers)
     srv = Server((a.bind, a.port), Handler)
     aeragate.say("translategate %s listening on %s:%d" % (VERSION, a.bind, srv.server_address[1]))
-    Config.engine = ENGINES[a.engine]()
-    aeragate.say("translategate: engine %s %s" % (Config.engine.name, Config.engine.version))
+    Config.engine = Argos(a.models, workers=Config.workers) if a.engine == "argos" else StandIn()
+    if a.engine != "argos":             # (argos says its own once it has loaded)
+        aeragate.say("translategate: engine %s %s" % (Config.engine.name, Config.engine.version))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

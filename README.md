@@ -292,6 +292,51 @@ enable-linger webgate`). The profile is then in
 `/var/lib/webgate/snap/chromium/common/browser`, and the snap's own
 confinement is the browser's sandbox. The same command sets it all up.
 
+## translate: translation for the apps
+
+```
+sudo aera-gateway install translate
+sudo aera-gateway install translate --languages en,he,de
+```
+
+An app with its Translate setting on sends the Gateway text in UTF-8;
+translategate translates it on the Raspberry Pi with a local engine and
+sends it back. No text leaves the home network, and none is kept: no
+copy, no cache, and the log names only who asked, the two languages, the
+sizes and the time. With Translate off, an app never connects. The
+protocol is AERA-Atari's `standards/TRANSLATION-SERVICE.md`; the apps'
+client is `common/src/translate.c`.
+
+The engine is Argos Translate's models (OpenNMT, one a pair of
+languages) run by CTranslate2. `install translate` puts CTranslate2 and
+SentencePiece in a Python venv of their own, `/opt/translategate/venv`
+(it installs python3-venv if it isn't there), and downloads the models
+for English and Hebrew both ways (about 230 MB) into
+`/opt/translategate/models`, once; after that it works offline. It needs
+a Raspberry Pi with 4 GB of memory or more: the models take about 400 MB
+loaded and stay loaded, so a short text (a subject, a few words) is
+answered in about a second. `--languages` adds the pairs between the
+codes given. An update keeps the engine and its models; `remove
+translate` removes them.
+
+The Gateway shapes the text, the same for every app: paragraphs come
+back as they were; the lines of a paragraph are translated as sentences
+and come back as one line, for the app to wrap, unless they are all
+short (an address, a list), when each line is kept; quote markers
+(`> `), web and e-mail addresses and numbers with units are left as they
+are. A text over 8 KB, a pair that isn't installed, an engine still
+loading or a text that takes over 60 seconds is refused with one line
+that starts with "translategate:". An app that goes away (Esc) stops the
+job.
+
+Check it from any browser on your network: `http://PI_IP:8480/status`
+answers "translategate 1", the engine and "ready". `--port N` gives it
+another port, `-v` logs the status pages too, and `--engine stand-in`
+runs it without an engine (it answers in capitals: for the tests).
+`tools/translate-check.py --port 8480 --pid $(systemctl show -p MainPID
+--value translategate)` reports the engine's quality, speed and memory
+on the fixed set in `tests/translate/`.
+
 ## claude: ClaudeST's bridge
 
 The bridge is ClaudeST's own (it changes with `CLAUDEST.PRG`);
