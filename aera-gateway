@@ -86,10 +86,14 @@ class Pi:
         return os.path.join(self.root, p.lstrip("/"))
 
     def run(self, *cmd, check=True, out="show", errors=True, input=None):
-        """out: "show" it, "hide" it or "keep" it (returned)"""
-        r = subprocess.run(cmd, input=input, universal_newlines=True,
-                           stdout={"show": None, "hide": subprocess.DEVNULL, "keep": subprocess.PIPE}[out],
-                           stderr=None if errors else subprocess.DEVNULL)
+        """out: "show" it, "hide" it or "keep" it (returned); a program that
+        isn't there fails as a shell's would (127), not with a traceback"""
+        try:
+            r = subprocess.run(cmd, input=input, universal_newlines=True,
+                               stdout={"show": None, "hide": subprocess.DEVNULL, "keep": subprocess.PIPE}[out],
+                               stderr=None if errors else subprocess.DEVNULL)
+        except OSError:
+            r = subprocess.CompletedProcess(cmd, 127, "" if out == "keep" else None, None)
         if check and r.returncode:
             raise Failed("%s failed" % " ".join(cmd))
         return r

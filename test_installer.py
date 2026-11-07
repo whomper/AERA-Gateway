@@ -252,6 +252,17 @@ class Base(unittest.TestCase):
         return [line for line in self.unit(name).splitlines() if line.startswith("ExecStart=")][0]
 
 
+class RunTest(unittest.TestCase):
+    def test_no_such_program(self):
+        # what isn't there yet (translategate's venv on a first install) is a
+        # failed command, never a traceback
+        pi = ag.Pi()
+        self.assertFalse(pi.ok("/no/such/venv/bin/python3", "-c", "import ctranslate2"))
+        self.assertEqual(pi.out("/no/such/program"), "")
+        with self.assertRaises(ag.Failed):
+            pi.run("/no/such/program")
+
+
 class WriteTest(unittest.TestCase):
     """A file with keys in it is never open to others, not even while
     it is being written."""
