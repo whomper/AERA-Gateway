@@ -256,6 +256,52 @@ ok "the same aerajsc kept"
 [ ! -e /opt/aera-gateway-jsc ] || fail "remove web left aerajsc"
 ok "web: scripts"
 
+echo "== pdf: pdfgate and aerapdf, built from pdf/ (EPDF's converter)"
+"$GW/aera-gateway" install pdf --allow 127.0.0.1 > "$W/pdf.out" 2>&1 || { cat "$W/pdf.out"; fail "install pdf"; }
+grep -q "Building aerapdf" "$W/pdf.out" || fail "aerapdf wasn't built"
+running pdfgate
+listens 8380
+unit_has pdfgate "^ExecStart=/usr/bin/python3 /opt/aera-gateway/pdfgate.py --port 8380 --allow 127.0.0.1$"
+unit_has pdfgate "^User=pdfgate"
+[ -x /opt/aera-gateway-pdf/aerapdf ] || fail "no aerapdf in /opt/aera-gateway-pdf"
+[ -z "$(git -C "$GW/.." status --porcelain --ignored pdf)" ] || fail "the build left files in the copy"
+python3 "$GW/../tests/pdf/small-pdf.py" "$W/Wilhelmina.pdf" 3
+/opt/aera-gateway-pdf/aerapdf --fonts /opt/aera-gateway-pdf/fonts "$W/Wilhelmina.pdf" "$W/direct.pdf" > /dev/null
+python3 - "$W" <<'PY'
+import socket, sys
+w = sys.argv[1]
+def ask(req):
+    s = socket.create_connection(("127.0.0.1", 8380), timeout=120)
+    s.sendall(req)
+    out = b""
+    while True:
+        b = s.recv(65536)
+        if not b:
+            return out
+        out += b
+r = ask(b"GET /version HTTP/1.0\r\n\r\n")
+assert b"\r\n\r\naerapdf " in r, r
+pdf = open(w + "/Wilhelmina.pdf", "rb").read()
+r = ask(b"POST /convert?name=Wilhelmina.pdf HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n" % len(pdf) + pdf)
+at = r.rfind(b"HTTP/1.1 200")
+assert at >= 0, r[:300]
+head, _, body = r[at:].partition(b"\r\n\r\n")
+assert body == open(w + "/direct.pdf", "rb").read(), (head, len(body))
+r = ask(b"POST /convert HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nnope")
+assert r.startswith(b"HTTP/1.1 415") and r.endswith(b"pdfgate: not a PDF\n"), r
+print("ok: /version, a PDF converted byte for byte as aerapdf does directly, a refusal")
+PY
+sleep 1
+! journalctl -u pdfgate --no-pager | grep -qi "wilhelmina" || fail "the PDF's name is in the journal"
+journalctl -u pdfgate --no-pager | grep -q "127.0.0.1 200, " || fail "no log line for the conversion"
+"$GW/aera-gateway" update > "$W/update.out" 2>&1 || { cat "$W/update.out"; fail "update with pdf"; }
+! grep -q "Building aerapdf" "$W/update.out" || fail "the same pdf/ built again"
+running pdfgate
+"$GW/aera-gateway" remove pdf
+[ ! -e /etc/systemd/system/pdfgate.service ] || fail "remove pdf left its unit"
+[ ! -e /opt/aera-gateway-pdf ] || fail "remove pdf left aerapdf"
+ok "pdf"
+
 echo "== translate: translategate with the stand-in engine (no model in CI)"
 "$GW/aera-gateway" install translate --engine stand-in --allow 127.0.0.1
 running translategate

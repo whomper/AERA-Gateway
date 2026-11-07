@@ -1,0 +1,35 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ * Copyright (C) 2026 AERA | Erez Yaary */
+/*
+ * secret.h - passwords in the settings file (NAME.INF), encrypted (and
+ * other things that let someone in: EWeb's cookies).
+ *
+ * XTEA in counter mode with a random 128-bit key that the program keeps in
+ * NAME.KEY next to NAME.INF, and a fresh random nonce each time a value
+ * is written. Plain 68000 code: it works on every ST, not only in Falcon
+ * mode. It keeps the passwords out of NAME.INF itself (a copy, a backup,
+ * someone reading the file); whoever has both files can still read them.
+ */
+#ifndef SECRET_H
+#define SECRET_H
+
+#define SECRET_TAG "{E}"
+/* the longest text encrypted: a password, or a cookie a site keeps a
+   login in (EWeb's COOKIES.TXT) */
+#define SECRET_MAX 4096
+
+/* load NAME.KEY, or make one; 0 if there is none and none can be made */
+int  secret_init(const char *keyfile);
+/* "{E}" + hex of nonce and encrypted text, into out: 1. Without a key
+   (or for more than SECRET_MAX characters, or an out too small) the text
+   as it is: 0, and secret_warn is told */
+int  secret_encode(const char *plain, char *out, int size);
+/* called the first time in a run that a password has to be written as it
+   is, with the key file that couldn't be made: the program tells the user
+   (the AERA guidelines, 7.2: never in plain text silently) */
+extern void (*secret_warn)(const char *keyfile);
+/* plain text of an encoded value, or the value itself when it isn't
+   encoded (an older settings file); 0 if it is encoded with another key */
+int  secret_decode(const char *in, char *out, int size);
+
+#endif
