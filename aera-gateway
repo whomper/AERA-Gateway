@@ -1210,6 +1210,8 @@ class Translate(Gateway):
     INDEX = "https://raw.githubusercontent.com/argosopentech/argospm-index/main/index.json"
     LANGUAGES = "en,he"
     PIP = ("ctranslate2>=4,<5", "sentencepiece>=0.2,<0.3")
+    MAX_MEMORY = 1536                       # MB translategate may take (MemoryMax) on a 4 GB Pi
+    memory_max = 1024                       # MemoryMax for the models installed (prepare)
     MIN_MEMORY = 3500                       # MB: the models loaded beside the other gateways (a 4 GB Pi
                                             # says about 3790)
 
@@ -1219,7 +1221,9 @@ class Translate(Gateway):
         ap.add_argument("--engine", choices=("argos", "stand-in"),
                         help="argos (the default): Argos Translate's models; stand-in: no engine, for tests")
         ap.add_argument("--languages", metavar="CODES",
-                        help="the languages to translate between, e.g. en,he (the default), en,he,de")
+                        help="the languages to translate between, e.g. en,he (the default), en,he,de: each one "
+                             "to and from English, the others through English; each takes 120-300 MB "
+                             "loaded, 1.5 GB in all at most")
         ap.add_argument("-v", "--verbose", action="store_true", default=None, help="log every request")
         ap.add_argument("--no-verbose", dest="verbose", action="store_false")
 
@@ -1258,7 +1262,8 @@ class Translate(Gateway):
         # the engine's memory (about 420 MB at its peak), beside the other
         # gateways on a 4 GB Pi; and when memory runs out, the kernel takes
         # a browser's page or a conversion before the loaded models
-        return text.replace("Restart=always", "MemoryMax=1G\nOOMScoreAdjust=-300\nRestart=always", 1)
+        mm = "1G" if self.memory_max == 1024 else "%dM" % self.memory_max
+        return text.replace("Restart=always", "MemoryMax=%s\nOOMScoreAdjust=-300\nRestart=always" % mm, 1)
 
     def describe(self, ns):
         return "engine " + ns.engine
@@ -1287,9 +1292,23 @@ class Translate(Gateway):
         have = {os.path.basename(os.path.dirname(f))
                 for f in glob.glob(pi.path(self.MODELS) + "/*/metadata.json")}
         want = self.languages or sorted({c for p in have for c in p.split("_")}) or self.LANGUAGES.split(",")
-        missing = [(a, b) for a in want for b in want if a != b and "%s_%s" % (a, b) not in have]
+        # Argos's models go to and from English (a few others aside): a
+        # pair through English, he>en>de, is what translategate does for the rest
+        missing = [p for x in sorted(set(want) - {"en"}) for p in ((x, "en"), ("en", x))
+                   if "%s_%s" % p not in have]
         if missing:
             self.fetch(pi, missing)
+        # the memory the models take loaded (about their size on disk, and a
+        # little more), checked against what a Pi beside the others can give
+        size = sum(os.path.getsize(f) for f in glob.glob(pi.path(self.MODELS) + "/*/model/model.bin"))
+        need = int(size * 1.25 / 2 ** 20) + 150
+        if need > self.MAX_MEMORY:
+            for a, b in missing:
+                pi.rmtree("%s/%s_%s" % (self.MODELS, a, b))
+            raise Failed("The translation models for %s would take about %d MB loaded; translategate may take "
+                         "%d MB beside the other gateways. Name fewer languages (--languages en,he)."
+                         % (",".join(sorted(set(want) | {"en"})), need, self.MAX_MEMORY))
+        self.memory_max = max(1024, -(-need // 64) * 64)
 
     def memory(self, pi):
         m = re.search(r"^MemTotal:\s+(\d+) kB", pi.read("/proc/meminfo") or "", re.M)

@@ -345,8 +345,11 @@ a Raspberry Pi with 4 GB of memory or more and the 64-bit Raspberry Pi OS
 models take about 400 MB loaded and stay loaded, so a short text (a
 subject, a few words) is answered in a second or two. translategate may
 take 1 GB at most, and when memory runs out on the Pi the kernel stops a
-browser's page or a conversion before it. `--languages` adds the pairs between the
-codes given. An update keeps the engine and its models; `remove
+browser's page or a conversion before it. `--languages en,he,de` adds a language:
+each one to and from English, and the others through English (Hebrew to
+German goes by way of English). Each language takes 120-300 MB loaded;
+translategate may take 1.5 GB at most on a 4 GB Pi, so `install
+translate` refuses a set of languages that wouldn't fit. An update keeps the engine and its models; `remove
 translate` removes them.
 
 The Gateway shapes the text, the same for every app: paragraphs come

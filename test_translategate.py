@@ -252,6 +252,14 @@ class ArgosShapeTest(unittest.TestCase):
         self.assertEqual(self.eng.translate(["בברכה,", "Thanks!"], "he", "en"), ["Best regards,", "THANKS!"])
         self.assertEqual(self.model.fed, ["Thanks!"])
 
+    def test_through_english(self):
+        m = self.model
+        self.eng.pair = {("he", "en"): (m, m), ("en", "he"): (m, m), ("de", "en"): (m, m), ("en", "de"): (m, m)}
+        self.assertIn(("he", "de"), self.eng.pairs())
+        self.assertNotIn(("he", "he"), self.eng.pairs())
+        self.assertEqual(self.eng.translate(["two words here."], "he", "de"), ["TWO WORDS HERE."])
+        self.assertEqual(self.model.fed, ["two words here.", "TWO WORDS HERE."])     # he>en, then en>de
+
     def test_short_gets_a_full_stop(self):
         self.assertEqual(self.eng.translate(["Dana", "new order", "One. Two words here."], "en", "he"),
                          ["DANA", "NEW ORDER", "ONE. TWO WORDS HERE."])

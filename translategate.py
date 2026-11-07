@@ -253,7 +253,9 @@ class Argos:
         return sorted(self.names.items())
 
     def pairs(self):
-        return set(self.pair)
+        """the installed pairs, and those through English (he>en>de)"""
+        direct = set(self.pair)
+        return direct | {(a, b) for a, x in direct for y, b in direct if x == "en" == y and a != b}
 
     def detect(self, text):
         # among every language detect() knows, not only the installed
@@ -262,6 +264,8 @@ class Argos:
         return detect(text, set(STOPWORDS) | {code for code, _, _ in SCRIPTS} | {a for a, _ in self.pair})
 
     def translate(self, texts, src, dst, check=lambda: None):
+        if (src, dst) not in self.pair:         # through English
+            return self.translate(self.translate(texts, src, "en", check), "en", dst, check)
         tr, sp = self.pair[(src, dst)]
         out = []
         for t in texts:

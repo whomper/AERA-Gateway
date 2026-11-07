@@ -767,7 +767,11 @@ class DavFtpTest(Base):
         self.assertIn("--port 8481 --allow 192.168.1.50 --engine argos\n", self.execstart("translategate") + "\n")
         # another language: only its models
         self.assertEqual(self.run_ag("install", "translate", "--languages", "en,he,de"), 0, self.err)
-        self.assertEqual(self.fetched[-1], [("de", "en"), ("de", "he"), ("en", "de"), ("he", "de")])
+        self.assertEqual(self.fetched[-1], [("de", "en"), ("en", "de")])       # through English
+        # with German there, a plain install again asks for nothing
+        n = len(self.fetched)
+        self.assertEqual(self.run_ag("install", "translate"), 0, self.err)
+        self.assertEqual(len(self.fetched), n)
         self.assertEqual(self.run_ag("remove", "translate"), 0, self.err)
         self.assertIsNone(self.unit("translategate"))
         self.assertFalse(self.pi.exists("/opt/translategate"))
@@ -785,6 +789,31 @@ class DavFtpTest(Base):
         self.assertIn("needs a Pi with 4 GB of memory or more; this one has 1902 MB", self.err)
         self.assertIsNone(self.unit("translategate"))
         self.assertEqual(self.run_ag("install", "translate", "--languages", "en"), 2)
+
+    def test_translate_too_many_languages(self):
+        big = []
+
+        def fetch(gw, pi, pairs):           # models of 200 MB each
+            big.append(sorted(pairs))
+            for a, b in pairs:
+                pi.write("%s/%s_%s/metadata.json" % (ag.Translate.MODELS, a, b), "{}")
+                with open(pi.path("%s/%s_%s/model/model.bin" % (ag.Translate.MODELS, a, b))
+                          if os.path.isdir(pi.path("%s/%s_%s/model" % (ag.Translate.MODELS, a, b)))
+                          else self.mk(pi, "%s/%s_%s/model/model.bin" % (ag.Translate.MODELS, a, b)), "wb") as f:
+                    f.truncate(200 << 20)
+        with unittest.mock.patch.object(ag.Translate, "fetch", fetch):
+            self.assertEqual(self.run_ag("install", "translate", "--languages", "en,he"), 0, self.err)
+            self.assertIn("MemoryMax=1G\n", self.unit("translategate"))
+            self.assertEqual(self.run_ag("install", "translate", "--languages", "en,he,de"), 0, self.err)
+            self.assertIn("MemoryMax=1152M\n", self.unit("translategate"))
+            self.assertEqual(self.run_ag("install", "translate", "--languages", "en,he,de,ru"), 1)
+            self.assertIn("would take about 1650 MB loaded; translategate may take 1536 MB", self.err)
+            self.assertFalse(self.pi.exists(ag.Translate.MODELS + "/ru_en"))
+            self.assertTrue(self.pi.exists(ag.Translate.MODELS + "/de_en"))
+
+    def mk(self, pi, p):
+        os.makedirs(os.path.dirname(pi.path(p)), exist_ok=True)
+        return pi.path(p)
 
     def test_translate_needs_64_bits(self):
         self.pi.arch = "armv7l"
