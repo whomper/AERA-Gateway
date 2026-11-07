@@ -39,6 +39,7 @@ sentencepiece in its own venv (Erez, 7 Nov 2026).
 """
 
 import argparse
+import os
 import re
 import select
 import socket
@@ -165,19 +166,26 @@ def unrepeat(src, out):
     return out if REPEAT.search(src) else REPEAT.sub(r"\1", out)
 
 
-# a letter's greetings and closings, which the small models get wrong alone ("בברכה" ->
-# "welcome"): the commonest, both ways, as a letter writer would put them
-CLOSINGS = {
-    ("he", "en"): {"בברכה": "Best regards", "בברכה רבה": "Kind regards", "בברכת": "Regards",
-                   "תודה": "Thanks", "תודה רבה": "Thank you very much", "להתראות": "See you",
-                   "שלך": "Yours", "בכבוד רב": "Respectfully", "שבוע טוב": "Have a good week",
-                   "שבת שלום": "Shabbat shalom", "חג שמח": "Happy holiday", "שלום": "Hello"},
-    ("en", "he"): {"best regards": "בברכה", "kind regards": "בברכה", "regards": "בברכה",
-                   "best wishes": "בברכה", "thanks": "תודה", "thank you": "תודה",
-                   "many thanks": "תודה רבה", "cheers": "תודה", "see you": "להתראות",
-                   "yours": "שלך", "sincerely": "בכבוד רב", "yours sincerely": "בכבוד רב",
-                   "hello": "שלום", "hi": "שלום"},
-}
+PHRASES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "translate-phrases.tsv")
+
+
+def load_phrases(path=PHRASES):
+    """translate-phrases.tsv: {(from, to): {phrase in lower case: translation}}"""
+    out = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("#") or not line.strip():
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) == 4:
+                    out.setdefault((parts[0], parts[1]), {})[parts[2].strip().lower()] = parts[3].strip()
+    except OSError:
+        pass
+    return out
+
+
+CLOSINGS = load_phrases()
 SHORT_WORDS = 4
 CLOSING_PUNCT = re.compile(r"^(.*?)([\s,.!:;\u2026]*)$", re.S)
 

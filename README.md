@@ -108,7 +108,7 @@ GMX lets programs in only once POP3 and IMAP access is switched on in
 its settings. Outlook.com and Microsoft 365 accept only OAuth sign-in,
 which EMail can't do.
 
-In EMail, Options > Accounts: the Pi's IP address as the server (plain
+In EMail, Options > Accounts: the Gateway's IP address as the server (plain
 TOS with STinG can't always look up names on the home network), port 143
 for IMAP (110 for POP3), and the Pi again as the outgoing server on port
 587, with your usual mail login. When the gateway can't help (it can't
@@ -150,10 +150,10 @@ request in proxy form, `GET https://host/path HTTP/1.1`, and ecalgate:
   public holiday or sports feed can be several megabytes; trimmed, it fits
   an ST.
 
-In ECal and EContact, ≡ menu > Settings > Connection: Pi gateway = the
-Pi's IP address, port 8180. Then add your accounts with their real
+In ECal and EContact, ≡ menu > Settings > Connection: Gateway = the
+Gateway's IP address, port 8180. Then add your accounts with their real
 `https://` addresses: ecalgate does the rest. Check it from any browser on
-your network: `http://PI_IP:8180/` answers "ecalgate X.Y is running".
+your network: `http://GATEWAY_IP:8180/` answers "ecalgate X.Y is running".
 
 `--allow-local` lets it reach servers on your home network too (a
 Radicale or Nextcloud at home); `--port N` gives it another port; `-v`
@@ -193,7 +193,7 @@ MFMT to keep dates, UTF-8 names, passive mode). On the way it:
   on the Atari, LF on the server;
 - keeps the server's connection awake while EFTP keeps the Pi's.
 
-In EFTP, Options > Settings > **Secure**: Pi gateway = the Pi's IP
+In EFTP, Options > Settings > **Secure**: Gateway = the Gateway's IP
 address, port 2121. Then give your sites their real server names and
 choose FTPS or SFTP as their Protocol in File > Sites. Falcon mode
 doesn't need the Pi for FTPS (EFTP.PRG on a Falcon or TT does TLS
@@ -219,8 +219,8 @@ answer goes back as it came: the server's gzip or deflate as they are
 cookies and error pages unchanged. When webgate can't help, EWeb's
 "can't open" page shows a line that starts with "webgate:".
 
-In EWeb, Settings > Secure: Pi gateway = the Pi's IP address, port 8280.
-Check it from any browser on your network: `http://PI_IP:8280/` answers
+In EWeb, Settings > Secure: Gateway = the Gateway's IP address, port 8280.
+Check it from any browser on your network: `http://GATEWAY_IP:8280/` answers
 "webgate X.Y is running".
 
 Pictures come smaller: EWeb says how wide its page is, and webgate
@@ -247,7 +247,7 @@ checks servers against your own CA; `-v` logs every request (the
 server, never the address's path). Like ecalgate, it follows
 `HTTPS_PROXY` (`sudo systemctl edit webgate`).
 
-### The Pi's browser: snapshots and live view
+### The Gateway's browser: snapshots and live view
 
 Some sites are made by their scripts, and EWeb can't run those. With
 
@@ -267,7 +267,7 @@ browser's profile, with any logins, stays in `/var/lib/webgate/browser`.
 
 Sites behind Cloudflare's check ("Just a moment...") pass with it too:
 when a site answers EWeb with the check, a script for the big browsers,
-webgate opens the page in the Pi's browser, which passes the check, and
+webgate opens the page in the Gateway's browser, which passes the check, and
 EWeb gets the page it goes on to. The site's next pages go through the
 browser too, for the rest of the visit (until none has been asked for
 in 25 minutes). The pass stays in the browser: webgate never sends its
@@ -332,7 +332,14 @@ loading or a text that takes over 60 seconds is refused with one line
 that starts with "translategate:". An app that goes away (Esc) stops the
 job.
 
-Check it from any browser on your network: `http://PI_IP:8480/status`
+Short texts (a subject, a few words picked out) are given to the engine
+as a sentence, which it does far better, and a letter's commonest
+greetings and closings come from `gateway/translate-phrases.tsv`, a plain
+list that grows as real use shows a phrase the models get wrong. Known
+gaps, from the fixed sets: "Re:" before a subject isn't translated, and
+"הזמנה חדשה" (a new order) comes back as "A new invitation".
+
+Check it from any browser on your network: `http://GATEWAY_IP:8480/status`
 answers "translategate 1", the engine and "ready". `--port N` gives it
 another port, `-v` logs the status pages too, and `--engine stand-in`
 runs it without an engine (it answers in capitals: for the tests).
@@ -357,7 +364,7 @@ sudo aera-gateway set-key        paste a new claude.ai session key
 Its settings stay in `/etc/claude-st/claude-st.env` and its chats in
 `/var/lib/claude-st`; `remove claude` keeps both. ClaudeST's README says
 what the settings mean, and how to find the session key. In ClaudeST,
-Options > Settings > Network: the Pi's IP address, port 2323. In a
+Options > Settings > Network: the Gateway's IP address, port 2323. In a
 ClaudeST copy, `pi/install.sh` still works: it hands its options to
 `aera-gateway install claude`, which takes the bridge from ClaudeST's
 latest release, never from that copy.
@@ -460,7 +467,7 @@ python3 -m unittest discover -s gateway -p 'test_*.py'
 - `test_webgate.py`: the proxy against a local server (compression,
   chunked answers, redirects, cookies, the home-network rule), pictures
   made smaller (with Pillow), pens with a stand-in aerapens on its
-  socket, the Pi's browser's way out with a stand-in name server, and
+  socket, the Gateway's browser's way out with a stand-in name server, and
   snapshots, live view and Cloudflare's check with stand-ins for the
   browser and the site.
 - `test_eftpgate.py`: an SFTP and an FTPS server on this computer, and a
@@ -468,12 +475,12 @@ python3 -m unittest discover -s gateway -p 'test_*.py'
   eftpgate as the Atari does.
 - `test_installer.py`: `aera-gateway` on a stand-in Pi: units, settings,
   taking over the apps' set-ups, the way back when a new gateway fails,
-  install all, the Pi's browser and aerapens' units.
+  install all, the Gateway's browser and aerapens' units.
 
 AERA-Gateway's `tests/systemd.sh` runs `aera-gateway` for real on a
 computer with systemd (CI does on every push): it sets the gateways up
 with the apps' old installers, takes them over, installs and removes,
-runs web with the Pi's browser (a stand-in Chromium) and with the real
+runs web with the Gateway's browser (a stand-in Chromium) and with the real
 aerapens behind its socket, and checks the claude recipe against
 ClaudeST's own `pi/install.sh`. `tests/snap.sh` sets up web with the
 browser on Ubuntu with the real Chromium snap, and takes a page and a
