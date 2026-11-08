@@ -314,10 +314,16 @@ def ffmpeg_version():
 
 
 def start_ffmpeg(informat=None):
-    args = [Config.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
+    # (-protocol_whitelist pipe: what the station sends can't make ffmpeg
+    # open addresses or files of its own, past aeragate's checks: 6.1 and
+    # 7 refuse that already, an older one may not; the Gateway's review)
+    # (one thread: a single audio stream gains nothing from more, and each
+    # thread's stack counts toward RLIMIT_DATA: the Gateway's CI)
+    args = [Config.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-protocol_whitelist", "pipe",
+            "-threads", "1"]
     if informat:
         args += ["-f", informat]
-    args += ["-i", "pipe:0", "-vn", "-map", "0:a:0", "-c:a", "libmp3lame", "-b:a", "%dk" % KBPS,
+    args += ["-i", "pipe:0", "-threads", "1", "-vn", "-map", "0:a:0", "-c:a", "libmp3lame", "-b:a", "%dk" % KBPS,
              "-ar", "44100", "-ac", "2", "-f", "mp3", "pipe:1"]
     p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     try:
@@ -334,7 +340,11 @@ def start_ffmpeg(informat=None):
 def shrink(data):
     """a picture (JPEG, PNG, GIF, WebP...) as a 64 x 64 baseline JPEG, its
     middle square, by ffmpeg; None if it isn't one ffmpeg reads"""
-    args = [Config.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-i", "pipe:0", "-frames:v", "1",
+    # (one thread each, decoder, filters and encoder: a 64 x 64 picture
+    # needs none, and the thread pools' stacks took ffmpeg 6.1 over 256 MB
+    # of RLIMIT_DATA on a 4-core runner: the Gateway's CI, 8 Nov 2026)
+    args = [Config.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-protocol_whitelist", "pipe",
+            "-threads", "1", "-i", "pipe:0", "-filter_threads", "1", "-threads", "1", "-frames:v", "1",
             "-vf", "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d" % ((ART_SIDE,) * 4),
             "-pix_fmt", "yuvj420p", "-q:v", "3", "-f", "mjpeg", "pipe:1"]
     try:
@@ -372,6 +382,7 @@ class ArtCache:
 
 
 ART = ArtCache()
+ART_JOBS = threading.BoundedSemaphore(2)    # pictures made at once (an ffmpeg each), else 503
 
 
 # ---- the Atari's side ----
@@ -530,12 +541,17 @@ class Handler(BaseHTTPRequestHandler):
             if not ffmpeg_version():
                 self.reply(502, "pictures need ffmpeg on the Gateway")
                 return
+            if not ART_JOBS.acquire(blocking=False):
+                self.reply(503, "too many pictures at once")
+                return
             try:
                 _, data = fetch(url, PIC_MAX)
+                jpg = shrink(data)
             except Refused as e:
                 self.reply(e.status, e.words)
                 return
-            jpg = shrink(data)
+            finally:
+                ART_JOBS.release()
             if jpg is None:
                 self.reply(502, "not a picture this reads")
                 return
