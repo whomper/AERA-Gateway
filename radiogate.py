@@ -21,7 +21,14 @@ of its own:
   with one line "radiogate: why" (400 a URL it doesn't take, 403 not from
   the home network, 502 the station doesn't answer, 503 too many at once).
 
-    GET /version   ->  "radiogate 1.0, ffmpeg 6.1"
+    GET /art?url=<a picture's URL, %-encoded> HTTP/1.0   (radiogate 1.1)
+
+  answered by the picture (a station's StreamUrl: a song's cover or its
+  logo; JPEG, PNG, GIF, WebP...) as a 64 x 64 baseline JPEG, its middle
+  square, made by ffmpeg ("Content-Type: image/jpeg"), the last 64 kept;
+  or by an error as above (502 too: not a picture).
+
+    GET /version   ->  "radiogate 1.1, ffmpeg 6.1"
 
 What the station sends:
   - MP3 (audio/mpeg): passed on as it comes, over HTTP or HTTPS, its ICY
@@ -67,10 +74,12 @@ for d in (HERE, os.path.join(HERE, "..", "gateway")):
         break
 import aeragate  # noqa: E402
 
-VERSION = "1.0"
+VERSION = "1.1"
 METAINT = 8192                      # the Atari's: a title block every 8 KB of MP3
 HEAD_MAX = 16384                    # a station's answer head, at most
 LIST_MAX = 65536                    # a station list or an HLS playlist, at most
+PIC_MAX = 4 << 20                   # a station's picture, at most
+ART_SIDE = 64                       # /art's pictures: 64 x 64, EPlay's art square
 PIECE_MAX = 16 << 20                # an HLS piece, at most
 URL_MAX = 2048
 REDIRECTS = 5
@@ -227,11 +236,12 @@ def first_station(text, base):
 
 class IcyIn:
     """the station's metadata taken out (metaint bytes of audio, then a
-    length byte and 16 times it of 'StreamTitle=...;')"""
+    length byte and 16 times it of 'StreamTitle=...;StreamUrl=...;'): its
+    title, and its StreamUrl (a picture's address on some stations)"""
 
     def __init__(self, metaint):
         self.metaint, self.left, self.meta, self.need = metaint, metaint, b"", -1
-        self.title = None
+        self.title = self.url = None
 
     def feed(self, data):
         if not self.metaint:
@@ -256,6 +266,9 @@ class IcyIn:
                     m = re.search(rb"StreamTitle='(.*?)';", self.meta, re.S)
                     if m:
                         self.title = m.group(1).decode("utf-8", "replace")[:200]
+                    m = re.search(rb"StreamUrl='(.*?)';", self.meta, re.S)
+                    if m:
+                        self.url = m.group(1).decode("latin-1")[:255]
                     self.need, self.left = -1, self.metaint
         return bytes(out)
 
@@ -267,7 +280,7 @@ class IcyOut:
     def __init__(self):
         self.left, self.sent = METAINT, None
 
-    def wrap(self, data, title):
+    def wrap(self, data, title, url=None):
         out, i = bytearray(), 0
         while i < len(data):
             k = min(self.left, len(data) - i)
@@ -275,11 +288,14 @@ class IcyOut:
             i += k
             self.left -= k
             if not self.left:
-                if title is not None and title != self.sent:
-                    t = ("StreamTitle='%s';" % title.replace("'", "")).encode("utf-8", "replace")[:16 * 255]
+                if title is not None and (title, url) != self.sent:
+                    t = ("StreamTitle='%s';" % title.replace("'", "")).encode("utf-8", "replace")
+                    if url and "'" not in url and all(32 < ord(c) < 127 for c in url):
+                        t += ("StreamUrl='%s';" % url).encode()     # (the station's own, for its picture)
+                    t = t[:16 * 255]
                     t += b"\0" * (-len(t) % 16)
                     out += bytes([len(t) // 16]) + t
-                    self.sent = title
+                    self.sent = (title, url)
                 else:
                     out += b"\0"
                 self.left = METAINT
@@ -313,6 +329,49 @@ def start_ffmpeg(informat=None):
     except (OSError, ValueError):
         pass
     return p
+
+
+def shrink(data):
+    """a picture (JPEG, PNG, GIF, WebP...) as a 64 x 64 baseline JPEG, its
+    middle square, by ffmpeg; None if it isn't one ffmpeg reads"""
+    args = [Config.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-i", "pipe:0", "-frames:v", "1",
+            "-vf", "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d" % ((ART_SIDE,) * 4),
+            "-pix_fmt", "yuvj420p", "-q:v", "3", "-f", "mjpeg", "pipe:1"]
+    try:
+        p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            resource.prlimit(p.pid, resource.RLIMIT_DATA, (Config.memory, Config.memory))
+            resource.prlimit(p.pid, resource.RLIMIT_CORE, (0, 0))
+        except (OSError, ValueError):
+            pass
+        out, _ = p.communicate(data, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out if p.returncode == 0 and out[:2] == b"\xff\xd8" else None
+
+
+class ArtCache:
+    """the last pictures made, by their address (a song's cover comes again)"""
+    keep = 64
+
+    def __init__(self):
+        self.d, self.lock = {}, threading.Lock()
+
+    def get(self, url):
+        with self.lock:
+            v = self.d.pop(url, None)
+            if v is not None:
+                self.d[url] = v
+            return v
+
+    def put(self, url, jpg):
+        with self.lock:
+            self.d[url] = jpg
+            while len(self.d) > self.keep:
+                self.d.pop(next(iter(self.d)))
+
+
+ART = ArtCache()
 
 
 # ---- the Atari's side ----
@@ -352,6 +411,9 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if u.path == "/art":
+            self.art(dict(parse_qsl(u.query, keep_blank_values=True)).get("url", ""))
+            return
         if u.path != "/stream":
             self.reply(404, "no such page")
             return
@@ -362,9 +424,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         t0, sent = time.time(), [0]
         host = urlsplit(url).hostname or "?"
+        self.fault = None               # (the feed thread's, when it failed)
         try:
             self.stream(url, self.headers.get("Icy-MetaData", "") == "1", sent)
-            why = "ended"
+            why = self.fault or "ended"
         except Refused as e:
             if sent[0]:
                 why = e.words
@@ -447,7 +510,7 @@ class Handler(BaseHTTPRequestHandler):
             while True:
                 if data:
                     audio = icy_in.feed(data)
-                    self.out(icy_out.wrap(audio, icy_in.title) if icy_out else audio, sent)
+                    self.out(icy_out.wrap(audio, icy_in.title, icy_in.url) if icy_out else audio, sent)
                 try:
                     data = s.recv(16384)
                 except socket.timeout:
@@ -456,6 +519,37 @@ class Handler(BaseHTTPRequestHandler):
                     return
         finally:
             s.close()  # (the station's too, when the Atari went first)
+
+    def art(self, url):
+        """GET /art?url=<a picture's address> (EPlay through the Gateway, a
+        station's StreamUrl): the picture fetched (the same checks as a
+        station's), as a 64 x 64 JPEG"""
+        host = urlsplit(url).hostname or "?"
+        jpg = ART.get(url)
+        if jpg is None:
+            if not ffmpeg_version():
+                self.reply(502, "pictures need ffmpeg on the Gateway")
+                return
+            try:
+                _, data = fetch(url, PIC_MAX)
+            except Refused as e:
+                self.reply(e.status, e.words)
+                return
+            jpg = shrink(data)
+            if jpg is None:
+                self.reply(502, "not a picture this reads")
+                return
+            ART.put(url, jpg)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(jpg)))
+            self.end_headers()
+            self.wfile.write(jpg)
+        except OSError:
+            return
+        if Config.verbose:
+            aeragate.say("radiogate: %s a picture from %s, %d bytes" % (self.client_address[0], host, len(jpg)))
 
     def convert(self, s, have, name, metaint, meta, sent):
         """AAC, Ogg and the like through ffmpeg; the station's titles kept"""
@@ -477,14 +571,15 @@ class Handler(BaseHTTPRequestHandler):
                     if not data:
                         break
             except (OSError, ValueError, ssl.SSLError):
-                pass
+                if not stop.is_set():
+                    self.fault = "the station's feed failed"
             finally:
                 try:
                     p.stdin.close()
                 except OSError:
                     pass
 
-        return self.run_ffmpeg(p, feed, stop, s, name, meta, sent, lambda: icy_in.title)
+        return self.run_ffmpeg(p, feed, stop, s, name, meta, sent, lambda: (icy_in.title, icy_in.url))
 
     def run_ffmpeg(self, p, feed, stop, s, name, meta, sent, title):
         t = threading.Thread(target=feed, daemon=True)
@@ -497,7 +592,7 @@ class Handler(BaseHTTPRequestHandler):
             self.begin(name, KBPS, meta)
             data = first
             while data:
-                self.out(icy_out.wrap(data, title()) if icy_out else data, sent)
+                self.out(icy_out.wrap(data, *title()) if icy_out else data, sent)
                 data = p.stdout.read1(16384) if hasattr(p.stdout, "read1") else p.stdout.read(16384)
         finally:
             stop.set()
@@ -566,15 +661,19 @@ class Handler(BaseHTTPRequestHandler):
                     stop.wait(target / 2)
                     u, t = fetch(state["url"], LIST_MAX)
                     state["text"] = t.decode("utf-8", "replace")
-            except (Refused, OSError, ValueError, ssl.SSLError):
-                pass
+            except Refused as e:
+                if not stop.is_set():
+                    self.fault = "a piece: " + e.words
+            except (OSError, ValueError, ssl.SSLError):
+                if not stop.is_set():
+                    self.fault = "the station's feed failed"
             finally:
                 try:
                     p.stdin.close()
                 except OSError:
                     pass
 
-        return self.run_ffmpeg(p, feed, stop, None, "", meta, sent, lambda: None)
+        return self.run_ffmpeg(p, feed, stop, None, "", meta, sent, lambda: (None, None))
 
 
 def parser():
