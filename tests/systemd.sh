@@ -445,6 +445,7 @@ command -v ffmpeg >/dev/null || fail "install radio didn't put ffmpeg in"
 mkdir -p "$W/Wilhelmina"
 ffmpeg -hide_banner -loglevel error -f lavfi -i sine=frequency=440:duration=8 -ac 2 -b:a 128k "$W/Wilhelmina/a.mp3"
 ffmpeg -hide_banner -loglevel error -f lavfi -i sine=frequency=440:duration=8 -ac 2 -c:a libvorbis "$W/Wilhelmina/a.ogg"
+ffmpeg -hide_banner -loglevel error -f lavfi -i color=red:s=300x200 -frames:v 1 "$W/Wilhelmina/cover.png"
 (cd "$W" && exec python3 -m http.server 8590 --bind 127.0.0.1 > /dev/null 2>&1) &
 station=$!
 sleep 1
@@ -461,7 +462,7 @@ def ask(path):
             return out
         out += b
 r = ask(b"/version")
-assert b"\r\n\r\nradiogate 1.0, ffmpeg " in r and not r.endswith(b"ffmpeg none\n"), r
+assert b"\r\n\r\nradiogate 1.1, ffmpeg " in r and not r.endswith(b"ffmpeg none\n"), r
 head, _, body = ask(b"/stream?url=http%3A%2F%2F127.0.0.1%3A8590%2FWilhelmina%2Fa.mp3").partition(b"\r\n\r\n")
 assert head.startswith(b"HTTP/1.0 200") and b"Content-Type: audio/mpeg" in head, head
 assert body == open(w + "/Wilhelmina/a.mp3", "rb").read(), len(body)
@@ -470,7 +471,9 @@ assert head.startswith(b"HTTP/1.0 200") and b"Content-Type: audio/mpeg" in head,
 assert len(body) > 50000 and (body[:3] == b"ID3" or body[0] == 0xFF), (len(body), body[:4])
 head, _, body = ask(b"/stream?url=file%3A%2F%2F%2Fetc%2Fpasswd").partition(b"\r\n\r\n")
 assert head.startswith(b"HTTP/1.0 400") and body.startswith(b"radiogate: "), (head, body)
-print("ok: /version, an MP3 station as it came, an Ogg one converted by ffmpeg, a refusal")
+head, _, body = ask(b"/art?url=http%3A%2F%2F127.0.0.1%3A8590%2FWilhelmina%2Fcover.png").partition(b"\r\n\r\n")
+assert head.startswith(b"HTTP/1.0 200") and b"Content-Type: image/jpeg" in head and body[:2] == b"\xff\xd8", head
+print("ok: /version, an MP3 station as it came, an Ogg one converted by ffmpeg, a cover as a 64x64 JPEG, a refusal")
 PY
 kill $station
 sleep 1

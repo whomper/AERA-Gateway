@@ -163,7 +163,8 @@ class Tests(unittest.TestCase):
             print("SKIPPED: mp3_titles (no ffmpeg to make the tone)")
             return
         st = Station({"/live": ("ICY 200 OK\r\nicy-name: Test FM\r\nicy-br: 128\r\nicy-metaint: 4000\r\n"
-                                "Content-Type: audio/mpeg\r\n\r\n", self.mp3, 4000, "Artist - Song")})
+                                "Content-Type: audio/mpeg\r\n\r\n", self.mp3, 4000,
+                                "Artist - Song';StreamUrl='http://127.0.0.1/cover.jpg")})
         g = Gate()
         status, heads, body = g.ask("http://127.0.0.1:%d/live" % st.port)
         g.stop()
@@ -173,6 +174,7 @@ class Tests(unittest.TestCase):
         audio, titles = strip_icy(body, radiogate.METAINT)
         self.assertIn("Artist - Song", titles)
         self.assertGreater(mp3_frames(audio), 20)
+        self.assertIn(b"StreamUrl='http://127.0.0.1/cover.jpg';", body)   # (the station's, passed on)
 
     def test_redirect_pls(self):
         if not HAVE_FFMPEG:
@@ -262,6 +264,48 @@ class Tests(unittest.TestCase):
         g.stop()
         self.assertIn("502", status)
         self.assertIn(b"doesn't answer", body)
+
+    def test_art(self):
+        """/art: a JPEG and a PNG as 64 x 64 JPEGs (red stays left, blue
+        right); a page that isn't a picture refused; kept for the next ask"""
+        if not HAVE_FFMPEG:
+            print("SKIPPED: art (no ffmpeg)")
+            return
+        pics = {}
+        for ext in ("jpg", "png"):
+            path = os.path.join(TMP, "rb." + ext)
+            subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                            "color=red:s=200x300[a];color=blue:s=200x300[b];[a][b]hstack", "-frames:v", "1",
+                            path], check=True)
+            pics[ext] = open(path, "rb").read()
+        st = Station({"/c.jpg": ("HTTP/1.0 200 OK\r\nContent-Type: image/jpeg\r\n\r\n", pics["jpg"], 0, ""),
+                      "/l.png": ("HTTP/1.0 200 OK\r\nContent-Type: image/png\r\n\r\n", pics["png"], 0, ""),
+                      "/page": ("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n", b"<html>hi</html>", 0, "")})
+        g = Gate()
+        for name in ("c.jpg", "l.png"):
+            status, heads, body = g.ask("", path="/art?url=" + urllib.parse.quote(
+                "http://127.0.0.1:%d/%s" % (st.port, name), safe=""), meta=False)
+            self.assertIn("200", status, name)
+            self.assertEqual(heads.get("content-type"), "image/jpeg")
+            out = os.path.join(TMP, "out.jpg")
+            open(out, "wb").write(body)
+            probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                                    out], capture_output=True, text=True).stdout.strip()
+            self.assertEqual(probe, "64,64", name)
+            raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", out, "-f", "rawvideo",
+                                  "-pix_fmt", "rgb24", "pipe:1"], capture_output=True).stdout
+            left, right = raw[(32 * 64 + 8) * 3:(32 * 64 + 8) * 3 + 3], raw[(32 * 64 + 56) * 3:(32 * 64 + 56) * 3 + 3]
+            self.assertTrue(left[0] > 200 and left[2] < 60 and right[2] > 200 and right[0] < 60, (left, right))
+        st.routes.pop("/c.jpg")             # (gone from the station: the Gateway's copy answers)
+        status, _, _ = g.ask("", path="/art?url=" + urllib.parse.quote(
+            "http://127.0.0.1:%d/c.jpg" % st.port, safe=""), meta=False)
+        self.assertIn("200", status)
+        status, _, body = g.ask("", path="/art?url=" + urllib.parse.quote(
+            "http://127.0.0.1:%d/page" % st.port, safe=""), meta=False)
+        self.assertIn("502", status)
+        status, _, _ = g.ask("", path="/art?url=javascript%3A1", meta=False)
+        self.assertIn("400", status)
+        g.stop()
 
     def test_icy_in_out(self):
         """the metadata taken out at every cut, and put back"""
