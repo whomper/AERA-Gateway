@@ -306,11 +306,23 @@ echo "== translate: translategate with the stand-in engine (no model in CI)"
 "$GW/aera-gateway" install translate --engine stand-in --allow 127.0.0.1
 running translategate
 listens 8480
-unit_has translategate "^ExecStart=/usr/bin/python3 /opt/aera-gateway/translategate.py --port 8480 --allow 127.0.0.1$"
+unit_has translategate "^ExecStart=/usr/bin/python3 /opt/aera-gateway/translategate.py --port 8480 --allow 127.0.0.1 --local /run/translategate/local.sock$"
 unit_has translategate "^User=translategate"
 unit_has translategate "^MemoryMax=1G"
 unit_has translategate "^OOMScoreAdjust=-300"
 [ ! -e /opt/translategate/venv ] || fail "the stand-in set up an engine"
+# the local socket, for webgate and pdfgate: the group's only
+[ "$(stat -c '%a %U %G' /run/translategate/local.sock)" = "660 translategate aera-translate" ] || \
+  { stat /run/translategate/local.sock; fail "the local socket isn't translategate's and its group's only"; }
+[ "$(stat -c '%a' /run/translategate)" = 750 ] || fail "/run/translategate is open to others"
+python3 - "$GW" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import translateclient as tc
+text, used, same = tc.translate("Hallo Wilhelmina, das ist gut.", "en")
+assert (text, used, same) == ("en: HALLO WILHELMINA, DAS IST GUT.", "de", False), (text, used, same)
+print("ok: the local socket, as webgate and pdfgate will use it")
+PY
 [ -e /opt/aera-gateway/translate-phrases.tsv ] || fail "translate-phrases.tsv isn't in /opt"
 python3 - <<'PY'
 import socket
@@ -389,7 +401,7 @@ journalctl -u translategate --no-pager | grep -q "starting again with them" || f
 rm -rf /etc/systemd/system/translategate-langs.service.d /srv/tl-fake
 systemctl daemon-reload
 "$GW/aera-gateway" update > "$W/update.out" 2>&1 || { cat "$W/update.out"; fail "update with translate"; }
-unit_has translategate "translategate.py --port 8480 --allow 127.0.0.1$"
+unit_has translategate "translategate.py --port 8480 --allow 127.0.0.1 --local /run/translategate/local.sock$"
 running translategate
 "$GW/aera-gateway" remove translate
 [ ! -e /etc/systemd/system/translategate.service ] || fail "remove translate left its unit"

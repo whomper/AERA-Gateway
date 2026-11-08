@@ -98,6 +98,7 @@ gateway/      what runs on the Pi; the apps carry a copy of this folder
   translategate.py translate: text translated on the Pi by a local engine (Argos Translate)
   translate-phrases.tsv translategate's greetings and closings, a plain list
   translatelangs.py translate: the languages installed and removed (the apps' Languages page)
+  translateclient.py translate: translategate's local socket, for webgate and pdfgate
   translate-languages.tsv the languages that can be installed, with their sizes
   install.sh      the apps' old way in, handed on to aera-gateway
   test_*.py       their tests

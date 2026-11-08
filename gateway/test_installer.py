@@ -45,6 +45,7 @@ class FakePi(ag.Pi):
         self.homedirs = ""          # snapd's homedirs setting
         self.no_modules = set()     # Python modules that aren't there
         self.arch = "aarch64"       # uname -m
+        self.groups = set()         # groups added
         self.broken_build = False   # make fails (aerapdf's build)
 
     def have(self, prog):
@@ -123,6 +124,10 @@ class FakePi(ag.Pi):
             text = "Status: active\n" if self.ufw else "Status: inactive\n"
         elif c[:2] == ["ufw", "allow"]:
             self.rules.append((c[3], c[7]))
+        elif c[:2] == ["getent", "group"]:
+            rc = 0 if c[2] in self.groups else 2
+        elif c[0] == "groupadd":
+            self.groups.add(c[-1])
         elif c[:2] == ["uname", "-m"]:
             text = self.arch + "\n"
         elif c[:2] == ["hostname", "-I"]:
@@ -750,8 +755,9 @@ class DavFtpTest(Base):
         self.assertEqual(self.run_ag("install", "translate", "--allow", "192.168.1.50"), 0, self.err)
         unit = self.unit("translategate")
         self.assertIn("ExecStart=/opt/translategate/venv/bin/python3 /opt/aera-gateway/translategate.py "
-                      "--port 8480 --allow 192.168.1.50 --engine argos\n", unit)
-        for want in ("User=translategate", "MemoryMax=1536M", "OOMScoreAdjust=-300", "StateDirectory=translategate", "ProtectSystem=strict", "NoNewPrivileges=yes"):
+                      "--port 8480 --allow 192.168.1.50 --engine argos --local /run/translategate/local.sock\n", unit)
+        for want in ("User=translategate", "MemoryMax=1536M", "OOMScoreAdjust=-300", "StateDirectory=translategate",
+                     "Group=aera-translate", "RuntimeDirectory=translategate", "RuntimeDirectoryMode=0750", "ProtectSystem=strict", "NoNewPrivileges=yes"):
             self.assertIn(want, unit)
         venvs = [c for c in self.pi.cmds if c[:3] == ("python3", "-m", "venv")]
         self.assertEqual(len(venvs), 1)
@@ -764,7 +770,8 @@ class DavFtpTest(Base):
         self.assertEqual(self.run_ag("install", "translate", "--port", "8481"), 0, self.err)
         self.assertEqual(len([c for c in self.pi.cmds if c[:3] == ("python3", "-m", "venv")]), 1)
         self.assertEqual(len(self.fetched), 1)
-        self.assertIn("--port 8481 --allow 192.168.1.50 --engine argos\n", self.execstart("translategate") + "\n")
+        self.assertIn("--port 8481 --allow 192.168.1.50 --engine argos --local /run/translategate/local.sock\n",
+                      self.execstart("translategate") + "\n")
         # another language: only its models
         self.assertEqual(self.run_ag("install", "translate", "--languages", "en,de,he"), 0, self.err)
         self.assertEqual(self.fetched[-1], [("en", "he"), ("he", "en")])       # through English
@@ -786,6 +793,7 @@ class DavFtpTest(Base):
             self.assertIn(want, job)
         self.assertIn(("chown", "-R", "translategate:translategate", "/opt/translategate/models"), self.pi.cmds)
         self.assertIn(("systemctl", "enable", "--now", "translategate-langs.path"), self.pi.cmds)
+        self.assertIn(("groupadd", "--system", "aera-translate"), self.pi.cmds)
         self.assertTrue(self.pi.exists("/opt/aera-gateway/translatelangs.py"))
         self.assertTrue(self.pi.exists("/opt/aera-gateway/translate-languages.tsv"))
         self.assertEqual(self.run_ag("remove", "translate"), 0, self.err)
@@ -795,7 +803,8 @@ class DavFtpTest(Base):
 
     def test_translate_stand_in(self):
         self.assertEqual(self.run_ag("install", "translate", "--engine", "stand-in"), 0, self.err)
-        self.assertIn("ExecStart=/usr/bin/python3 /opt/aera-gateway/translategate.py --port 8480\n",
+        self.assertIn("ExecStart=/usr/bin/python3 /opt/aera-gateway/translategate.py --port 8480 "
+                      "--local /run/translategate/local.sock\n",
                       self.unit("translategate"))
         self.assertFalse(any("venv" in " ".join(c) for c in self.pi.cmds if isinstance(c[0], str)))
         self.assertEqual(self.fetched, [])
