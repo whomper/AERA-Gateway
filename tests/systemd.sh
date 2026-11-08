@@ -433,6 +433,56 @@ running translategate
 [ ! -e /opt/translategate ] || fail "remove translate left /opt/translategate"
 ok "translate"
 
+echo "== radio: radiogate (EPlay's web radio), ffmpeg for what isn't MP3"
+"$GW/aera-gateway" install radio --allow 127.0.0.1 --allow-local > "$W/radio.out" 2>&1 || \
+  { cat "$W/radio.out"; fail "install radio"; }
+running radiogate
+listens 8580
+unit_has radiogate "^ExecStart=/usr/bin/python3 /opt/aera-gateway/radiogate.py --port 8580 --allow 127.0.0.1 --allow-local$"
+unit_has radiogate "^User=radiogate"
+unit_has radiogate "^MemoryMax=768M"
+command -v ffmpeg >/dev/null || fail "install radio didn't put ffmpeg in"
+mkdir -p "$W/Wilhelmina"
+ffmpeg -hide_banner -loglevel error -f lavfi -i sine=frequency=440:duration=8 -ac 2 -b:a 128k "$W/Wilhelmina/a.mp3"
+ffmpeg -hide_banner -loglevel error -f lavfi -i sine=frequency=440:duration=8 -ac 2 -c:a libvorbis "$W/Wilhelmina/a.ogg"
+(cd "$W" && exec python3 -m http.server 8590 --bind 127.0.0.1 > /dev/null 2>&1) &
+station=$!
+sleep 1
+python3 - "$W" <<'PY'
+import socket, sys
+w = sys.argv[1]
+def ask(path):
+    s = socket.create_connection(("127.0.0.1", 8580), timeout=60)
+    s.sendall(b"GET %s HTTP/1.0\r\n\r\n" % path)
+    out = b""
+    while True:
+        b = s.recv(65536)
+        if not b:
+            return out
+        out += b
+r = ask(b"/version")
+assert b"\r\n\r\nradiogate 1.0, ffmpeg " in r and not r.endswith(b"ffmpeg none\n"), r
+head, _, body = ask(b"/stream?url=http%3A%2F%2F127.0.0.1%3A8590%2FWilhelmina%2Fa.mp3").partition(b"\r\n\r\n")
+assert head.startswith(b"HTTP/1.0 200") and b"Content-Type: audio/mpeg" in head, head
+assert body == open(w + "/Wilhelmina/a.mp3", "rb").read(), len(body)
+head, _, body = ask(b"/stream?url=http%3A%2F%2F127.0.0.1%3A8590%2FWilhelmina%2Fa.ogg").partition(b"\r\n\r\n")
+assert head.startswith(b"HTTP/1.0 200") and b"Content-Type: audio/mpeg" in head, head
+assert len(body) > 50000 and (body[:3] == b"ID3" or body[0] == 0xFF), (len(body), body[:4])
+head, _, body = ask(b"/stream?url=file%3A%2F%2F%2Fetc%2Fpasswd").partition(b"\r\n\r\n")
+assert head.startswith(b"HTTP/1.0 400") and body.startswith(b"radiogate: "), (head, body)
+print("ok: /version, an MP3 station as it came, an Ogg one converted by ffmpeg, a refusal")
+PY
+kill $station
+sleep 1
+! journalctl -u radiogate --no-pager | grep -qi "wilhelmina" || fail "a station's path is in the journal"
+journalctl -u radiogate --no-pager | grep -q "127.0.0.1 listened to 127.0.0.1 for " || fail "no log line for a station"
+"$GW/aera-gateway" update > "$W/update.out" 2>&1 || { cat "$W/update.out"; fail "update with radio"; }
+unit_has radiogate "radiogate.py --port 8580 --allow 127.0.0.1 --allow-local$"
+running radiogate
+"$GW/aera-gateway" remove radio
+[ ! -e /etc/systemd/system/radiogate.service ] || fail "remove radio left its unit"
+ok "radio"
+
 echo "== claude: the recipe leaves what ClaudeST's pi/install.sh left"
 snap() {
   mkdir -p "$1"

@@ -16,6 +16,7 @@ they are.
 | `web`    | EWeb                | 8280                                 | HTTP and HTTPS to any web server      |
 | `pdf`    | EConvert and EPDF   | 8380                                 | converts PDFs for the Atari (nothing onwards) |
 | `translate` | the apps' Translate | 8480                              | nothing: a local engine translates    |
+| `radio`  | EPlay               | 8580                                 | HTTP and HTTPS to web radio stations, AAC/Ogg/HLS converted |
 | `claude` | ClaudeST            | 2323 (or a serial cable)             | HTTPS to claude.ai or the API         |
 
 In the instructions, `GATEWAY_IP` is the Gateway's (the Raspberry Pi's) address on your home network and
@@ -100,6 +101,8 @@ gateway/      what runs on the Pi; the apps carry a copy of this folder
   translatelangs.py translate: the languages installed and removed (the apps' Languages page)
   translateclient.py translate: translategate's local socket, for webgate and pdfgate (aerapdf's translator)
   translate-languages.tsv the languages that can be installed, with their sizes
+  radiogate.py    radio: web radio stations as MP3 for EPlay (EPlay's radio/, tools/sync-radio.sh; ffmpeg)
+  EPLAY           the EPlay commit radiogate.py is from
   install.sh      the apps' old way in, handed on to aera-gateway
   test_*.py       their tests
 pens/             aerapens, for webgate's pictures as the Atari's pens: built on the Pi by install web
@@ -109,6 +112,7 @@ jsc/              aerajsc, for webgate's scripts compiled for EWeb: built on the
 tools/
   sync-common.sh  pens/common/ from AERA-Atari; never edit pens/common/ here
   sync-jsc.sh     jsc/eweb/ from EWeb; never edit jsc/eweb/ here
+  sync-radio.sh   gateway/radiogate.py from EPlay; never edit it here
   translate-check.py translategate's engine on a Pi: quality, speed and memory
 tests/translate/  the fixed Hebrew/English set translate-check.py uses (no private text)
 update-pi.sh      this copy at the latest release, then aera-gateway update (with --allow: install all)
