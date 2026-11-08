@@ -11,6 +11,7 @@ says how they are.
   sudo ./aera-gateway install web                           EWeb's (webgate)
   sudo ./aera-gateway install pdf                           EConvert's and EPDF's converter (pdfgate)
   sudo ./aera-gateway install translate                     translation for the apps (translategate)
+  sudo ./aera-gateway install radio                         EPlay's web radio (radiogate)
   sudo ./aera-gateway install claude --network --atari ATARI_IP
                                                             ClaudeST's bridge (claude-st)
   sudo ./aera-gateway install all --allow ATARI_IP --mail IMAP SMTP[:587] [POP3] [--browser]
@@ -58,7 +59,8 @@ OPT = "/opt/aera-gateway"                   # the gateways' code on the Pi
 UNITS = "/etc/systemd/system"
 OLD_BIN = "/usr/local/bin"                  # where the apps' own install.sh put them
 FILES = ("aeragate.py", "emailgate.py", "ecalgate.py", "eftpgate.py", "webgate.py", "pdfgate.py",
-         "translategate.py", "translatelangs.py", "translateclient.py", "translate-phrases.tsv", "translate-languages.tsv")
+         "translategate.py", "translatelangs.py", "translateclient.py", "translate-phrases.tsv", "translate-languages.tsv",
+         "radiogate.py")
 EXT = "webgate-ext"                         # webgate's browser extension, a folder next to them
 HOME_NETS = ("192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8")
 CLAUDEST = "whomper/ClaudeST"
@@ -1414,7 +1416,56 @@ class Translate(Gateway):
 
 
 MAIL = Mail()
-GATEWAYS = [MAIL, Dav(), Ftp(), Web(), Pdf(), Translate()]
+class Radio(Gateway):
+    """radiogate: web radio for EPlay, as MP3 (EPlay's radio/radiogate.py,
+    tools/sync-radio.sh); ffmpeg converts what isn't MP3 (Erez, 8 Nov 2026)"""
+    key, name, script = "radio", "radiogate", "radiogate.py"
+    title = "Web radio for EPlay on the Atari (stations as MP3)"
+    removed = "radiogate removed."
+    packages = ("ffmpeg",)
+
+    def options(self, ap):
+        super().options(ap)
+        ap.add_argument("--port", type=int, help="the port on the Gateway (8580 is the default)")
+        ap.add_argument("--allow-local", action="store_true", default=None,
+                        help="also play stations on the home network")
+        ap.add_argument("--no-allow-local", dest="allow_local", action="store_false")
+        ap.add_argument("-v", "--verbose", action="store_true", default=None, help="log every request")
+        ap.add_argument("--no-verbose", dest="verbose", action="store_false")
+
+    def apply(self, ns, o):
+        super().apply(ns, o)
+        for k in ("port", "allow_local", "verbose"):
+            if getattr(o, k) is not None:
+                setattr(ns, k, getattr(o, k))
+
+    def args(self, ns):
+        out = ["--port", str(ns.port)] + super().args(ns)
+        out += ["--allow-local"] if ns.allow_local else []
+        out += ["-v"] if ns.verbose else []
+        return out + ns.extra
+
+    def ports(self, ns):
+        return [str(ns.port)]
+
+    def unit(self, ns, keep):
+        # (ffmpeg, a stream or two, beside the engine and the browser)
+        return super().unit(ns, keep).replace("Restart=always", "MemoryMax=768M\nRestart=always", 1)
+
+    def describe(self, ns):
+        return "stations at home %s" % ("allowed" if ns.allow_local else "refused")
+
+    def tell(self, ns, ip):
+        return "\n".join([
+            "",
+            "radiogate is running. In EPlay on the Atari, web radio through the Gateway:",
+            "   Gateway:     %s" % ip,
+            "   Port:        %s" % ns.port,
+            "",
+            "Check it from any browser on your network: http://%s:%s/version" % (ip, ns.port)])
+
+
+GATEWAYS = [MAIL, Dav(), Ftp(), Web(), Pdf(), Translate(), Radio()]
 
 
 def put_files(pi, src):
@@ -1452,7 +1503,11 @@ def need_packages(pi, gw):
     for package, module in (("python3-paramiko", "paramiko"), ("python3-pil", "PIL")):
         if package in gw.packages and not pi.ok("python3", "-c", "import " + module):
             need.append(package)
+    if "ffmpeg" in gw.packages and not pi.which("ffmpeg"):
+        need.append("ffmpeg")
     if need:
+        if "ffmpeg" in need:
+            heading("Installing ffmpeg, for the stations that don't send MP3")
         pi.run("apt-get", "update", "-qq")
         pi.run("apt-get", "install", "-y", "-qq", *need)
 
@@ -1766,7 +1821,8 @@ NAMES = {"email": "mail", "emailgate": "mail", "cal": "dav", "ecal": "dav", "eco
          "contacts": "dav", "ecalgate": "dav", "eftp": "ftp", "eftpgate": "ftp",
          "claudest": "claude", "claude-st": "claude", "eweb": "web", "webgate": "web",
          "epdf": "pdf", "econvert": "pdf", "pdfgate": "pdf",
-         "translation": "translate", "translategate": "translate"}
+         "translation": "translate", "translategate": "translate",
+         "eplay": "radio", "radiogate": "radio"}
 
 
 def service(name):

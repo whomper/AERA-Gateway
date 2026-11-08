@@ -867,6 +867,25 @@ class ClaudeTest(Base):
             fh.write("[Service]\nExecStart=/opt/claude-st/venv/bin/python ...\n")
         self.conf = ag.Claude.CONF
 
+    def test_radio(self):
+        self.pi.ufw = True
+        self.assertEqual(self.run_ag("install", "eplay", "--allow", "192.168.1.50"), 0, self.err)
+        self.assertEqual(self.execstart("radiogate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/radiogate.py "
+                                                      "--port 8580 --allow 192.168.1.50")
+        unit = self.unit("radiogate")
+        for want in ("User=radiogate", "MemoryMax=768M", "ProtectSystem=strict", "NoNewPrivileges=yes"):
+            self.assertIn(want, unit)
+        self.assertEqual(self.pi.rules, [("192.168.1.50", "8580")])
+        self.assertIn(("apt-get", "install", "-y", "-qq", "ffmpeg"), self.pi.cmds)
+        self.assertIn("Port:        8580", self.out)
+        self.assertTrue(self.pi.exists("/opt/aera-gateway/radiogate.py"))
+        # settings kept, one changed
+        self.assertEqual(self.run_ag("install", "radio", "--allow-local"), 0, self.err)
+        self.assertEqual(self.execstart("radiogate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/radiogate.py "
+                                                      "--port 8580 --allow 192.168.1.50 --allow-local")
+        self.assertEqual(self.run_ag("remove", "radio"), 0, self.err)
+        self.assertIsNone(self.unit("radiogate"))
+
     def test_install_all(self):
         rc = self.run_ag("install", "all", "--allow", "192.168.1.50", "--from", self.src,
                          "--mail", "imap.mail.me.com", "smtp.mail.me.com:587")
@@ -875,7 +894,7 @@ class ClaudeTest(Base):
             self.assertIn("--allow 192.168.1.50", self.execstart(name), name)
         self.assertIn("imap.mail.me.com smtp.mail.me.com:587", self.execstart("emailgate"))
         self.assertIn("--tcp 0.0.0.0:2323 --allow 192.168.1.50", self.pi.read(self.conf))
-        self.assertIn("Installed: mail, dav, ftp, web, %stranslate, claude" %
+        self.assertIn("Installed: mail, dav, ftp, web, %stranslate, radio, claude" %
                       ("pdf, " if os.path.isdir(os.path.join(ag.Pdf.PDF_SRC, "epdf")) else ""), self.out)
         # again, without --mail or --allow: everything kept as it is
         self.assertEqual(self.run_ag("install", "all", "--from", self.src), 0, self.err)
@@ -887,7 +906,7 @@ class ClaudeTest(Base):
         # install all leaves translate out on a Pi too small for its engine, and installs the others
         self.pi.write("/proc/meminfo", "MemTotal:        1948304 kB\n")
         self.assertEqual(self.run_ag("install", "all", "--allow", "192.168.1.50", "--from", self.src), 0, self.err)
-        self.assertIn("Installed: dav, ftp, web, %sclaude" %
+        self.assertIn("Installed: dav, ftp, web, %sradio, claude" %
                       ("pdf, " if os.path.isdir(os.path.join(ag.Pdf.PDF_SRC, "epdf")) else ""), self.out)
         self.assertIn("translate (its engine needs a Pi with 4 GB of memory or more; this one has 1902 MB)", self.out)
         self.assertIsNone(self.unit("translategate"))
