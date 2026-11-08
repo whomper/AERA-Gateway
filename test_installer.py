@@ -533,6 +533,8 @@ class DavFtpTest(Base):
         self.assertIn("Gateway:     192.168.1.10", self.out)
         self.assertIn("Port:        8280", self.out)
         self.assertTrue(self.pi.exists("/opt/aera-gateway/webgate.py"))
+        self.assertIn(("usermod", "-a", "-G", "aera-translate", "webgate"), self.pi.cmds)
+        self.assertTrue(self.pi.exists("/opt/aera-gateway/translateclient.py"))
         self.assertNotIn(("apt-get", "install", "-y", "-qq", "python3-pil"), self.pi.cmds)  # Pillow there
         self.pi.no_modules = {"PIL"}
         self.run_ag("install", "web")
@@ -590,7 +592,7 @@ class DavFtpTest(Base):
         self.assertEqual(self.run_ag("install", "web", "--browser"), 0, self.err)
         useradd = next(c for c in self.pi.cmds if c[0] == "useradd" and c[-1] == "webgate")
         self.assertEqual(useradd[useradd.index("--home-dir") + 1], "/var/lib/webgate")
-        self.assertNotIn("usermod", [c[0] for c in self.pi.cmds])       # its home was right from the start
+        self.assertFalse([c for c in self.pi.cmds if c[:2] == ("usermod", "--home")])       # its home was right from the start
         self.assertEqual(self.pi.homedirs, "/srv,/var/lib")             # added to, not replaced
         self.assertIn(("loginctl", "enable-linger", "webgate"), self.pi.cmds)
         self.assertIsNone(self.unit("webgate-browser"))                 # not a system unit
@@ -720,6 +722,9 @@ class DavFtpTest(Base):
         self.assertFalse(make[3].startswith(os.path.dirname(ag.HERE)))      # never in the copy itself
         self.assertTrue(self.pi.exists("/opt/aera-gateway-pdf/aerapdf"))
         self.assertTrue(self.pi.exists("/opt/aera-gateway-pdf/fonts/sans.ttf"))
+        # aerapdf's translator may use translategate's local socket
+        self.assertIn(("groupadd", "--system", "aera-translate"), self.pi.cmds)
+        self.assertIn(("usermod", "-a", "-G", "aera-translate", "pdfgate"), self.pi.cmds)
         with open(os.path.join(ag.Pdf.PDF_SRC, "EPDF")) as f:
             self.assertEqual(self.pi.read("/opt/aera-gateway-pdf/SOURCE"), f.read().strip() + "\n")
         # built from the same pdf/: kept, not built again; another: built
