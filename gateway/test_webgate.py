@@ -834,6 +834,14 @@ class TranslateTest(ProxyTest):
         self.assertIn("translategate: local de>en 200,", self.log.getvalue())
         self.assertNotIn("katze", self.log.getvalue().lower())  # no word of it logged
 
+    def test_translate_no(self):
+        """translate="no" (HTML's attribute): the element and what is in it
+        as they were, as EWeb's Direct path keeps them"""
+        page = ('<p>Die Katze ist da, <span translate="no">EWeb <b>bleibt</b> <span>so</span></span> und hier.</p>'
+                '<img alt="Ein Bild" translate=no><p translate="no" title="Kein Titel">Das bleibt</p><p>Ende ist gut</p>')
+        sl = webgate.html_slots(page, "en")
+        self.assertEqual(sl.parts(), ["Die Katze ist da,", "und hier.", "Ende ist gut"])
+
     def test_rtl(self):
         r, data = self.doc("de.html", "he")
         self.assertEqual(r.status, 200)
