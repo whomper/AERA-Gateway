@@ -24,6 +24,7 @@
 #include "cvjpeg.h"
 #include "charset.h"
 #include "pdf.h"
+#include "trpara.h"
 
 #define PAGE_W 640			/* the whole page's pictures' width when the caller gives none */
 #define NDRAW 16			/* drawings a page at most */
@@ -463,7 +464,64 @@ typedef struct {
 	int short_mem;			/* the page was refused memory somewhere (made worse or not at all) */
 	int page_w, pic_w;		/* the whole page's width, a picture's most (CVOPT's)*/
 	int banded;			/* the canvas in bands for the rest of the file */
+	/* translated: the languages the pages were in, and how many each */
+	char tr_code[8][8];
+	long tr_count[8];
+	long tr_pages, tr_same;
 } CV;
+
+/* page n's text translated (CVOPT's translate): its /Translation stream's
+   object (-1: none, the page was in translate_to already or had nothing
+   to send), *from its language; -3 the translator failed (CVSTAT's
+   tr_fail) or memory */
+static long translate_page(CV *c, const char *txt, long len, char from[8])
+{
+	TPARA tp;
+	char *u = NULL, *at;
+	long ul = 0, al, obj = -1;
+	int rc, k;
+
+	from[0] = 0;
+	if (tp_split(txt, len, &tp))
+		return -3;
+	if (tp.nsend == 0) {
+		tp_free(&tp);
+		return -1;
+	}
+	cv_phase = "translate";
+	rc = c->o->translate(c->o->u, c->o->translate_to, tp.utf8, tp.ulen, &u, &ul, from);
+	if (rc) {
+		c->st->tr_fail = rc;
+		free(u);
+		tp_free(&tp);
+		return -3;
+	}
+	from[7] = 0;
+	c->tr_pages++;
+	if (!strcmp(from, "same"))
+		c->tr_same++;
+	else {
+		for (k = 0; k < 8 && c->tr_code[k][0] && strcmp(c->tr_code[k], from); k++)
+			;
+		if (k < 8) {
+			strcpy(c->tr_code[k], from);
+			c->tr_count[k]++;
+		}
+		at = tp_join(txt, len, &tp, u ? u : "", ul, &al);
+		if (!at) {
+			c->st->tr_fail = 1;	/* (its paragraphs didn't match what was sent) */
+			free(u);
+			tp_free(&tp);
+			return -3;
+		}
+		obj = w_new(&c->w);
+		w_stream(&c->w, obj, "", (const unsigned char *)at, al);
+		free(at);
+	}
+	free(u);
+	tp_free(&tp);
+	return obj;
+}
 
 static long pic_known(CV *c, long src, int pw, int flip)
 {
@@ -626,7 +684,8 @@ static int convert_page(CV *c, long n)
 	RDRAWING dw[NDRAW];
 	int nd = 0, k, drawn;
 	fx cut[NDRAW * 4];
-	long cut_obj[NDRAW], textobj, mono = -1, colour = -1, dbl = -1, contobj, pageobj = c->pages[n];
+	long cut_obj[NDRAW], textobj, mono = -1, colour = -1, dbl = -1, contobj, pageobj = c->pages[n], trobj = -1;
+	char trfrom[8] = "";
 	PTEXT t;
 	char *at = NULL;
 	long alen = 0, i;
@@ -799,6 +858,15 @@ static int convert_page(CV *c, long n)
 	textobj = w_new(w);
 	cv_phase = "write";
 	w_stream(w, textobj, "", (const unsigned char *)(txt.s ? txt.s : ""), txt.len);
+	if (c->o->translate_to && c->o->translate) {
+		trobj = translate_page(c, txt.s ? txt.s : "", txt.len, trfrom);
+		if (trobj == -3) {
+			sb_free(&txt);
+			sb_free(&cont);
+			sb_free(&xo);
+			return -1;
+		}
+	}
 	/* the page whole */
 	if (drawn && c->o->pages != CV_PAGES_NONE) {
 		long rb = (r->c.w + 7) / 8;
@@ -941,6 +1009,12 @@ static int convert_page(CV *c, long n)
 		w_printf(w, " /Colour %ld 0 R", colour);
 	if (dbl >= 0)
 		w_printf(w, " /Double %ld 0 R", dbl);
+	if (trobj >= 0)
+		w_printf(w, " /Translation %ld 0 R", trobj);
+	if (trfrom[0] && !strcmp(trfrom, "same"))
+		w_printf(w, " /From /Same");
+	else if (trfrom[0] && strspn(trfrom, "abcdefghijklmnopqrstuvwxyz") == strlen(trfrom))
+		w_printf(w, " /From /%s", trfrom);
 	w_printf(w, " >> >>\nendobj\n");
 	sb_free(&txt);
 	sb_free(&cont);
@@ -1073,15 +1147,22 @@ int cv_convert(const char *in, const char *out, const CVOPT *o, CVSTAT *st, char
 			SBUF hb;
 			WMARK m;
 			long npm = c->npm, pics = st->pictures, draws = st->drawings;
+			/* (a page made again: its translation counted once) */
+			long trp = c->tr_pages, trs = c->tr_same, trc[8];
+
+			memcpy(trc, c->tr_count, sizeof trc);
 
 			w_hold(&c->w, &hb, &m);
 			c->short_mem = 0;
 			rc = convert_page(c, n);
-			if (rc != -2 && (c->short_mem || rc == -1) && !c->banded) {
+			if (rc != -2 && !st->tr_fail && (c->short_mem || rc == -1) && !c->banded) {
 				long fr = o->mem_free ? o->mem_free() : 0;
 
 				w_undo(&c->w, &m);
 				c->npm = npm;
+				c->tr_pages = trp;
+				c->tr_same = trs;
+				memcpy(c->tr_count, trc, sizeof trc);
 				st->pictures = pics;
 				st->drawings = draws;
 				c->banded = 1;
@@ -1099,11 +1180,29 @@ int cv_convert(const char *in, const char *out, const CVOPT *o, CVSTAT *st, char
 		}
 		if (!rc && stopped)
 			rc = -2;
+		if (rc == -1 && st->tr_fail && !err[0])
+			snprintf(err, (size_t)errlen, "page %ld: %s", n + 1,
+				 st->tr_fail == 2 ? "no translation into that language" :
+				 st->tr_fail == 3 ? "the translation service is busy" :
+				 st->tr_fail == 4 ? "the translation took too long" : "the translation failed");
 		if (rc == -1 && !err[0])
 			snprintf(err, (size_t)errlen, "page %ld: not enough memory (%s)", n + 1, cv_phase ? cv_phase : "");
 	}
 	if (rc)
 		goto done;
+	{
+		/* the language most pages were in; every page in translate_to already */
+		int k, best = -1;
+
+		for (k = 0; k < 8 && c->tr_code[k][0]; k++)
+			if (best < 0 || c->tr_count[k] > c->tr_count[best])
+				best = k;
+		if (best >= 0)
+			strcpy(st->tr_from, c->tr_code[best]);
+		else if (c->tr_same && o->translate_to)
+			snprintf(st->tr_from, sizeof st->tr_from, "%s", o->translate_to);
+		st->tr_same = c->tr_pages > 0 && c->tr_same == c->tr_pages;
+	}
 	w_obj(&c->w, 4);
 	w_printf(&c->w, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n");
 	w_obj(&c->w, 2);
@@ -1117,9 +1216,12 @@ int cv_convert(const char *in, const char *out, const CVOPT *o, CVSTAT *st, char
 	w_printf(&c->w, " >>\nendobj\n");
 	w_obj(&c->w, 1);
 	w_printf(&c->w, "<< /Type /Catalog /Pages 2 0 R\n/AERA << /Type /AERAPrepared /Version 1 /Creator (EConvert 1.1)\n"
-		 "/Prepared [/Text /Pictures /Drawings%s%s] /Photos /%s\n/Source << /Name ",
+		 "/Prepared [/Text /Pictures /Drawings%s%s%s] /Photos /%s\n",
 		 o->pages != CV_PAGES_NONE ? " /PageMono" : "", o->pages == CV_PAGES_COLOUR ? " /PageColour" : "",
-		 o->photos == CV_PHOTOS_JPEG ? "JPEG" : "Indexed");
+		 o->translate_to && o->translate ? " /Translation" : "", o->photos == CV_PHOTOS_JPEG ? "JPEG" : "Indexed");
+	if (o->translate_to && o->translate)
+		w_printf(&c->w, "/Translate << /To /%s >>\n", o->translate_to);
+	w_printf(&c->w, "/Source << /Name ");
 	w_str(&c->w, base_name(in));
 	w_printf(&c->w, " /Bytes %ld /Pages %ld >> >> >>\nendobj\n", c->d.size, c->npages);
 	xref = c->w.pos;

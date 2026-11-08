@@ -25,6 +25,7 @@
 #include "coro.h"
 #include "pdfimg.h"
 #include "pics.h"
+#include "rdraw.h"
 
 static PDOC *doc;
 static TSTORE store;
@@ -48,9 +49,13 @@ static long cache_kb;			/* the store's memory */
    corpus: the reading 4 KB, a JPEG 2.3 KB; make build/stk/EPDF.PRG) */
 #define READ_STACK 16384L
 #define PIC_STACK  12288L
+/* a 68020 or better: the pictures' stack draws pages too (render.ovl:
+   FreeType and the reader, EConvert's job used 31 KB of its) */
+#define DRAW_STACK 65536L
 static CORO main_co, read_co, pic_co;
 static CORO *running;			/* the stack working now */
 static char *read_stack, *pic_stack;
+static long pic_stack_size;
 static int read_started, pic_started;
 static long rpage = -1;			/* the page being read, -1 none */
 static int rdone;			/* the reader has finished rpage */
@@ -68,6 +73,14 @@ static PPREP rprep;			/* a converted PDF's page read: its whole pictures */
    its own picture (16 colours where the screen has them, else mono) */
 static TSTORE pstore;
 static int pstore_open, pages_mode, pages_have;
+/* any other PDF on a Falcon or TT (stage 2): its pages drawn as printed by
+   render.ovl, each page a picture of its own (PICS_PAGE + the page) */
+static int drawn;
+static long rbox_w, rbox_h;		/* the page read: its size in points, turned as shown */
+static void *rdoc;			/* render.ovl's document, opened at the first page drawn */
+static long draw_page = -1;		/* the page render.ovl draws now, -1 none */
+static int draw_rows;			/* its rows are being shown */
+char doc_font_dir[200] = "fonts";	/* the standard fonts' (epdf.c: beside the program) */
 
 /* each page's picture View > Pages shows and its double (EConvert's for
    a machine with the room: shown whole when the page is clicked), its
@@ -106,6 +119,55 @@ static void pages_note(long n, const PPREP *pp)
 	ts_put(&pstore, n, b, k);		/* (none: the page's head alone) */
 }
 
+/* a page to be drawn as printed: its line, 640 wide at its shape */
+static void pages_drawn_note(long n)
+{
+	char b[48];
+	long h;
+	int k;
+
+	if (!pstore_open)
+		return;
+	if (rbox_w <= 0 || rbox_h <= 0) {
+		rbox_w = 612;		/* (no box: a Letter page) */
+		rbox_h = 792;
+	}
+	h = 640L * rbox_h / rbox_w;
+	if (h < 8)
+		h = 8;
+	if (h > 4096)
+		h = 4096;
+	k = snprintf(b, sizeof b, "\x7F%ld 640x%ld\n", PICS_PAGE + n, h);
+	pages_have = 1;
+	ts_put(&pstore, n, b, k);
+}
+
+/* the page read's size, on the reader's stack */
+static void page_box(long n)
+{
+	POBJ *res, *box;
+	long rot = 0, v[4] = { 0, 0, 612, 792 };
+	int k;
+
+	if (!pdf_page(doc, n, &res, &box, &rot))
+		return;
+	if (box && box->t == PO_ARR && box->a >= 4)
+		for (k = 0; k < 4; k++) {
+			POBJ *o = pa_at(box, k);
+
+			v[k] = !o ? 0 : o->t == PO_INT ? o->a : o->t == PO_REAL ? (long)(o->a >> 16) : 0;
+		}
+	rbox_w = v[2] > v[0] ? v[2] - v[0] : v[0] - v[2];
+	rbox_h = v[3] > v[1] ? v[3] - v[1] : v[1] - v[3];
+	rot = ((rot % 360) + 360) % 360;
+	if (rot == 90 || rot == 270) {
+		long t = rbox_w;
+
+		rbox_w = rbox_h;
+		rbox_h = t;
+	}
+}
+
 int doc_double_of(long obj, long *dbl, long *w, long *h)
 {
 	long n;
@@ -122,7 +184,12 @@ int doc_double_of(long obj, long *dbl, long *w, long *h)
 
 int doc_has_pages(void)
 {
-	return doc && doc->prepared && pages_have;
+	return doc && (doc->prepared || drawn) && pages_have;
+}
+
+int doc_drawn(void)
+{
+	return doc && drawn;
 }
 
 int doc_pages_mode(void)
@@ -135,6 +202,8 @@ int doc_prepared(void)
 	return doc && doc->prepared;
 }
 
+static void page_pic_stop(void);
+
 /* the view on the pages' text or on their pictures: laid out again from
    the page at the top (the caller lays the window out and draws it) */
 void doc_set_pages(int on)
@@ -144,6 +213,8 @@ void doc_set_pages(int on)
 
 	if (!doc || !pstore_open || !on == !pages_mode)
 		return;
+	if (!on)
+		page_pic_stop();
 	top = dv_page_at_top(&view);
 	cols = view.cols;
 	lm = view.lines_mode;
@@ -263,7 +334,7 @@ static void decoder(void)
 			{
 				/* its own size, for its click to enlarge (textwin.c):
 				   read here, before the stack's first hand-back */
-				POBJ *o = pdf_get(doc, rpic->obj);
+				POBJ *o = rpic->obj < PICS_PAGE ? pdf_get(doc, rpic->obj) : NULL;
 
 				rpic->sw = o && o->t == PO_DICT ? pd_int(doc, o, "Width", 0) : 0;
 				rpic->sh = o && o->t == PO_DICT ? pd_int(doc, o, "Height", 0) : 0;
@@ -299,6 +370,148 @@ static void decoder(void)
 		pdone = 1;
 		coro_switch(&pic_co, &main_co);
 	}
+}
+
+/* render.ovl's turns: the decoder's (1 stops the page: the document closes) */
+static int draw_turn(void)
+{
+	return slice_up(NULL);
+}
+
+/* pics_page_rows: page n drawn by render.ovl w wide, its rows to row(),
+   on the decoder's stack */
+static int page_rows(long n, int w, int h, void (*row)(void *u, long y, const unsigned short *px),
+		     void (*planes_row)(void *u, long y, const unsigned char *planes), const PIC_PAL *pal, int planes,
+		     void *u, int *why)
+{
+	unsigned char *pn = NULL;
+	unsigned long pens_ms = 0, rows_t0;
+	const ROVL *o;
+	ROVL_PAGE pg;
+	char err[160];
+	long y = 0;
+	int rc, y0 = 0, i;
+
+	*why = PIC_DAMAGED;
+	if (!rdraw_load(draw_turn, err, sizeof err)) {
+		log_event("render-ovl", err, NULL);
+		*why = PIC_UNSUPPORTED;
+		return 0;
+	}
+	o = rdraw_ovl();
+	if (!rdoc) {
+		long fr = (long)Malloc(-1L);
+
+		/* its canvas a page whole where it can (bands read the page again
+		   for each: 4 to 15 times slower) */
+		rdoc = o->open(opath, doc_font_dir, fr / 8, fr * 2 / 3, err, sizeof err);
+		if (!rdoc) {
+			log_event("render-open", err, NULL);
+			*why = abandon ? PIC_STOPPED : PIC_MEMORY;
+			return 0;
+		}
+	}
+	draw_page = n;
+	draw_rows = 0;
+	do {
+		unsigned long t0 = tos_ms();
+
+		rc = o->page(rdoc, n, w, y0, &pg);
+		if (rc) {
+			free(pn);
+			draw_page = -1;
+			*why = rc == -2 ? PIC_STOPPED : PIC_MEMORY;
+			return 0;
+		}
+		{
+			char a[64];
+
+			snprintf(a, sizeof a, "%ld ms %d rows from %d glyphs %ld images %ld", tos_ms() - t0, pg.rows, y0,
+				 pg.glyphs, pg.images);
+			log_event("page-drawn", a, NULL);
+		}
+		draw_rows = 1;
+		rows_t0 = tos_ms();
+		if (pal && pal->n >= 2 && pal->n <= 16 && planes >= 1 && planes <= 4 && o->size >= (short)sizeof(ROVL) && !pn)
+			pn = malloc((size_t)((w + 15) / 16 * 2) * planes * 8);
+		for (i = 0; i < pg.rows && y < h; i++, y++) {
+			/* 2 to 16 colours: eight rows at a time dithered by
+			   render.ovl into the screen's planes (common's dither as
+			   68000 code took 35 s of a page's 39 on Falcon-4, and dotted
+			   the white: 248; the pens put into planes a pixel at a
+			   time were seconds more) */
+			if (pn) {
+				int k = i % 8;
+
+				unsigned long q = tos_ms();
+
+				if (k == 0 && o->pens(rdoc, (const unsigned char (*)[3])pal->rgb, pal->n, planes, i,
+						      pg.rows - i < 8 ? pg.rows - i : 8, pn)) {
+					free(pn);
+					pn = NULL;
+				}
+				pens_ms += tos_ms() - q;
+				if (pn)
+					planes_row(u, y, pn + (long)k * ((w + 15) / 16 * 2) * planes);
+				else
+					row(u, y, pg.px + (long)i * pg.w);
+			} else
+				row(u, y, pg.px + (long)i * pg.w);
+			if ((y & 7) == 7 && slice_up(NULL)) {
+				free(pn);
+				draw_page = -1;
+				*why = PIC_STOPPED;
+				return 0;
+			}
+		}
+		{
+			char a[64];
+
+			snprintf(a, sizeof a, "%lu ms, pens %lu", tos_ms() - rows_t0, pens_ms);
+			log_event("page-shown", a, NULL);
+		}
+		y0 += pg.rows;
+	} while (pg.rows > 0 && y0 < pg.h && y < h);
+	if (y < h) {
+		/* (the page a row shorter than its line said: white) */
+		unsigned short *wr = malloc((size_t)w * 2);
+
+		if (wr) {
+			memset(wr, 0xFF, (size_t)w * 2);
+			while (y < h)
+				row(u, y++, wr);
+			free(wr);
+		}
+	}
+	free(pn);
+	draw_page = -1;
+	return 1;
+}
+
+/* a page being drawn, not shown any more (View > Pages off): stopped, its
+   slot let go */
+static void page_pic_stop(void)
+{
+	if (!rpic || rpic->obj < PICS_PAGE)
+		return;
+	abandon = 1;
+	while (!pdone) {
+		running = &pic_co;
+		coro_switch(&main_co, &pic_co);
+		running = NULL;
+		pics_band();
+	}
+	free(rpic_std);
+	rpic_std = NULL;
+	pics_release(rpic);
+	rpic = NULL;
+	abandon = 0;
+	log_event("picture", "page-stopped", NULL);
+}
+
+int doc_pic_drawing(void)
+{
+	return rpic && rpic->obj >= PICS_PAGE;
 }
 
 /* the page and the picture under way given up (their memory freed as
@@ -341,13 +554,28 @@ int doc_pic_start(void)
 
 	if (!doc || rpic || !(e = pics_next()))
 		return 0;
-	if (!pic_stack && !(pic_stack = malloc(PIC_STACK))) {
-		e->state = PICS_FAILED;
-		e->why = PIC_MEMORY;
-		return 0;
+	{
+		/* its stack: 12 KB, 64 KB once pages are drawn (render.ovl's);
+		   between pictures the decoder waits at its loop's top, so it
+		   starts again on a bigger one */
+		long need = drawn ? DRAW_STACK : PIC_STACK;
+
+		if (pic_stack && pic_stack_size < need) {
+			free(pic_stack);
+			pic_stack = NULL;
+			pic_started = 0;
+		}
+		if (!pic_stack) {
+			if (!(pic_stack = malloc(need))) {
+				e->state = PICS_FAILED;
+				e->why = PIC_MEMORY;
+				return 0;
+			}
+			pic_stack_size = need;
+		}
 	}
 	if (!pic_started) {
-		coro_start(&pic_co, pic_stack, PIC_STACK, decoder);
+		coro_start(&pic_co, pic_stack, pic_stack_size, decoder);
 		pic_started = 1;
 	}
 	rpic_pal = pics_palette();
@@ -363,6 +591,7 @@ int doc_pic_start(void)
 	pdone = 0;
 	pic_poll = pic_turn;
 	pics_wait = band_wait;
+	pics_page_rows = page_rows;
 	return 1;
 }
 
@@ -454,6 +683,15 @@ int doc_pic_progress(long *page, long *made, long *of)
 	*page = rpic->page;
 	*made = rpic->made;
 	*of = rpic->h;			/* (made whole, by the DSP or as a standard bitmap: 0 until done) */
+	if (rpic->obj >= PICS_PAGE) {
+		/* a page drawn: its content read, four fifths; its rows shown, the rest */
+		const ROVL *o = rdraw_ovl();
+
+		*page = rpic->obj - PICS_PAGE;
+		*of = 1000;
+		*made = draw_rows ? 800 + rpic->made * 200 / (rpic->h > 0 ? rpic->h : 1) :
+			o && rdoc && o->size >= (short)sizeof(ROVL) ? o->progress(rdoc) * 8 / 10 : 0;
+	}
 	return 1;
 }
 
@@ -539,6 +777,11 @@ void doc_close(void)
 	if (pstore_open)
 		ts_close(&pstore);
 	pstore_open = pages_mode = pages_have = 0;
+	if (rdoc)
+		rdraw_ovl()->close(rdoc);
+	rdoc = NULL;
+	rdraw_unload();			/* (its 676 KB back for the next document's text) */
+	drawn = 0;
 	free(pdbl);
 	pdbl = NULL;
 	pdf_close(doc);
@@ -626,7 +869,11 @@ static long open_done(void)
 	doc = odoc;
 	odoc = NULL;
 	npages = onpages;
-	pstore_open = doc->prepared && ts_open(&pstore, onpages, 32L * 1024, "") == 0;
+	/* any other PDF drawn as printed where render.ovl can be (stage 2) */
+	drawn = !doc->prepared && rdraw_machine() && pf_size(rdraw_path) > 0;
+	if (!doc->prepared && rdraw_machine())
+		log_event("pages-drawn", drawn ? "1" : "0", rdraw_path);
+	pstore_open = (doc->prepared || drawn) && ts_open(&pstore, onpages, 32L * 1024, "") == 0;
 	cache_kb = budget / 1024;
 	retried_page = retried_obj = -1;
 	next = done = 0;
@@ -704,6 +951,8 @@ long doc_slice(unsigned long ms)
 			len = 0;
 		pages_note(n, &rprep);
 	} else {
+		if (drawn)
+			pages_drawn_note(n);
 		/* the soft break as CR in the store: the conversion keeps CR, LF and Tab only */
 		for (i = 0; i < rt->text.len; i++)
 			if (rt->text.s[i] == '\v')

@@ -291,6 +291,17 @@ def load(src, script):
     return mod
 
 
+TRANSLATE_GROUP = "aera-translate"       # who may use translategate's local socket
+
+
+def join_translate(pi, user):
+    """user (webgate, pdfgate) may use translategate's local socket: in its
+    group, made here if translate isn't installed (yet)"""
+    if not pi.ok("getent", "group", TRANSLATE_GROUP):
+        pi.run("groupadd", "--system", TRANSLATE_GROUP)
+    pi.run("usermod", "-a", "-G", TRANSLATE_GROUP, user)
+
+
 class Gateway:
     """emailgate, ecalgate or eftpgate: a script in OPT run as a service
     by a user of its own"""
@@ -1004,7 +1015,8 @@ class Web(Gateway):
 
     def before_start(self, pi):
         """aerapens and aerajsc in place before webgate starts, so that its
-        first look finds them"""
+        first look finds them; translategate's socket open to it"""
+        join_translate(pi, self.name)
         self.jsc_start(pi)
         if not self.pens_built:
             return
@@ -1155,7 +1167,9 @@ class Pdf(Gateway):
 
     def before_start(self, pi):
         """aerapdf, its fonts and which EPDF it is from, in place before
-        pdfgate starts"""
+        pdfgate starts; translategate's socket open to it (aerapdf's
+        translator)"""
+        join_translate(pi, self.name)
         if not self.built or self.built == "kept":
             self.built = None
             return
@@ -1347,7 +1361,7 @@ class Translate(Gateway):
             raise Failed(str(e))
 
     LOCAL = "/run/translategate/local.sock"
-    GROUP = "aera-translate"                # the gateways that may use the local socket
+    GROUP = TRANSLATE_GROUP                 # the gateways that may use the local socket
 
     UNITS_LANGS = ("translategate-langs.path", "translategate-langs.service")
 

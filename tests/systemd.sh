@@ -297,10 +297,8 @@ journalctl -u pdfgate --no-pager | grep -q "127.0.0.1 200, " || fail "no log lin
 "$GW/aera-gateway" update > "$W/update.out" 2>&1 || { cat "$W/update.out"; fail "update with pdf"; }
 ! grep -q "Building aerapdf" "$W/update.out" || fail "the same pdf/ built again"
 running pdfgate
-"$GW/aera-gateway" remove pdf
-[ ! -e /etc/systemd/system/pdfgate.service ] || fail "remove pdf left its unit"
-[ ! -e /opt/aera-gateway-pdf ] || fail "remove pdf left aerapdf"
-ok "pdf"
+id -nG pdfgate | grep -qw aera-translate || fail "pdfgate isn't in aera-translate"
+ok "pdf (removed after translate, which it uses)"
 
 echo "== translate: translategate with the stand-in engine (no model in CI)"
 "$GW/aera-gateway" install translate --engine stand-in --allow 127.0.0.1
@@ -321,8 +319,34 @@ sys.path.insert(0, sys.argv[1])
 import translateclient as tc
 text, used, same = tc.translate("Hallo Wilhelmina, das ist gut.", "en")
 assert (text, used, same) == ("en: HALLO WILHELMINA, DAS IST GUT.", "de", False), (text, used, same)
-print("ok: the local socket, as webgate and pdfgate will use it")
+print("ok: the local socket, as webgate and pdfgate use it")
 PY
+# pdfgate's translate=CODE: aerapdf runs translateclient as pdfgate's user,
+# which reaches the local socket through its group (joined at its install)
+python3 - "$W" <<'PY'
+import socket, sys, zlib, re
+w = sys.argv[1]
+pdf = open(w + "/Wilhelmina.pdf", "rb").read()
+s = socket.create_connection(("127.0.0.1", 8380), timeout=120)
+s.sendall(b"POST /convert?translate=de&name=Wilhelmina.pdf HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n"
+          % len(pdf) + pdf)
+r = b""
+while True:
+    b = s.recv(65536)
+    if not b:
+        break
+    r += b
+at = r.rfind(b"HTTP/1.1 200")
+assert at >= 0, r[-300:]
+head, _, body = r[at:].partition(b"\r\n\r\n")
+assert b"\r\nX-Translate-From: en\r\n" in head, head
+assert body.count(b"/Translation ") == 3, body.count(b"/Translation ")
+assert body != open(w + "/direct.pdf", "rb").read()
+print("ok: a PDF converted and translated (translate=de), through translategate's local socket")
+PY
+"$GW/aera-gateway" remove pdf
+[ ! -e /etc/systemd/system/pdfgate.service ] || fail "remove pdf left its unit"
+[ ! -e /opt/aera-gateway-pdf ] || fail "remove pdf left aerapdf"
 [ -e /opt/aera-gateway/translate-phrases.tsv ] || fail "translate-phrases.tsv isn't in /opt"
 python3 - <<'PY'
 import socket

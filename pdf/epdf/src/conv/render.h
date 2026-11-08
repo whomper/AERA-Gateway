@@ -37,6 +37,7 @@ typedef struct {
 	long glyphs, glyphs_missed, images, images_missed;
 	int mono_glyphs;		/* glyphs hinted, a bit a pixel (the mono page's: grey edges
 					   dithered broke 10-pixel text into dots, Erez, 4 Nov 2026) */
+	long image_ms;			/* the page's pictures' decode, in render_clock's ms */
 	long canvas_max;		/* set by the caller: the canvas's most bytes (0 any): a page
 				   taller is drawn a band at a time (render_page_from) */
 } RPAGE;
@@ -48,6 +49,8 @@ int render_init(RPAGE *r, PDOC *d, const char *fontdir);
    least lately used let go first; 0 (the default): any */
 extern long render_font_budget;
 void render_done(RPAGE *r);
+/* the caller's clock in ms (NULL: image_ms isn't kept) */
+extern unsigned long (*render_clock)(void);
 /* page n drawn width pixels wide (its height from its shape): r->c
    holds it; 0 ok */
 int render_page(RPAGE *r, long n, int width);

@@ -9,6 +9,7 @@
 #   make icons      icons/, src/gem/icon*.h and src/econv/icon*.h from common/icons/EPDF.txt, EPDFDOC.txt
 #                   (and ECONVERT.txt when AERA-Atari has it)
 #   make gui-test   EPDF.PRG driven in Hatari (tests/hatari/gui.py)
+#   make rovl-test  render.ovl, the page as printed (stage 2), loaded and drawn in Hatari (tests/hatari/rovl.py)
 #   make files-test each file's opens on a 1 MB ST against the budget (tests/hatari/files.py, 6.5)
 #   big documents on a 1 MB ST: python3 tests/hatari/big.py WORK [NAME...] (the corpus)
 #   make measure-atari  the stage 0 measuring programs (MEASURE.PRG and the others)
@@ -29,7 +30,7 @@ COMMON_SRC = common/src/inflate.c common/src/util.c common/src/futil.c
 BSSL_SRC = $(addprefix $(BSSL)/src/, hash/md5.c hash/sha2small.c hash/sha2big.c \
            symcipher/aes_big_cbcdec.c symcipher/aes_big_cbcenc.c symcipher/aes_big_dec.c symcipher/aes_big_enc.c symcipher/aes_common.c \
            codec/dec32be.c codec/enc32be.c codec/dec32le.c codec/enc32le.c codec/dec64be.c codec/enc64be.c)
-HDRS     = $(wildcard src/*.h src/conv/*.h src/gem/*.h src/view/*.h src/econv/*.h common/src/*.h common/ui/*.h common/atari/*.h common/atari/include/*.h)
+HDRS     = $(wildcard src/*.h src/conv/*.h src/rovl/*.h src/gem/*.h src/view/*.h src/econv/*.h common/src/*.h common/ui/*.h common/atari/*.h common/atari/include/*.h)
 
 .PHONY: all test measure dist help clean atari measure-atari fttest imgbench gui-test files-test viewtest
 all: build/pdfmeasure build/pdftext build/pdfmem build/glyphjob build/imgdump binary/EPDF.PRG
@@ -57,6 +58,12 @@ build/glyphjob: tools/glyphjob.c src/pdfio_host.c $(PDF_SRC) $(COMMON_SRC) $(BSS
 build/imgdump: tools/imgdump.c src/pdfio_host.c $(PDF_SRC) $(COMMON_SRC) $(BSSL_SRC) $(HDRS) | build
 	$(CC) $(HCFLAGS) -o $@ tools/imgdump.c src/pdfio_host.c $(PDF_SRC) $(COMMON_SRC) $(BSSL_SRC)
 
+build/test_trpara: tests/test_trpara.c src/view/trpara.c src/view/trpara.h common/src/charset.c | build
+	$(CC) $(HCFLAGS) -Isrc/view -fsanitize=address,undefined -o $@ tests/test_trpara.c src/view/trpara.c common/src/charset.c
+
+build/test_pens: tests/test_pens.c src/rovl/pens.c src/rovl/pens.h | build
+	$(CC) $(HCFLAGS) -Isrc/rovl -fsanitize=address,undefined -o $@ tests/test_pens.c src/rovl/pens.c
+
 build/test_ccitt: tests/test_ccitt.c src/ccitt.c src/ccitt.h src/ccitt_tab.h | build
 	$(CC) $(HCFLAGS) -fsanitize=address,undefined -o $@ tests/test_ccitt.c src/ccitt.c
 
@@ -77,9 +84,12 @@ build/test_tstore build/test_docview: build/test_%: tests/test_%.c $(VIEW_TEST_S
 build/test_xe: tests/test_xe.c $(PDF_SRC) $(COMMON_SRC) $(BSSL_SRC) $(HDRS) | build
 	$(CC) $(HCFLAGS) -fsanitize=address,undefined -o $@ tests/test_xe.c src/pdfio_host.c $(PDF_SRC) $(COMMON_SRC) $(BSSL_SRC)
 
-test: build/test_xe build/test_ccitt build/test_textview build/test_inf build/test_tstore build/test_docview build/test_search build/pdftext build/econvert
+test: build/test_xe build/test_ccitt build/test_textview build/test_inf build/test_tstore build/test_docview build/test_search build/pdftext build/econvert build/test_pens build/test_trpara
 	build/test_xe
+	build/test_pens
+	build/test_trpara
 	python3 tests/convtext.py
+	python3 tests/translate.py
 	python3 tests/ccitt.py
 	python3 tests/glyphwise.py
 	python3 tests/crypt.py
@@ -91,6 +101,7 @@ test: build/test_xe build/test_ccitt build/test_textview build/test_inf build/te
 	@if [ -f build/m68000/epdf.elf ]; then python3 common/tools/oddaccess.py build/m68000/epdf.elf; fi
 	tools/nofpu.sh build/m68000/epdf.elf build/m68030/measure.elf build/m68030/fttest.elf
 	@if [ -f build/m68030/econvert.elf ]; then tools/nofpu.sh build/m68030/econvert.elf; fi
+	@if [ -f build/m68030ovl/render.elf ]; then tools/nofpu.sh build/m68030ovl/render.elf; fi
 measure: build/pdfmeasure
 	@echo "see tools/measure.py"
 clean:
@@ -189,7 +200,7 @@ $(eval $(call FT_BUILD,m68030))
 FT_OBJS = $(patsubst $(FT)/src/%.c,ft/%.o,$(filter $(FT)/src/%,$(FT_SRC))) ft/epdf/ftsystem.o ft/setjmp.o
 
 # EConvert's converter on this computer (src/conv/, FreeType built for the host in build/host-ft)
-CONV_SRC = src/conv/conv.c src/conv/render.c src/conv/raster.c src/conv/cvjpeg.c src/conv/deflate.c src/conv/quant.c src/conv/jpegenc.c common/src/charset.c
+CONV_SRC = src/conv/conv.c src/conv/render.c src/conv/raster.c src/conv/cvjpeg.c src/conv/deflate.c src/conv/quant.c src/conv/jpegenc.c common/src/charset.c src/view/trpara.c
 HFT_OBJS = $(patsubst $(FT)/src/%.c,build/host-ft/%.o,$(filter $(FT)/src/%,$(FT_SRC))) build/host-ft/epdf/ftsystem.o
 build/host-ft/%.o: $(FT)/src/%.c
 	@mkdir -p $(dir $@)
@@ -212,7 +223,7 @@ build/host-lj/%.o: $(LJ)/src/%.c
 CPIC_SRC = src/pdfimg.c src/ccitt.c src/rscale.c common/src/pic.c common/src/png.c common/src/pic_lj8.c \
            common/third_party/nsgif/src/gif.c common/third_party/nsgif/src/lzw.c
 build/econvert: tools/econvert.c $(CONV_SRC) src/pdfio_host.c $(PDF_SRC) $(COMMON_SRC) $(BSSL_SRC) $(CPIC_SRC) $(HFT_OBJS) $(HLJ_OBJS) $(HDRS) src/conv/*.h | build
-	$(CC) $(HCFLAGS) -DPDF_DRAW -Isrc/conv -I$(FT)/include '-DFT_CONFIG_OPTIONS_H="epdf/ftoption.h"' '-DFT_CONFIG_MODULES_H="epdf/ftmodule.h"' -I$(FT) \
+	$(CC) $(HCFLAGS) -DPDF_DRAW -Isrc/conv -Isrc/view -I$(FT)/include '-DFT_CONFIG_OPTIONS_H="epdf/ftoption.h"' '-DFT_CONFIG_MODULES_H="epdf/ftmodule.h"' -I$(FT) \
 	  $(LJ_DEFS) -Icommon/third_party/nsgif/include -Icommon/third_party/nsgif/src \
 	  -o $@ tools/econvert.c $(CONV_SRC) src/conv/cvio_host.c src/pdfio_host.c $(PDF_SRC) $(COMMON_SRC) $(BSSL_SRC) $(CPIC_SRC) $(HFT_OBJS) $(HLJ_OBJS)
 
@@ -291,7 +302,7 @@ binary/MEAS30F.PRG: build/m68030/measure.elf | binary
 	PRGFLAGS=7 python3 common/tools/elf2tos.py $< $@
 binary/FTTEST30F.PRG: build/m68030/fttest.elf | binary
 	PRGFLAGS=7 python3 common/tools/elf2tos.py $< $@
-atari: binary/EPDF.PRG binary/LAUNCH.PRG binary/ECONVERT.PRG
+atari: binary/EPDF.PRG binary/LAUNCH.PRG binary/ECONVERT.PRG binary/render.ovl
 measure-atari: binary/MEASURE.PRG binary/MEAS30.PRG binary/MEAS30F.PRG
 fttest: binary/FTTEST.PRG binary/FTTEST30.PRG
 
@@ -300,9 +311,9 @@ fttest: binary/FTTEST.PRG binary/FTTEST30.PRG
 # its drawing hooks, the renderer, FreeType, libjpeg-turbo, all soft-float
 CV_ATARI_SRC = $(CONV_SRC) src/conv/cvio_tos.c src/pdfio_tos.c $(PDF_SRC) $(COMMON_SRC) $(BSSL_SRC) \
                src/pdfimg.c src/ccitt.c src/rscale.c common/src/pic.c common/src/png.c common/src/pic_lj8.c \
-               $(T)/nsgif/src/gif.c $(T)/nsgif/src/lzw.c $(LJ_SRC) $(RT_C)
+               $(T)/nsgif/src/gif.c $(T)/nsgif/src/lzw.c common/atari/dspjpeg.c $(LJ_SRC) $(RT_C)
 build/m68030cv/%.o: XFLAGS += -DPDF_DRAW -DPIC_LIBJPEG -DNO_GETENV -DNO_PUTENV -DAERA_NO_FLOAT -fwrapv -I$(LJ)/src -I$(LJ)/config \
-                              -I$(T)/nsgif/include -I$(T)/nsgif/src -Isrc/conv $(FT_INC) '-DFT_CONFIG_OPTIONS_H="epdf/ftoption.h"' \
+                              -I$(T)/nsgif/include -I$(T)/nsgif/src -Isrc/conv -Isrc/view $(FT_INC) '-DFT_CONFIG_OPTIONS_H="epdf/ftoption.h"' \
                               '-DFT_CONFIG_MODULES_H="epdf/ftmodule.h"'
 build/m68030cv/$(LJ)/%.o build/m68030cv/$(T)/%.o: XFLAGS += -w
 build/m68030cv/common/src/inflate.o build/m68030cv/src/pdffilt.o: XFLAGS += -DINFLATE_ASM
@@ -314,6 +325,35 @@ binary/CONVTEST.PRG: $(CV_ATARI_OBJ) build/m68030cv/atari/convtest.o build/m6803
 	  -Wl,--build-id=none -Wl,-z,noexecstack -Wl,--no-warn-rwx-segments -o build/m68030/convtest.elf \
 	  build/m68030/crt0.o build/m68030/nf.o build/m68030cv/atari/convtest.o $(CV_ATARI_OBJ) -lgcc
 	PRGFLAGS=7 python3 common/tools/elf2tos.py build/m68030/convtest.elf $@
+
+# ---------------------------------------------------------------- render.ovl (stage 2)
+# The page as printed, drawn on a Falcon or TT (src/rovl/rovl.h): the
+# renderer and the reader as CONVTEST.PRG has them, built for the 68030,
+# loaded by EPDF.PRG with common's ovl.c (an ST never loads it); its heap
+# is the program's (libc.c with LIBC_NO_HEAP)
+ROVL_OBJ = build/m68030cv/src/rovl/head.o build/m68030cv/src/rovl/pens.o build/m68030ovl/libc.o \
+           $(filter-out build/m68030cv/common/atari/libc.o,$(CV_ATARI_OBJ))
+build/m68030cv/src/rovl/head.o build/m68030cv/src/rovl/pens.o: XFLAGS += -Isrc/rovl -DROVL_VERSION=\"$(VERSION_STR)\"
+build/m68030ovl/libc.o: common/atari/libc.c $(HDRS)
+	@mkdir -p $(dir $@)
+	$(XCC) $(XFLAGS) -DLIBC_NO_HEAP -c -o $@ $<
+build/m68030ovl/%: XCPU = -m68030 -msoft-float
+binary/render.ovl: XCPU = -m68030 -msoft-float
+binary/render.ovl: $(ROVL_OBJ) common/tlsovl/ovl.ld | binary
+	$(XCC) $(XCPU) -nostdlib -static -no-pie -Wl,--emit-relocs -Wl,-T,common/tlsovl/ovl.ld -Wl,-e,rovl \
+	  -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,noexecstack -Wl,--no-warn-rwx-segments \
+	  -o build/m68030ovl/render.elf $(ROVL_OBJ) -lgcc
+	python3 common/tools/elf2tos.py build/m68030ovl/render.elf $@
+
+# ROVLTEST.PRG (tests/hatari/rovl.py): render.ovl loaded and its pages drawn
+# as EPDF.PRG would (rdraw.c, the 68000 build), without EPDF's window
+ROVLT_OBJ = $(addprefix build/m68000/,atari/rovltest.o src/gem/rdraw.o common/src/ovl.o src/pdfio_tos.o \
+              $(patsubst %.c,%.o,$(RT_C)))
+build/m68000/atari/rovltest.o build/m68000/src/gem/rdraw.o: XFLAGS += -Isrc/rovl -Isrc/gem
+binary/ROVLTEST.PRG: XCPU = -m68000 -mstrict-align -fdisable-tree-bswap
+binary/ROVLTEST.PRG: $(ROVLT_OBJ) build/m68000/crt0.o build/m68000/nf.o common/atari/link.ld | binary
+	$(XCC) $(XLDFLAGS) -o build/m68000/rovltest.elf build/m68000/crt0.o build/m68000/nf.o $(ROVLT_OBJ) -lgcc
+	python3 common/tools/elf2tos.py build/m68000/rovltest.elf $@
 
 # ---------------------------------------------------------------- ECONVERT.PRG (the converter's window)
 # One program for every machine (Erez, 7 Nov 2026: Gateway mode on an ST
@@ -359,7 +399,7 @@ build/m68000/version.c: FORCE | build/m68000
 	@if cmp -s $@.new $@; then rm $@.new; else mv $@.new $@; fi
 FORCE:
 .PHONY: FORCE
-GEM_SRC = src/gem/epdf.c src/gem/doc.c src/gem/textwin.c src/gem/badge.c src/gem/find.c src/gem/font.c src/gem/pics.c src/gem/gemui.c src/gem/menu.c src/gem/about.c \
+GEM_SRC = src/gem/epdf.c src/gem/doc.c src/gem/rdraw.c common/src/ovl.c src/gem/textwin.c src/gem/badge.c src/gem/find.c src/gem/font.c src/gem/pics.c src/gem/gemui.c src/gem/menu.c src/gem/about.c \
           src/view/textview.c src/view/docview.c src/view/tstore.c src/view/inf.c src/view/search.c common/ui/bgwork.c common/ui/twin.c \
           src/pdfimg.c src/ccitt.c src/rscale.c $(PIC_SRC) \
           common/atari/gem.c common/atari/crash.c common/ui/mbar.c common/ui/aboutbox.c common/ui/aboutline.c \
@@ -370,7 +410,7 @@ GEM_SRC = src/gem/epdf.c src/gem/doc.c src/gem/textwin.c src/gem/badge.c src/gem
 GEM_OBJ = $(patsubst %.c,build/m68000/%.o,$(GEM_SRC)) build/m68000/version.o build/m68000/sting_s.o
 build/m68000/sting_s.o: common/atari/sting.S | build/m68000
 	$(XCC) -m68000 -c -o $@ $<
-$(patsubst %.c,build/m68000/%.o,$(GEM_SRC)): XFLAGS += -Isrc/gem -Isrc/view -Icommon/ui -I$(T)/tjpgd -I$(T)/nsgif/include -I$(T)/nsgif/src
+$(patsubst %.c,build/m68000/%.o,$(GEM_SRC)): XFLAGS += -Isrc/gem -Isrc/rovl -Isrc/view -Icommon/ui -I$(T)/tjpgd -I$(T)/nsgif/include -I$(T)/nsgif/src
 # the Falcon's DSP for JPEGs, from pic.c's own header reader (one 68000
 # program for every Atari, guideline 7.4); no PNG or GIF decoder (a PDF's
 # pictures are JPEG or its own streams: 20 KB of the resident size, the
@@ -436,7 +476,7 @@ binary/EPDF.HYP: docs/GUIDE.md tools/mkhelp.py VERSION docs/front.json docs/help
 # what a user needs, by name: the program, its guide, the licences and the icons.
 # Every file a release carries, and every folder in its zip, is named in
 # lowercase (guidelines 6.6: on MiNT's ext2 EPDF.INF and epdf.inf are two files)
-DIST  := binary/EPDF.PRG binary/EPDF.HYP binary/EPDF.REF NOTICES.TXT
+DIST  := binary/EPDF.PRG binary/render.ovl binary/EPDF.HYP binary/EPDF.REF NOTICES.TXT
 ICONS := icons/EPDF.RSC icons/EPDFNV.RSC icons/EPDF.ICN icons/EPDFMK.ICN icons/EPDFDOC.RSC icons/EPDFDNV.RSC \
          icons/ECONVERT.RSC icons/ECONVNV.RSC icons/ECONVERT.ICN icons/ECONVMK.ICN
 lc = $(shell echo '$(notdir $(1))' | tr A-Z a-z)
@@ -444,7 +484,7 @@ lc = $(shell echo '$(notdir $(1))' | tr A-Z a-z)
 # (third_party/liberation, the OFL's text beside them), in the zip's econvert folder
 EC_DIST    := binary/ECONVERT.PRG
 EC_FONTS   := $(wildcard third_party/liberation/fonts/*.ttf) third_party/liberation/OFL.txt
-dist: binary/EPDF.PRG binary/ECONVERT.PRG help
+dist: binary/EPDF.PRG binary/render.ovl binary/ECONVERT.PRG help
 	rm -rf dist
 	mkdir -p dist/zip/icons dist/zip/econvert/fonts
 	$(foreach f,$(DIST),cp $(f) dist/$(call lc,$(f)) && cp $(f) dist/zip/$(call lc,$(f)) &&) true
@@ -464,12 +504,17 @@ gui-test: binary/EPDF.PRG binary/LAUNCH.PRG
 files-test: binary/EPDF.PRG binary/LAUNCH.PRG
 	python3 tests/hatari/files.py build/files ST-1
 
-# the Pi converter's exchange (src/pigate.c) against a real pdfgate on this
-# computer (AERA-Gateway's gateway/, PDFGATE=its folder) and this build's
-# converter: byte for byte the direct one, a stop, a refusal (docs/PI-GATEWAY.md)
+# the Gateway's exchange (src/pigate.c) against EPDF's stand-in for it
+# (tests/pigate/fakegate.py) and this build's converter: byte for byte the
+# direct one, a stop, a refusal (docs/PI-GATEWAY.md): against pdfgate.py from
+# the read-only gateway/ copy (tools/sync-gateway.sh), which EPDF tests at every
+# change; PDFGATE=FOLDER another one, PDFGATE=none EPDF's stand-in
 pi-test: build/econvert
-	tests/pigate/run.sh $(PDF)
+	PDFGATE=$(PDFGATE) tests/pigate/run.sh $(PDF)
 .PHONY: pi-test
+rovl-test: build/econvert binary/ROVLTEST.PRG binary/render.ovl
+	python3 tests/hatari/rovl.py build/rovl-test
+.PHONY: rovl-test
 
 # docs/screenshot.png and docs/help/WINDOW.IMG again, from Hatari (commit them)
 shots: binary/EPDF.PRG binary/LAUNCH.PRG
@@ -496,7 +541,7 @@ build/aprof/EPDF.PRG: binary/EPDF.PRG build/aprof/gem.o
 # the same with textwin.c's marks ("EPDF t copy 35", "t rows 15"...), for a breakdown
 build/times/textwin.o: src/gem/textwin.c $(HDRS) | build
 	mkdir -p build/times
-	$(XCC) $(XFLAGS) -m68000 -mstrict-align -fdisable-tree-bswap -Isrc/gem -Isrc/view -Icommon/ui -DEPDF_TIMES -c -o $@ $<
+	$(XCC) $(XFLAGS) -m68000 -mstrict-align -fdisable-tree-bswap -Isrc/gem -Isrc/rovl -Isrc/view -Icommon/ui -DEPDF_TIMES -c -o $@ $<
 build/times/EPDF.PRG: binary/EPDF.PRG build/aprof/gem.o build/times/textwin.o
 	$(AES_LINK) -o build/times/epdf.elf \
 	  build/m68000/crt0_epdf.o build/m68000/nf.o build/m68000/crash_s.o build/m68000/coro.o \
@@ -524,7 +569,7 @@ econv-speed-test: build/aprof/ECONVERT.PRG binary/LAUNCH.PRG
 # every 25 pages and at the end, for sizing READ_STACK and PIC_STACK
 build/stk/doc.o: src/gem/doc.c $(HDRS) | build
 	mkdir -p build/stk
-	$(XCC) $(XFLAGS) -m68000 -mstrict-align -fdisable-tree-bswap -Isrc/gem -Isrc/view -Icommon/ui -I$(T)/tjpgd \
+	$(XCC) $(XFLAGS) -m68000 -mstrict-align -fdisable-tree-bswap -Isrc/gem -Isrc/rovl -Isrc/view -Icommon/ui -I$(T)/tjpgd \
 	  -DEPDF_STACKS -c -o $@ $<
 build/stk/EPDF.PRG: binary/EPDF.PRG build/stk/doc.o
 	$(XCC) -m68000 -nostdlib -static -no-pie -Wl,--emit-relocs -Wl,-T,common/atari/link.ld -Wl,--gc-sections \

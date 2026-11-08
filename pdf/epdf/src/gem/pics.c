@@ -195,6 +195,9 @@ typedef struct {
 
 static SINK *sink;			/* the one being made */
 void (*pics_wait)(void);
+int (*pics_page_rows)(long page, int w, int h, void (*row)(void *u, long y, const unsigned short *px),
+		      void (*planes_row)(void *u, long y, const unsigned char *planes), const PIC_PAL *pal,
+		      int planes, void *u, int *why);
 
 static void *bm_alloc(long bytes, int *heap);
 
@@ -365,6 +368,29 @@ static void sink_row(void *u, long y, const unsigned short *px)
 	} else
 		pic_dither_row(k->dt, px, NULL, k->pens);
 	put_pens(k, y);
+}
+
+/* a page drawn: its row's planes as render.ovl dithered them (the
+   standard format's rows: one plane straight into the bitmap, more into
+   the band vr_trnfm turns) */
+static void sink_planes(void *u, long y, const unsigned char *pl)
+{
+	SINK *k = u;
+	PICE *e = k->e;
+	long rb = k->wd * 2;
+	int p;
+
+	if (!bm_first(k))
+		return;
+	if (k->nplanes == 1) {
+		memcpy((unsigned char *)e->bm.fd_addr + y * k->row, pl, (size_t)rb);
+		e->made = y + 1;
+		e->ready = y + 1;
+		return;
+	}
+	for (p = 0; p < k->nplanes; p++)
+		memcpy(k->band + (p * BAND + y - k->b0) * rb, pl + p * rb, (size_t)rb);
+	band_row(k, y);
 }
 
 /* the row's pens into the bitmap (one plane) or the band (the rest) */
@@ -568,7 +594,7 @@ int pics_rows(PDOC *d, PICE *e, int nplanes, PIC_PAL *pl, int *why)
 		*why = PIC_MEMORY;
 		return 0;
 	}
-	if (nplanes != 16) {
+	if (nplanes != 16 && e->obj < PICS_PAGE) {
 		/* already dithered to colours the screen has (EConvert's whole
 		   pages: TOS's 16, or black and white): each colour its pen
 		   (a page of 640 x 828 in 16 colours, dithered again, took
@@ -603,7 +629,15 @@ int pics_rows(PDOC *d, PICE *e, int nplanes, PIC_PAL *pl, int *why)
 			pic_dither_sharp(k.dt);	/* (common's: the dither's nearest pens) */
 	}
 	sink = &k;
-	{
+	if (e->obj >= PICS_PAGE) {
+		/* a page drawn as printed: its rows dithered as a photo's */
+		how = pics_page_rows ? pics_page_rows(e->obj - PICS_PAGE, e->w, e->h, sink_row, sink_planes,
+						      nplanes <= 4 && !e->flip ? pl : NULL, nplanes, &k, why) : -1;
+		if (how < 0) {
+			*why = PIC_UNSUPPORTED;
+			how = 0;
+		}
+	} else {
 		POBJ *o = k.direct && !e->flip ? pdf_get(d, e->obj) : NULL;
 
 		k.bpc = o ? (int)pd_int(d, o, "BitsPerComponent", 8) : 0;

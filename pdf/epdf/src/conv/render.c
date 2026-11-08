@@ -113,16 +113,18 @@ struct RFONTS {
 		long prog;		/* the program's object, or -1 a standard font */
 		char key[48];		/* a standard font's file */
 		FT_Face face;
-		unsigned char *buf;
-		long len;
+		unsigned char *buf;	/* the program, or (disk) its RSTREAM */
+		long len;		/* the program's bytes held (a stream's: 0) */
 		unsigned long used;
 		int bad;		/* FreeType refused it */
+		int disk;		/* read from its file as FreeType asks */
 	} e[24];
 	unsigned long clock;
 };
 
 /* the font programs' bytes kept at most (render_font_budget; 0: any) */
 long render_font_budget;
+unsigned long (*render_clock)(void);
 
 typedef struct {
 	RPAGE *r;
@@ -727,36 +729,71 @@ static const char *std_file(const char *base)
 	return f;
 }
 
-static unsigned char *read_file(const char *path, long *len)
+/* a standard font read from its file as FreeType asks for its parts,
+   through a window of 4 KB, never held whole: Liberation's files are some
+   400 KB each, and a 4 MB Falcon drawing a page beside render.ovl had no
+   room for two (the Times on the showcase's last page wasn't drawn,
+   7 Nov 2026) */
+#define RS_WIN 4096
+typedef struct {
+	FT_StreamRec st;
+	void *h;
+	long woff, wlen;
+	unsigned char win[RS_WIN];
+} RSTREAM;
+
+static unsigned long rs_read(FT_Stream st, unsigned long off, unsigned char *buf, unsigned long n)
 {
-	long size = 0, got;
+	RSTREAM *s = (RSTREAM *)st;
+
+	if (n == 0)
+		return off <= st->size ? 0 : 1;	/* a seek: 0 ok */
+	if (off >= st->size)
+		return 0;
+	if (n > st->size - off)
+		n = st->size - off;
+	if (n > RS_WIN)
+		return (unsigned long)(pdf_os_read(s->h, (long)off, buf, (long)n) == (long)n ? n : 0);
+	if ((long)off < s->woff || (long)(off + n) > s->woff + s->wlen) {
+		long k = (long)(st->size - off) < RS_WIN ? (long)(st->size - off) : RS_WIN;
+
+		s->wlen = 0;
+		if (pdf_os_read(s->h, (long)off, s->win, k) != k)
+			return 0;
+		s->woff = (long)off;
+		s->wlen = k;
+	}
+	memcpy(buf, s->win + (off - (unsigned long)s->woff), n);
+	return n;
+}
+
+static void rs_close(FT_Stream st)
+{
+	RSTREAM *s = (RSTREAM *)st;
+
+	if (s->h)
+		pdf_os_close(s->h);
+	s->h = NULL;
+}
+
+static RSTREAM *rs_open(const char *path)
+{
+	long size = 0;
 	void *h = pdf_os_open(path, &size);
-	unsigned char *b;
+	RSTREAM *s;
 
 	if (!h)
 		return NULL;
-	b = size > 0 ? malloc((size_t)size) : NULL;
-	got = b ? 0 : -1;
-	/* 32 KB at a time, a turn between (a font of 400 KB at once was a
-	   stretch of some 150 ms on a Falcon) */
-	while (b && got < size) {
-		long k = size - got < 32768L ? size - got : 32768L, r = pdf_os_read(h, got, b + got, k);
-
-		if (r != k) {
-			got = -1;
-			break;
-		}
-		got += k;
-		if (cv_turn)
-			cv_turn();
-	}
-	pdf_os_close(h);
-	if (got != size) {
-		free(b);
+	if (size <= 0 || !(s = calloc(1, sizeof *s))) {
+		pdf_os_close(h);
 		return NULL;
 	}
-	*len = size;
-	return b;
+	s->h = h;
+	s->st.size = (unsigned long)size;
+	s->st.read = rs_read;
+	s->st.close = rs_close;
+	s->woff = -RS_WIN - 1;
+	return s;
 }
 
 static void gc_flush(RFONTS *f)
@@ -848,7 +885,8 @@ static FT_Face face_for(RPAGE *r, long prog, const char *base)
 
 		snprintf(f->e[v].key, sizeof f->e[v].key, "%s", file);
 		snprintf(path, sizeof path, "%s%c%s", r->fontdir, sep, file);
-		f->e[v].buf = read_file(path, &f->e[v].len);
+		f->e[v].disk = 1;
+		f->e[v].buf = (unsigned char *)rs_open(path);
 		if (!f->e[v].buf) {
 			/* Liberation's own names (a Linux system's fonts) */
 			static const char *const fam[3] = { "Sans", "Serif", "Mono" };
@@ -857,7 +895,7 @@ static FT_Face face_for(RPAGE *r, long prog, const char *base)
 
 			snprintf(path, sizeof path, "%s%cLiberation%s-%s.ttf", r->fontdir, sep,
 				 fam[file[1] == 'a' ? 0 : file[1] == 'e' ? 1 : 2], st);
-			f->e[v].buf = read_file(path, &f->e[v].len);
+			f->e[v].buf = (unsigned char *)rs_open(path);
 		}
 		if (!f->e[v].buf) {
 			/* an italic face the release doesn't carry: the upright one
@@ -872,16 +910,27 @@ static FT_Face face_for(RPAGE *r, long prog, const char *base)
 				else
 					memmove(d - 1, d, strlen(d) + 1);
 				snprintf(path, sizeof path, "%s%c%s", r->fontdir, sep, up);
-				f->e[v].buf = read_file(path, &f->e[v].len);
+				f->e[v].buf = (unsigned char *)rs_open(path);
 			}
 		}
 	}
 	if (cv_turn)
 		cv_turn();
 	cv_phase = "face";
-	if (!f->e[v].buf || FT_New_Memory_Face(f->lib, f->e[v].buf, f->e[v].len, 0, &f->e[v].face)) {
-		cv_phase = "render";
+	if (f->e[v].buf && f->e[v].disk) {
+		FT_Open_Args a;
+
+		memset(&a, 0, sizeof a);
+		a.flags = FT_OPEN_STREAM;
+		a.stream = &((RSTREAM *)f->e[v].buf)->st;
+		if (FT_Open_Face(f->lib, &a, 0, &f->e[v].face)) {
+			rs_close(a.stream);
+			f->e[v].face = NULL;
+		}
+	} else if (f->e[v].buf && FT_New_Memory_Face(f->lib, f->e[v].buf, f->e[v].len, 0, &f->e[v].face))
 		f->e[v].face = NULL;
+	if (!f->e[v].face) {
+		cv_phase = "render";
 		f->e[v].bad = 1;
 		return NULL;
 	}
@@ -901,7 +950,7 @@ static FT_Face face_for(RPAGE *r, long prog, const char *base)
 			int lru = -1;
 
 			for (i = 0; i < 24; i++)
-				if (i != v && f->e[i].buf && (lru < 0 || f->e[i].used < f->e[lru].used))
+				if (i != v && f->e[i].buf && f->e[i].len > 0 && (lru < 0 || f->e[i].used < f->e[lru].used))
 					lru = i;
 			if (lru < 0)
 				break;
@@ -1075,6 +1124,7 @@ static void image_hook(void *u, long obj, const fx *ctm)
 	fx m[6];
 	int why = 0, mask;
 	PIC *p;
+	unsigned long t0;
 
 	if (!o || o->t != PO_DICT)
 		return;
@@ -1106,7 +1156,10 @@ static void image_hook(void *u, long obj, const fx *ctm)
 	if (h > 2048) h = 2048;
 	if (cv_turn)
 		cv_turn();
+	t0 = render_clock ? render_clock() : 0;
 	p = cv_image(r->d, obj, (int)w, (int)h, &why);
+	if (render_clock)
+		r->image_ms += (long)(render_clock() - t0);
 	if (cv_turn)
 		cv_turn();
 	if (!p) {
@@ -1244,6 +1297,7 @@ int render_page_from(RPAGE *r, long n, int width, int y0)
 	r->width = width;
 	r->narea = 0;
 	r->glyphs = r->glyphs_missed = r->images = r->images_missed = 0;
+	r->image_ms = 0;
 	st = calloc(1, sizeof *st);
 	if (!st)
 		return -1;

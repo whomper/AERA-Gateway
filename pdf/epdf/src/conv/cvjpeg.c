@@ -240,6 +240,28 @@ static int by_rows(PDOC *d, long obj, int w, int h, PIC **out, int *why)
 	return r;
 }
 
+int cv_jpeg_pic;
+
+/* the JPEG's components (its frame header's), 0 if none is found */
+static int jpeg_comps(const unsigned char *d, long n)
+{
+	long i = 2;
+
+	while (i + 9 < n && d[i] == 0xFF) {
+		int m = d[i + 1];
+		long len = (long)d[i + 2] << 8 | d[i + 3];
+
+		if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC)
+			return d[i + 9];
+		if (m == 0xFF) {
+			i++;
+			continue;
+		}
+		i += 2 + len;
+	}
+	return 0;
+}
+
 PIC *cv_image(PDOC *d, long obj, int w, int h, int *why)
 {
 	POBJ *o = pdf_get(d, obj), *fl, *dec;
@@ -269,7 +291,16 @@ PIC *cv_image(PDOC *d, long obj, int w, int h, int *why)
 		sb_free(&b);
 		return pdf_image(d, obj, w, h, 32L << 20, why);
 	}
-	p = cv_jpeg((const unsigned char *)b.s, b.len, w, h, inv, why);
+	p = NULL;
+	if (cv_jpeg_pic && b.len > 4) {
+		int nc = jpeg_comps((const unsigned char *)b.s, b.len);
+
+		/* (CMYK stays cv_jpeg's: pic.c takes it as always inverted) */
+		if (nc == 1 || nc == 3)
+			p = pic_decode((const unsigned char *)b.s, b.len, w, h, 32L << 20, why);
+	}
+	if (!p)
+		p = cv_jpeg((const unsigned char *)b.s, b.len, w, h, inv, why);
 	sb_free(&b);
 	return p;
 }

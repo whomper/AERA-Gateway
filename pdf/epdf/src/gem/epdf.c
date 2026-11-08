@@ -34,6 +34,7 @@
 #include "menu.h"
 #include "pics.h"
 #include "dspjpeg.h"
+#include "rdraw.h"
 #include "click.h"
 #include "epdf.h"
 #include "progbar.h"
@@ -969,7 +970,10 @@ static void progress(void)
 		snprintf(w, sizeof w, "Reading page %ld of %ld", rp + 1, n);
 		win_progress(1, w, doc_read() * 1000L + pm, n * 1000L);
 	} else if (pic) {
-		snprintf(w, sizeof w, "Picture on page %ld", pg + 1);	/* the one in view, before pages out of it */
+		if (doc_pic_drawing())
+			snprintf(w, sizeof w, "Drawing page %ld / %ld", pg + 1, n);
+		else
+			snprintf(w, sizeof w, "Picture on page %ld", pg + 1);	/* the one in view, before pages out of it */
 		win_progress(2, w, made, of);
 	} else
 		win_progress(0, NULL, 0, 0);
@@ -1013,7 +1017,7 @@ static int read_on(void)
 	if (n < 0)
 		return 0;
 	arrived = n;
-	if (doc_prepared())
+	if (doc_prepared() || doc_drawn())
 		menus_due = 1;		/* (View > Pages greyed until a page whole has come; no AES call unless it changes) */
 	return 1;
 }
@@ -1072,6 +1076,19 @@ int main(void)
 	}
 	path_join(inf_path, sizeof inf_path, start_dir, "epdf.inf");
 	path_join(cache_path, sizeof cache_path, start_dir, "epdf.txc");
+	/* stage 2: render.ovl and the standard fonts beside the program */
+	path_join(rdraw_path, sizeof rdraw_path, start_dir, "render.ovl");
+	path_join(doc_font_dir, sizeof doc_font_dir, start_dir, "fonts");
+	{
+		/* (else EConvert's, as the release's zip carries them: econvert\fonts) */
+		char t[220];
+
+		path_join(t, sizeof t, doc_font_dir, "sans.ttf");
+		if (pf_size(t) < 0) {
+			path_join(t, sizeof t, start_dir, "econvert");
+			path_join(doc_font_dir, sizeof doc_font_dir, t, "fonts");
+		}
+	}
 	crash_install(start_dir, "EPDF", app_version);
 	crash_cleanup = crash_quit;
 	help_init();

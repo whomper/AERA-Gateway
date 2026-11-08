@@ -41,6 +41,16 @@ typedef struct {
 	   symbols): it may hand the machine back for a while (EConvert's
 	   window: the work on a stack of its own); 1 stops the conversion */
 	int (*turn)(void *u);
+	/* the Gateway's translation (Erez, 8 Nov 2026; docs/CONVERTED-PDF.md,
+	   "The translation"): with translate_to (an ISO 639-1 code) set, each
+	   page's paragraphs (UTF-8, an empty line between) go to translate,
+	   which gives the same paragraphs in that language (*out, malloc's)
+	   and the language they were in (from: a code, or "same" when they
+	   were in translate_to already). 0 done; 2 the pair isn't installed,
+	   3 busy, 4 too long, other failed: the conversion stops (CVSTAT's
+	   tr_fail) */
+	const char *translate_to;
+	int (*translate)(void *u, const char *to, const char *utf8, long len, char **out, long *outlen, char from[8]);
 } CVOPT;
 
 /* the turn the long loops (dithers, deflate, fills) ask for; set by
@@ -52,6 +62,11 @@ extern const char *cv_phase;
 typedef struct {
 	long pages, in_bytes, out_bytes, ms;
 	long pictures, drawings;
+	/* translated: the language most pages were in ("" none), and 1 when
+	   every page was in translate_to already; the translator's failure (2,
+	   3, 4, other) when it stopped the conversion, else 0 */
+	char tr_from[8];
+	int tr_same, tr_fail;
 } CVSTAT;
 
 void cv_defaults(CVOPT *o);

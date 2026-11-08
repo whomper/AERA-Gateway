@@ -56,6 +56,9 @@ long doc_page_len(long n);		/* -1 when not read yet; nothing read */
 #include "docview.h"
 DOCVIEW *doc_view(void);		/* NULL without a document */
 int doc_prepared(void);			/* a converted PDF (EConvert's) */
+int doc_drawn(void);			/* its pages drawn as printed by render.ovl (stage 2) */
+int doc_pic_drawing(void);		/* the picture being made is a page drawn */
+extern char doc_font_dir[200];
 int doc_has_pages(void);		/* ... with its pages whole (View > Pages) */
 int doc_pages_mode(void);		/* the view shows them */
 void doc_set_pages(int on);

@@ -50,6 +50,17 @@ int pics_band(void);
 /* pics_rows' picture ended: made, or not (its bitmap let go; logged
    unless it was stopped) */
 void pics_made(PICE *e, int ok, int why);
+/* a page drawn as printed by render.ovl (View > Pages for any PDF on a
+   Falcon or TT): its picture's object is PICS_PAGE + the page (above any
+   PDF's objects), its rows given by pics_page_rows (doc.c's): 1 made, 0
+   not (*why). On the decoder's stack */
+#define PICS_PAGE 0x40000000L
+/* (pal not NULL: a screen of 2 to 16 colours, `planes` of them; then
+   planes_row takes each row as its planes' rows, the standard format's, in
+   place of row's 5-6-5) */
+extern int (*pics_page_rows)(long page, int w, int h, void (*row)(void *u, long y, const unsigned short *px),
+			     void (*planes_row)(void *u, long y, const unsigned char *planes), const PIC_PAL *pal,
+			     int planes, void *u, int *why);
 void pics_forget(void);
 void pics_exit(void);
 
