@@ -28,7 +28,14 @@ of its own:
   square, made by ffmpeg ("Content-Type: image/jpeg"), the last 64 kept;
   or by an error as above (502 too: not a picture).
 
-    GET /version   ->  "radiogate 1.1, ffmpeg 6.1"
+    GET /logo?station=<the station's URL>&name=<its name>   (radiogate 1.2)
+
+  answered by the station's logo from radio-browser.info (found by its
+  address, else by its exact name), as a 64 x 64 JPEG as /art's; 404 when
+  the directory has none (asked again a day on), 502 when it doesn't
+  answer.
+
+    GET /version   ->  "radiogate 1.2, ffmpeg 6.1"
 
 What the station sends:
   - MP3 (audio/mpeg): passed on as it comes, over HTTP or HTTPS, its ICY
@@ -65,7 +72,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qsl, urljoin, urlsplit
+from urllib.parse import parse_qsl, quote, urljoin, urlsplit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 for d in (HERE, os.path.join(HERE, "..", "gateway")):
@@ -74,7 +81,7 @@ for d in (HERE, os.path.join(HERE, "..", "gateway")):
         break
 import aeragate  # noqa: E402
 
-VERSION = "1.1"
+VERSION = "1.2"
 METAINT = 8192                      # the Atari's: a title block every 8 KB of MP3
 HEAD_MAX = 16384                    # a station's answer head, at most
 LIST_MAX = 65536                    # a station list or an HLS playlist, at most
@@ -95,6 +102,10 @@ class Config:
     memory = 256 << 20
     timeout = 20
     verbose = False
+    # radio-browser.info, /logo's station directory: its mirrors, each tried in turn (one often
+    # refuses a connection)
+    rb_api = ["https://de1.api.radio-browser.info", "https://fi1.api.radio-browser.info",
+              "https://nl1.api.radio-browser.info", "https://de2.api.radio-browser.info"]
 
 
 class Refused(Exception):
@@ -382,6 +393,9 @@ class ArtCache:
 
 
 ART = ArtCache()
+LOGOS = ArtCache()                  # /logo's, by station: a JPEG, or b"" for none (asked again a day on)
+LOGOS.keep = 256
+LOGO_NONE_S = 24 * 3600
 ART_JOBS = threading.BoundedSemaphore(2)    # pictures made at once (an ffmpeg each), else 503
 
 
@@ -421,6 +435,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            return
+        if u.path == "/logo":
+            q = dict(parse_qsl(u.query, keep_blank_values=True))
+            self.logo(q.get("station", ""), q.get("name", ""))
             return
         if u.path == "/art":
             self.art(dict(parse_qsl(u.query, keep_blank_values=True)).get("url", ""))
@@ -530,6 +548,96 @@ class Handler(BaseHTTPRequestHandler):
                     return
         finally:
             s.close()  # (the station's too, when the Atari went first)
+
+    def logo(self, station, name):
+        """GET /logo?station=<the station's URL>&name=<its icy-name> (EPlay,
+        when a Gateway is set, for a station that names no picture of its
+        own: Erez, 8 Nov 2026): its logo from radio-browser.info, found by
+        the station's address, else by its exact name (the most voted), as
+        a 64 x 64 JPEG; 404 when there is none"""
+        try:
+            checked_url(station)
+        except Refused as e:
+            self.reply(e.status, e.words)
+            return
+        name = name.strip()[:120]
+        key = station + "\n" + name.lower()
+        got = LOGOS.get(key)
+        if got is not None and (got[0] or time.time() - got[1] < LOGO_NONE_S):
+            jpg = got[0]
+        else:
+            if not ffmpeg_version():
+                self.reply(502, "pictures need ffmpeg on the Gateway")
+                return
+            if not ART_JOBS.acquire(blocking=False):
+                self.reply(503, "too many pictures at once")
+                return
+            try:
+                jpg = self.find_logo(station, name)
+            finally:
+                ART_JOBS.release()
+            if jpg is None:
+                return                  # (a reply made: the directory didn't answer)
+            LOGOS.put(key, (jpg, time.time()))
+        if not jpg:
+            self.reply(404, "no logo for this station")
+            return
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(jpg)))
+            self.end_headers()
+            self.wfile.write(jpg)
+        except OSError:
+            pass
+
+    def find_logo(self, station, name):
+        """the logo's JPEG, b"" when the directory has none, None (a reply
+        made) when it doesn't answer. Asked in turn: by the station's
+        address; by its exact name; by its name's first words, taken only
+        from an entry whose stream is on the station's own domain (no other
+        station's logo)"""
+        import json
+
+        def domain(u):
+            return ".".join((urlsplit(u).hostname or "").split(".")[-2:])
+
+        words = re.split(r" - |[,:(|\[]", name)[0].strip() if name else ""
+        asks = [("/json/stations/byurl?url=" + quote(station, safe=""), False)]
+        if name:
+            asks.append(("/json/stations/search?name=%s&nameExact=true&hidebroken=true&order=votes&reverse=true"
+                         "&limit=5" % quote(name, safe=""), False))
+        if words:
+            asks.append(("/json/stations/search?name=%s&hidebroken=true&order=votes&reverse=true&limit=30" %
+                         quote(words, safe=""), True))
+        answered, mine = False, domain(station)
+        for a, same_domain in asks:
+            found = None
+            for api in Config.rb_api:
+                try:
+                    _, data = fetch(api + a, 1 << 20)
+                    found = json.loads(data.decode("utf-8", "replace"))
+                    answered = True
+                    break
+                except (Refused, ValueError):
+                    continue
+            for st in found if isinstance(found, list) else []:
+                fav = st.get("favicon") if isinstance(st, dict) else None
+                if not isinstance(fav, str) or not fav.startswith(("http://", "https://")):
+                    continue
+                if same_domain and mine not in (domain(str(st.get("url", ""))), domain(str(st.get("url_resolved", "")))):
+                    continue
+                try:
+                    _, pic = fetch(fav, PIC_MAX)
+                except Refused:
+                    continue
+                jpg = shrink(pic)
+                if jpg:
+                    return jpg
+        if not answered:
+            self.reply(502, "the station directory doesn't answer")
+            return None
+        return b""
 
     def art(self, url):
         """GET /art?url=<a picture's address> (EPlay through the Gateway, a

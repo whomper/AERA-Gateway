@@ -317,6 +317,73 @@ class Tests(unittest.TestCase):
             radiogate.ART_JOBS.release()
         g.stop()
 
+    def test_logo(self):
+        """/logo: radio-browser.info's answer (a stand-in here): found by the
+        station's address, else by its exact name; none (404, kept); the
+        directory down (502)"""
+        if not HAVE_FFMPEG:
+            print("SKIPPED: logo (no ffmpeg)")
+            return
+        import json
+        path = os.path.join(TMP, "logo.png")
+        subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                        "color=green:s=128x128", "-frames:v", "1", path], check=True)
+        png = open(path, "rb").read()
+        st = Station({})
+        base = "http://127.0.0.1:%d" % st.port
+        asked = []
+
+        def api(p):
+            asked.append(p)
+            if p.startswith("/json/stations/byurl"):
+                hit = "radio.example%2Fknown" in p
+                body = json.dumps([{"name": "Known FM", "favicon": base + "/logo.png"}] if hit else [])
+            elif "nameExact=true" in p:
+                hit = "name=Named%20FM" in p
+                body = json.dumps([{"name": "Named FM", "favicon": ""},
+                                   {"name": "Named FM", "favicon": base + "/logo.png"}] if hit else [])
+            else:
+                # (by the first words: Other FM's logo, its stream elsewhere, passed over; Wide FM's taken)
+                body = json.dumps([{"name": "Wide FM Live", "favicon": base + "/nope.png",
+                                    "url": "http://elsewhere.example/x"},
+                                   {"name": "Wide FM (MP3)", "favicon": base + "/logo.png",
+                                    "url": "http://stream.wide.example/live"}] if "name=Wide%20FM" in p else [])
+            return ("HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n", body.encode(), 0, "")
+
+        class Routes(dict):
+            def __getitem__(self, p):
+                if p == "/logo.png":
+                    return ("HTTP/1.0 200 OK\r\nContent-Type: image/png\r\n\r\n", png, 0, "")
+                return api(p)
+        st.routes = Routes()
+        radiogate.Config.rb_api = ["http://127.0.0.1:1", base]    # (the first mirror down: the next asked)
+        radiogate.LOGOS.d.clear()
+        g = Gate()
+
+        def ask(station, name):
+            q = "/logo?station=%s&name=%s" % (urllib.parse.quote(station, safe=""), urllib.parse.quote(name, safe=""))
+            return g.ask("", path=q, meta=False)
+        status, heads, body = ask("http://radio.example/known", "")
+        self.assertIn("200", status)
+        self.assertEqual(heads.get("content-type"), "image/jpeg")
+        status, _, _ = ask("http://radio.example/other", "Named FM")
+        self.assertIn("200", status)                 # (by its name: the first with a logo)
+        status, _, _ = ask("http://cdn.wide.example/x", "Wide FM - the best")
+        self.assertIn("200", status)                 # (its own domain's entry)
+        self.assertNotIn("/nope.png", asked)
+        n = len(asked)
+        status, _, _ = ask("http://radio.example/none", "Nobody FM")
+        self.assertIn("404", status)
+        status, _, _ = ask("http://radio.example/none", "Nobody FM")
+        self.assertIn("404", status)
+        self.assertEqual(len(asked), n + 3)          # (asked three ways; the second time from what was kept)
+        status, _, _ = ask("ftp://x/y", "")
+        self.assertIn("400", status)
+        radiogate.Config.rb_api = ["http://127.0.0.1:1"]
+        status, _, _ = ask("http://radio.example/down", "Down FM")
+        self.assertIn("502", status)
+        g.stop()
+
     def test_icy_in_out(self):
         """the metadata taken out at every cut, and put back"""
         audio = bytes(range(256)) * 40
