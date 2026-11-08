@@ -305,6 +305,16 @@ class Tests(unittest.TestCase):
         self.assertIn("502", status)
         status, _, _ = g.ask("", path="/art?url=javascript%3A1", meta=False)
         self.assertIn("400", status)
+        # (two pictures made at once at most: a third waits for neither, 503)
+        radiogate.ART_JOBS.acquire()
+        radiogate.ART_JOBS.acquire()
+        try:
+            status, _, _ = g.ask("", path="/art?url=" + urllib.parse.quote(
+                "http://127.0.0.1:%d/l.png?x" % st.port, safe=""), meta=False)
+            self.assertIn("503", status)
+        finally:
+            radiogate.ART_JOBS.release()
+            radiogate.ART_JOBS.release()
         g.stop()
 
     def test_icy_in_out(self):
