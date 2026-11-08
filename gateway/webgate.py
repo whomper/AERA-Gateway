@@ -92,7 +92,8 @@ done when the time ran out first). A refusal (no such pair, the service
 busy or not there, a page over 4 MB) sends the page as it came, with
 X-Translate-Refused: STATUS why. The server is asked for it unpacked and
 whole (no If-None-Match or If-Modified-Since); the header goes no
-further than webgate. Pages through the browser aren't translated.
+further than webgate. EWeb sends it only to a webgate whose answer to
+GET http://webgate/ carries X-Gateway-Translate: 1. Pages through the browser aren't translated.
 
 Snapshots (--browser): a GET with "X-Gateway-Snapshot: 1" is opened in an
 ordinary Chromium on the Pi (its own profile: your logins stay there), and
@@ -1131,6 +1132,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not self.for_browser and u.hostname == "webgate" and u.path == "/prefetch":
             self.prefetch(body)
+            return
+        if not self.for_browser and u.hostname == "webgate" and u.path in ("", "/"):
+            # what this webgate takes: X-Gateway-Translate: 1 (EWeb sends
+            # the header only to a webgate that says so, which takes it out)
+            self.send_body(200, b"webgate %s\n" % VERSION.encode(), "text/plain", [("X-Gateway-Translate", "1")])
+            self.note(200, 0, " (webgate)")
             return
         if not self.for_browser and u.hostname == "webgate" and u.path == "/scripts":
             # which scripts webgate compiles: "aerajsc TAG" (EWeb asks for

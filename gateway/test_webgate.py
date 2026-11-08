@@ -875,6 +875,14 @@ class TranslateTest(ProxyTest):
         done = page.count("en: ABSATZ")
         self.assertTrue(1000 < done < 1700, done)
 
+    def test_announced(self):
+        c = http.client.HTTPConnection("127.0.0.1", self.gw.server_address[1], timeout=10)
+        self.addCleanup(c.close)
+        c.request("GET", "http://webgate/")
+        r = c.getresponse()
+        self.assertEqual((r.status, r.read(), r.getheader("X-Gateway-Translate")),
+                         (200, b"webgate %s\n" % webgate.VERSION.encode(), "1"))
+
     def test_not_asked(self):
         r, data = self.doc("de.html", None)
         self.assertEqual(gzip.decompress(data), DOCS["de.html"][1])
