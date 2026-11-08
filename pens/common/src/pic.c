@@ -3134,13 +3134,6 @@ int pic_pal_nearest(PIC_PAL *pal, int r, int g, int b)
    goes a row at a time (pic_dither_row), so a picture needn't be whole
    in memory to be dithered (EPDF's scans on a 1 MB ST, 31 Oct 2026);
    pic_dither is the same done over a whole picture, the same pens */
-/* Floyd-Steinberg passes on this many 8ths of each pixel's error when there are
-   more than 16 pens (EWeb, Erez 8 Nov 2026: the fixed 256-colour palette's
-   photos were grainy; 5/8 is smoother and little flatter); the DSP's dither
-   has the same (dsp/dither.a56, C_DMP) */
-#ifndef DITHER_DAMP
-#define DITHER_DAMP 5
-#endif
 struct pic_dither_rows {
 	PIC_PAL *pal;
 	long w, y;			/* the row's width; rows done (serpentine: odd ones run back) */
@@ -3148,7 +3141,6 @@ struct pic_dither_rows {
 	int two;			/* two pens: on the brightness alone */
 	short lr[32], lg[64], lb[32], y0, y1, mid;
 	int light;
-	int damp;			/* the error passed on, in 8ths: 8 whole, 5 softer (256 colours) */
 };
 
 /* two pens (a monochrome screen): Floyd-Steinberg on the brightness alone,
@@ -3161,7 +3153,6 @@ static void dither_init(PIC_DITHER *dt, long w, PIC_PAL *pal)
 	dt->pal = pal;
 	dt->w = w;
 	dt->two = pal->n == 2;
-	dt->damp = pal->n > 16 ? DITHER_DAMP : 8;
 	if (dt->two) {
 		short i;
 		/* each pen's brightness (0.299, 0.587, 0.114 in 256ths), and each
@@ -3282,8 +3273,7 @@ static void row_many(PIC_DITHER *dt, const unsigned short *px, const unsigned ch
 	int dir = (dt->y & 1) ? -1 : 1, step = 3 * dir;
 	long x = dir > 0 ? 0 : w - 1;
 	short *c, *d;
-	int damp = dt->damp;
-	int er = 0, eg = 0, eb = 0;	/* 7/16 of the last pixel's (damp/8 of it), in 128ths */
+	int er = 0, eg = 0, eb = 0;	/* 7/16 of the last pixel's, in 16ths */
 	if (dt->rows == NULL) {
 		for (n = 0; n < w; n++) {
 			unsigned v = px[n];
@@ -3301,9 +3291,9 @@ static void row_many(PIC_DITHER *dt, const unsigned short *px, const unsigned ch
 			er = eg = eb = 0;
 			continue;
 		}
-		r = (int) C5(v >> 11) + ((er + c[0]) >> 7);
-		g = (int) C6((v >> 5) & 63) + ((eg + c[1]) >> 7);
-		b = (int) C5(v & 31) + ((eb + c[2]) >> 7);
+		r = (int) C5(v >> 11) + ((er + c[0]) >> 4);
+		g = (int) C6((v >> 5) & 63) + ((eg + c[1]) >> 4);
+		b = (int) C5(v & 31) + ((eb + c[2]) >> 4);
 		r = r < -128 ? -128 : r > 383 ? 383 : r;
 		g = g < -128 ? -128 : g > 383 ? 383 : g;
 		b = b < -128 ? -128 : b > 383 ? 383 : b;
@@ -3313,9 +3303,6 @@ static void row_many(PIC_DITHER *dt, const unsigned short *px, const unsigned ch
 		qr = r - pal->rgb[k][0];
 		qg = g - pal->rgb[k][1];
 		qb = b - pal->rgb[k][2];
-		qr *= damp;			/* (what is passed on: damp/8 of the error) */
-		qg *= damp;
-		qb *= damp;
 		er = qr * 7;
 		eg = qg * 7;
 		eb = qb * 7;
@@ -3408,7 +3395,6 @@ static int dither_whole(const PIC *p, PIC_PAL *pal, unsigned char *out)
 #define DD_PB     0xe00
 #define DD_NT     0x1000		/* y: the near table */
 #define DD_MASK   0xFFFFFFUL
-#define DD_DMP(pal) ((unsigned long) ((pal)->n > 16 ? DITHER_DAMP : 8) * 0x80000UL)	/* damp/16, as a fraction */
 #define DD_FAR    1900L			/* past the pens at either end, by red */
 
 static int dd_state;			/* 0: not checked yet, 1: checked, -1: the 68030 does it */
@@ -3418,9 +3404,9 @@ static unsigned char dd_rgb[256][3];
 /* the tables: the program's constants and the palette's */
 static void dd_palette(const PIC_PAL *pal)
 {
-	unsigned long consts[21] = {
+	static const unsigned long consts[20] = {
 		0x001000, 0x000020, 0x000010, 0x40, 0x70, 0x700000, 0x300000, 0x500000, 0x100000,
-		0x50, 0x70, 0xb0, DD_PR, 0x010000, 0x000100, 1, 0x90, 0x400000, 0xff, 0xff8000, 0
+		0x50, 0x70, 0xb0, DD_PR, 0x010000, 0x000100, 1, 0x90, 0x400000, 0xff, 0xff8000
 	};
 	unsigned long w[3 * 258], shi;
 	long n = pal->n, i;
@@ -3457,8 +3443,7 @@ static void dd_palette(const PIC_PAL *pal)
 	dsp_load(D_LOADY, 0, w, 0xe1);
 	shi = (unsigned long) (DD_S1 + 1 + n);
 	dsp_load(D_LOADX, 0x19, &shi, 1);
-	consts[20] = (unsigned long) DD_DMP(pal);
-	dsp_load(D_LOADX, 0x20, consts, 21);
+	dsp_load(D_LOADX, 0x20, consts, 20);
 	/* the pens by red, at the ends far below and above every one */
 	w[0] = (0UL - ((unsigned long) DD_FAR << 12)) & DD_MASK;
 	for (i = 0; i < n; i++)
