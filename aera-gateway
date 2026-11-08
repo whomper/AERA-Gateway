@@ -58,7 +58,7 @@ OPT = "/opt/aera-gateway"                   # the gateways' code on the Pi
 UNITS = "/etc/systemd/system"
 OLD_BIN = "/usr/local/bin"                  # where the apps' own install.sh put them
 FILES = ("aeragate.py", "emailgate.py", "ecalgate.py", "eftpgate.py", "webgate.py", "pdfgate.py",
-         "translategate.py", "translatelangs.py", "translate-phrases.tsv", "translate-languages.tsv")
+         "translategate.py", "translatelangs.py", "translateclient.py", "translate-phrases.tsv", "translate-languages.tsv")
 EXT = "webgate-ext"                         # webgate's browser extension, a folder next to them
 HOME_NETS = ("192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8")
 CLAUDEST = "whomper/ClaudeST"
@@ -1247,8 +1247,10 @@ class Translate(Gateway):
         out = ["--port", str(ns.port)] + super().args(ns)
         if ns.engine != ns.default["engine"]:
             out += ["--engine", ns.engine]
+        out += ["--local", self.LOCAL]          # for webgate and pdfgate (translateclient)
         out += ["-v"] if ns.verbose else []
-        return out + ns.extra
+        return out + [w for i, w in enumerate(ns.extra)
+                      if w != "--local" and (i == 0 or ns.extra[i - 1] != "--local")]
 
     def ports(self, ns):
         return [str(ns.port)]
@@ -1264,8 +1266,12 @@ class Translate(Gateway):
         # translatelangs.CAP_MB of them: the most they may take, always)
         mm = "%dM" % self.MAX_MEMORY if ns.engine == "argos" else "1G"
         text = text.replace("Restart=always", "MemoryMax=%s\nOOMScoreAdjust=-300\nRestart=always" % mm, 1)
-        # the languages' job's files (request, job), translategate's to write
-        return text.replace("NoNewPrivileges=yes", "StateDirectory=translategate\nNoNewPrivileges=yes", 1)
+        # the languages' job's files (request, job), translategate's to write;
+        # the local socket's folder, open to the group the gateways that
+        # translate are in (aera-translate), and to no one else
+        return text.replace("NoNewPrivileges=yes", "StateDirectory=translategate\nGroup=%s\n"
+                            "RuntimeDirectory=translategate\nRuntimeDirectoryMode=0750\nNoNewPrivileges=yes"
+                            % self.GROUP, 1)
 
     def describe(self, ns):
         return "engine " + ns.engine
@@ -1340,6 +1346,9 @@ class Translate(Gateway):
         except tl.Fail as e:
             raise Failed(str(e))
 
+    LOCAL = "/run/translategate/local.sock"
+    GROUP = "aera-translate"                # the gateways that may use the local socket
+
     UNITS_LANGS = ("translategate-langs.path", "translategate-langs.service")
 
     def langs_units(self):
@@ -1362,7 +1371,9 @@ class Translate(Gateway):
 
     def before_start(self, pi):
         """the models translategate's own (the Languages page changes them),
-        and the languages' job set up"""
+        the languages' job set up, and the local socket's group"""
+        if not pi.ok("getent", "group", self.GROUP):
+            pi.run("groupadd", "--system", self.GROUP)
         pi.makedirs(self.MODELS)
         pi.run("chown", "-R", "translategate:translategate", self.MODELS)
         for name, text in self.langs_units().items():

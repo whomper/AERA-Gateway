@@ -443,6 +443,71 @@ class LanguagesTest(Base):
         self.assertEqual((st, body), (503, b"translategate: a languages job is running\n"))
 
 
+class LocalTest(unittest.TestCase):
+    """the local socket and translateclient, as webgate and pdfgate use them"""
+    engine = None
+
+    def setUp(self):
+        import tempfile
+        import translateclient as tc
+        self.tc = tc
+        self.log = Log()
+        self.redirect = contextlib.redirect_stderr(self.log)
+        self.redirect.__enter__()
+        tg.Config.engine = (self.engine or tg.StandIn)()
+        tg.Config.local_seconds = 600
+        tg.LANES = tg.Lanes(2)
+        d = tempfile.mkdtemp(prefix="tg-local.")
+        self.sock = os.path.join(d, "local.sock")
+        self.srv = tg.serve_local(self.sock)
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        self.redirect.__exit__(None, None, None)
+        self.assertNotIn(SECRET.lower(), self.log.getvalue().lower())
+
+    def test_translate(self):
+        self.assertEqual(os.stat(self.sock).st_mode & 0o777, 0o660)
+        text, used, same = self.tc.translate("Hallo %s, das ist gut.\n\nZwei." % SECRET, "en", sock=self.sock)
+        self.assertEqual((text, used, same), ("en: HALLO %s, DAS IST GUT.\n\nen: ZWEI." % SECRET.upper(), "de", False))
+        text, used, same = self.tc.translate("Good morning, %s." % SECRET, "en", sock=self.sock)
+        self.assertEqual((text, used, same), ("Good morning, %s." % SECRET, "en", True))
+        self.assertIn("translategate: local de>en 200,", self.log.getvalue())
+
+    def test_a_whole_page(self):
+        page = "\n\n".join("Paragraph %d of the %s page." % (i, SECRET) for i in range(600))   # ~20 KB
+        self.assertGreater(len(page), 8192)
+        text, used, _ = self.tc.translate(page, "en", "de", sock=self.sock)
+        self.assertEqual(text.count("\n\n"), 599)
+
+    def test_refused(self):
+        with self.assertRaises(self.tc.Refused) as e:
+            self.tc.translate("Hallo %s, das ist nicht gut." % SECRET, "fr", sock=self.sock)
+        self.assertEqual((e.exception.status, e.exception.line, e.exception.used),
+                         (422, "translategate: that pair of languages isn't installed", "de"))
+        # the Languages page isn't the local socket's
+        st, _, body = self.tc.ask("POST", "/languages", b"de", sock=self.sock)
+        self.assertEqual((st, body), (404, b"translategate: no such page\n"))
+        st, _, _ = self.tc.ask("GET", "/job", sock=self.sock)
+        self.assertEqual(st, 404)
+        with self.assertRaises(self.tc.Unreachable):
+            self.tc.translate("x", "en", sock=self.sock + ".none")
+
+
+class LocalSlowTest(LocalTest):
+    engine = Slow
+
+    def test_parts_as_far_as_time_allows(self):
+        parts = ["Part %d about %s." % (i, SECRET) for i in range(40)]
+        out, used, done = self.tc.translate_parts(parts, "en", "de", seconds=1, sock=self.sock, piece=60)
+        self.assertEqual(used, "de")
+        self.assertTrue(0 < done < 40, done)
+        self.assertEqual(out, ["en: PART %d ABOUT %s." % (i, SECRET.upper()) for i in range(done)])
+
+    test_translate = test_a_whole_page = test_refused = None
+
+
 class LoadingTest(Base):
     engine = staticmethod(lambda: tg.StandIn(load=30))
 
