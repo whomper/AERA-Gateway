@@ -462,7 +462,7 @@ def ask(path):
             return out
         out += b
 r = ask(b"/version")
-assert b"\r\n\r\nradiogate 1.2, ffmpeg " in r and not r.endswith(b"ffmpeg none\n"), r
+assert b"\r\n\r\nradiogate 1.3, ffmpeg " in r and not r.endswith(b"ffmpeg none\n"), r
 head, _, body = ask(b"/stream?url=http%3A%2F%2F127.0.0.1%3A8590%2FWilhelmina%2Fa.mp3").partition(b"\r\n\r\n")
 assert head.startswith(b"HTTP/1.0 200") and b"Content-Type: audio/mpeg" in head, head
 assert body == open(w + "/Wilhelmina/a.mp3", "rb").read(), len(body)
