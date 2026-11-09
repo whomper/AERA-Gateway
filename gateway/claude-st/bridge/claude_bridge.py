@@ -868,8 +868,8 @@ def make_backend(args):
         log.error("CLAUDE_SESSION_KEY is not set")
 
         def no_key():
-            raise RuntimeError("No claude.ai session key is set on the gateway. "
-                               "Set CLAUDE_SESSION_KEY (on a Pi: sudo ./install.sh --set-key).")
+            raise RuntimeError("No claude.ai session key is set on the Gateway. "
+                               "Set it there with: sudo aera-gateway set-key")
         return backends.LazyBackend(no_key, "claude.ai (no key)")
     return backends.LazyBackend(lambda: backends.ClaudeAiBackend(
         key, org_id=args.org, artifact_scan=args.artifact_scan, state_dir=args.store),
