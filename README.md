@@ -433,8 +433,9 @@ how much, never the station's path or the titles.
 
 ## claude: ClaudeST's bridge
 
-The bridge is ClaudeST's own (it changes with `CLAUDEST.PRG`);
-`aera-gateway` sets it up from the latest ClaudeST release, or from a
+The bridge comes with AERA-Gateway, in `gateway/claude-st/` (it moved
+here from ClaudeST on 9 Nov 2026; ClaudeST owns its protocol and reviews
+its changes). `aera-gateway` sets it up from there, or from a ClaudeST
 copy you name with `--from`:
 
 ```
@@ -449,8 +450,8 @@ Its settings stay in `/etc/claude-st/claude-st.env` and its chats in
 what the settings mean, and how to find the session key. In ClaudeST,
 Options > Settings > Network: the Gateway's IP address, port 2323. In a
 ClaudeST copy, `pi/install.sh` still works: it hands its options to
-`aera-gateway install claude`, which takes the bridge from ClaudeST's
-latest release, never from that copy.
+`aera-gateway install claude`, which takes the bridge that comes with
+AERA-Gateway, never from that copy.
 
 ## When something doesn't work
 
