@@ -927,7 +927,7 @@ released with AERA-Gateway; ClaudeST still owns its protocol (see ClaudeST's
   and `atari_text.py`; `gateway/claude-st/CLAUDEST` names the ClaudeST commit
   it came from), installed in `/opt/claude-st` and run as `claude-st.service`
   (`gateway/claude-st/claude-st.service`).
-- **Port:** 2323. ClaudeST reaches it through STinG or MiNTnet; the serial cable went with ClaudeST 2.3 (Erez, 9 Nov 2026).
+- **Port:** 2323. ClaudeST reaches it through STinG; the serial cable went with ClaudeST 2.3 (Erez, 9 Nov 2026).
 
 ### Install
 
