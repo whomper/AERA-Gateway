@@ -869,12 +869,15 @@ Icy-MetaData: 1
 | `GET /stream?url=STATION` | `200`, `Content-Type: audio/mpeg`, `icy-name`, `icy-br`, `icy-metaint: 8192` (when asked), then the stream until the Atari closes it |
 | `GET /art?url=PICTURE` | the picture (a cover: JPEG, PNG, GIF, WebP...) as a 64x64 baseline JPEG of its middle square |
 | `GET /logo?station=STATION&name=NAME` | the station's logo from radio-browser.info, as a 64x64 JPEG; 404 when it has none |
-| `GET /version` | `radiogate 1.2, ffmpeg VERSION` |
+| `GET /search?q=WORDS&tag=GENRE&country=CODE&language=NAME&sort=votes\|clicks\|name&n=1-100` | radio-browser.info's stations that match, `text/plain` UTF-8, one a line: `name<TAB>country<TAB>codec<TAB>kbit/s<TAB>URL`; broken ones left out, most votes first by default, 50 unless `n` says |
+| `GET /version` | `radiogate 1.3, ffmpeg VERSION` |
 
 `/logo` looks the station up in radio-browser.info, a public directory of
 stations: by its address, then by its exact name, then by its name's first
 words (taken only from a station on the same domain). So the Gateway sends
 that directory the station's address and name (Erez, 8 Nov 2026).
+`/search` sends it the words, genre, country and language asked for (EPlay's
+Find station; Erez, 9 Nov 2026); the log gives only how many stations came.
 
 ### Refusals
 
@@ -896,7 +899,8 @@ only ends it.
 | 502 | `the station's sound couldn't be converted` | ffmpeg couldn't read it |
 | 502 | `the station's HLS has no stream` / `this station's HLS (fragmented MP4) isn't taken yet` | HLS it can't play |
 | 502 | `not a picture this reads` | `/art` of something that isn't a picture |
-| 502 | `the station directory doesn't answer` | `/logo`: radio-browser.info didn't answer |
+| 400 | `too long a search` | `/search`: a field over 100 characters |
+| 502 | `the station directory doesn't answer` | `/logo` or `/search`: radio-browser.info didn't answer |
 | 404 | `no logo for this station` | `/logo`: none found |
 
 ### Limits, log, needs

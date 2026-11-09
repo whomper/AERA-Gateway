@@ -444,7 +444,8 @@ always gets MP3, with the songs' titles in it. HLS in fragmented MP4
 isn't taken. EPlay can also ask for a song's cover (`/art`) and, for a
 station that names no picture, its logo from radio-browser.info, a public
 directory of stations (`/logo`): both come as 64x64 JPEGs. For a logo, the
-Gateway sends that directory the station's address and name.
+Gateway sends that directory the station's address and name. EPlay's
+Find station searches that directory through the Gateway (`/search`).
 `install radio` installs ffmpeg if it isn't there; `install all`
 includes it.
 
