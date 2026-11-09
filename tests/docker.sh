@@ -75,17 +75,26 @@ s.close()
 print("ok: dav, pdf, translate, radio, web (with aerajsc) and ftp answer as they should")
 PY
 
-docker exec "$NAME" setpriv --reuid pdfgate --regid pdfgate --init-groups -- \
-  /opt/aera-gateway/translateclient.py --to en <<<"Hallo, das ist gut." | grep -q "en: HALLO" \
+docker exec -i "$NAME" setpriv --reuid pdfgate --regid pdfgate --init-groups -- \
+  /opt/aera-gateway/translateclient.py --to en <<<"Die Katze ist nicht da, und der Hund ist gut." | grep -q "en: DIE KATZE" \
   || fail "pdfgate's user can't use translategate's local socket"
 ok "translategate's local socket, for pdfgate and webgate"
 
-docker exec "$NAME" ps -eo user=,args= | grep -E 'emailgate|ecalgate|eftpgate|webgate|pdfgate|translategate|radiogate|claude_bridge' \
-  | grep -v grep > /tmp/aera-ps.txt || true
+docker exec "$NAME" python3 -c '
+import os, pwd
+for p in os.listdir("/proc"):
+    try:
+        args = open("/proc/%s/cmdline" % p, "rb").read().split(b"\0")
+        uid = [l.split()[1] for l in open("/proc/%s/status" % p) if l.startswith("Uid:")][0]
+    except (OSError, IndexError):
+        continue
+    if len(args) > 1 and args[0].endswith((b"python3", b"python")):
+        print(pwd.getpwuid(int(uid)).pw_name, b" ".join(args).decode())
+' > /tmp/aera-ps.txt
 grep -q '^emailgate .*emailgate.py' /tmp/aera-ps.txt || fail "emailgate isn't its own user"
 grep -q '^webgate .*webgate.py' /tmp/aera-ps.txt || fail "webgate isn't its own user"
 grep -q '^claude-st .*claude_bridge.py' /tmp/aera-ps.txt || fail "the bridge isn't claude-st's"
-! grep -q '^root ' /tmp/aera-ps.txt || fail "a service runs as root"
+! grep -q '^root .*/opt/' /tmp/aera-ps.txt || fail "a service runs as root"
 ok "each service as its own user"
 
 docker exec "$NAME" aera-gateway-run status | grep -q "in a container" || fail "status"
@@ -107,7 +116,15 @@ docker exec "$NAME" grep -q "^CLAUDE_SESSION_KEY=sk-test-Wilhelmina$" /etc/claud
 ok "the SSH host keys and ClaudeST's key kept"
 
 echo "== a service that stops starts again"
-docker exec "$NAME" pkill -f radiogate.py
+docker exec "$NAME" python3 -c '
+import os, signal
+for p in os.listdir("/proc"):
+    try:
+        if b"radiogate.py" in open("/proc/%s/cmdline" % p, "rb").read() and p != str(os.getpid()):
+            os.kill(int(p), signal.SIGKILL)
+    except (OSError, ValueError):
+        pass
+'
 sleep 8
 waitport 8580
 ok "radiogate started again"

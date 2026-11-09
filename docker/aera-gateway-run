@@ -135,10 +135,14 @@ def command(key):
     raise KeyError(key)
 
 
+GROUPS = {"translategate": TR_GROUP}    # (the unit's Group=: its local socket is that group's)
+
+
 def as_user(user, caps=False):
     """the argv prefix that runs a program as user (setpriv, util-linux),
-    with CAP_NET_BIND_SERVICE alone when caps"""
-    pre = ["setpriv", "--reuid", user, "--regid", user, "--init-groups", "--no-new-privs"]
+    with its group (GROUPS, else its own) and CAP_NET_BIND_SERVICE alone
+    when caps"""
+    pre = ["setpriv", "--reuid", user, "--regid", GROUPS.get(user, user), "--init-groups", "--no-new-privs"]
     if caps:
         pre += ["--inh-caps", "+net_bind_service", "--ambient-caps", "+net_bind_service",
                 "--bounding-set", "-all,+net_bind_service"]
