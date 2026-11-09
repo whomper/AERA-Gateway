@@ -486,7 +486,7 @@ running radiogate
 [ ! -e /etc/systemd/system/radiogate.service ] || fail "remove radio left its unit"
 ok "radio"
 
-echo "== claude: the recipe leaves what ClaudeST's pi/install.sh left"
+echo "== claude: the recipe leaves what ClaudeST's pi/install.sh left, then takes AERA-Gateway's own bridge"
 snap() {
   mkdir -p "$1"
   grep -v '^#' /etc/claude-st/claude-st.env > "$1/env"    # the settings; the notes name today's commands
@@ -514,10 +514,21 @@ sleep 3
 running claude-st
 listens 2323
 sed -i 's/^CLAUDE_SESSION_KEY=$/CLAUDE_SESSION_KEY=sk-test-not-a-key/' /etc/claude-st/claude-st.env
-"$GW/aera-gateway" update --from "$W/ClaudeST" < /dev/null
+# an update takes the bridge that comes with AERA-Gateway (claude-st/, moved
+# from ClaudeST on 9 Nov 2026), every setting and key kept
+"$GW/aera-gateway" update < /dev/null
 grep -q "^CLAUDE_SESSION_KEY=sk-test-not-a-key$" /etc/claude-st/claude-st.env || fail "update lost the key"
 grep -q "^CLAUDE_ST_ARGS=--backend demo --tcp 0.0.0.0:2323 --allow 192.168.1.20$" /etc/claude-st/claude-st.env \
   || fail "update changed the settings"
+for f in claude_bridge.py backends.py atari_text.py requirements.txt; do
+  cmp -s "$GW/claude-st/bridge/$f" "/opt/claude-st/bridge/$f" || fail "update didn't put AERA-Gateway's $f in place"
+done
+[ ! -e /opt/claude-st/bridge/test_bridge.py ] || fail "the bridge's tests were installed"
+cmp -s "$GW/claude-st/claude-st.service" /etc/systemd/system/claude-st.service || fail "the unit isn't AERA-Gateway's"
+grep -q "^AERA-Gateway " /opt/claude-st/SOURCE || fail "SOURCE doesn't name AERA-Gateway"
+sleep 3
+running claude-st
+listens 2323
 "$GW/aera-gateway" remove claude
 [ -e /etc/claude-st/claude-st.env ] || fail "remove took ClaudeST's settings"
 [ ! -e /opt/claude-st ] || fail "remove left /opt/claude-st"

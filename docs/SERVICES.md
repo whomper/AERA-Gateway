@@ -918,12 +918,15 @@ only ends it.
 ## claude: ClaudeST
 
 ClaudeST's bridge, connecting an Atari running `CLAUDEST.PRG` to claude.ai or
-the Anthropic API. The bridge is ClaudeST's own (it changes with ClaudeST),
-and so is its protocol: see ClaudeST's `PROTOCOL.md`. The Gateway sets it up
-as ClaudeST's `pi/install.sh` did (`tests/systemd.sh` checks that).
+the Anthropic API. It came here from ClaudeST on 9 Nov 2026 (Erez) and is
+released with AERA-Gateway; ClaudeST still owns its protocol (see ClaudeST's
+`PROTOCOL.md`) and reviews its changes. The Gateway sets it up as ClaudeST's
+`pi/install.sh` did (`tests/systemd.sh` checks that).
 
-- **Program:** ClaudeST's `bridge/claude_bridge.py`, from ClaudeST's latest
-  release, in `/opt/claude-st`, run as `claude-st.service`.
+- **Program:** `gateway/claude-st/bridge/claude_bridge.py` (with `backends.py`
+  and `atari_text.py`; `gateway/claude-st/CLAUDEST` names the ClaudeST commit
+  it came from), installed in `/opt/claude-st` and run as `claude-st.service`
+  (`gateway/claude-st/claude-st.service`).
 - **Port:** 2323 on the network, or a serial cable (19200 baud).
 
 ### Install
@@ -942,7 +945,7 @@ sudo aera-gateway set-key        a new claude.ai session key
 | `--serial DEVICE` | a serial cable instead (`auto`: a USB adapter) |
 | `--baud N` | the cable's speed (19200 by default) |
 | `--backend claudeai\|api\|demo` | claude.ai with a session key (the default), the Anthropic API with a key, or a demo |
-| `--from DIR` / `--tag vX.Y` | the bridge from a ClaudeST copy, or another release |
+| `--from DIR` | the bridge from a ClaudeST copy (`bridge/` and `pi/`) instead |
 | `--set-key` | paste a new claude.ai session key |
 
 It installs python3 and python3-venv, and the bridge's packages (pyserial,

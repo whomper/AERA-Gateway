@@ -1,10 +1,10 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 AERA | Erez Yaary
-# Bring every AERA gateway on this Pi up to date, from releases only:
+# Bring every AERA service on this Gateway up to date, from releases only:
 # this copy goes to AERA-Gateway's latest release, and aera-gateway update
-# brings mail, dav, ftp and ClaudeST's bridge (from ClaudeST's latest
-# release) up to date, every setting, key and chat kept.
+# brings every service installed up to date, ClaudeST's bridge included
+# (it comes with AERA-Gateway), every setting, key and chat kept.
 #
 #   ~/AERA-Gateway/update-pi.sh
 #   ~/AERA-Gateway/update-pi.sh --allow ATARI_IP [--mail IMAP SMTP[:587] [POP3]] [--browser]

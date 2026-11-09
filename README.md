@@ -88,7 +88,7 @@ Then, now and then:
 
 It takes the copy to the latest release and runs
 `sudo aera-gateway update`: every service installed brought up to date,
-ClaudeST's bridge from ClaudeST's latest release, all settings, keys,
+ClaudeST's bridge included, all settings, keys,
 chats and languages kept. Without options it adds no service: a new one
 is `install SERVICE`, or `update-pi.sh --allow ATARI_IP` for all of them.
 The Gateway runs releases only, never work in progress.
@@ -121,6 +121,7 @@ gateway/      what runs on the Gateway; the apps carry a copy of this folder
   translate-languages.tsv the languages that can be installed, with their sizes
   radiogate.py    radio: web radio (MP3, AAC, Ogg, HLS) as MP3 for EPlay (EPlay's radio/, tools/sync-radio.sh; ffmpeg)
   EPLAY           the EPlay commit radiogate.py is from
+  claude-st/      claude: ClaudeST's bridge (bridge/, its unit; CLAUDEST: the ClaudeST commit it came from)
   install.sh      the apps' old way in, handed on to aera-gateway
   test_*.py       their tests
 pdf/              aerapdf, pdfgate's converter: built on the Gateway by install pdf
@@ -143,8 +144,9 @@ tests/systemd.sh  aera-gateway for real, on a computer with systemd
 tests/snap.sh     install web --browser for real with Ubuntu's Chromium snap
 ```
 
-ClaudeST's bridge is ClaudeST's own (it changes with `CLAUDEST.PRG`):
-`aera-gateway` sets it up from a ClaudeST release or copy.
+ClaudeST's bridge came here from ClaudeST on 9 Nov 2026 (Erez), in
+`gateway/claude-st/`: it is released with AERA-Gateway, and ClaudeST still
+owns its protocol and reviews its changes.
 
 ## The apps' copies
 

@@ -954,6 +954,27 @@ class ClaudeTest(Base):
         self.run_ag("install", "claude", "--from", self.src)
         self.assertTrue(self.pi.read(self.conf).endswith("CLAUDE_ST_ARGS=--backend demo --tcp 0.0.0.0:2424\n"))
 
+    def test_from_this_copy(self):
+        """without --from: the bridge that comes with AERA-Gateway (claude-st/,
+        moved from ClaudeST), never a download"""
+        rc = self.run_ag("install", "claude", "--network", "--atari", "192.168.1.20", "--backend", "demo")
+        self.assertEqual(rc, 0, self.err)
+        here = os.path.join(ag.HERE, "claude-st")
+        got = sorted(os.listdir(self.pi.path("/opt/claude-st/bridge")))
+        self.assertEqual(got, ["atari_text.py", "backends.py", "claude_bridge.py", "requirements.txt"])
+        for f in got:
+            with open(os.path.join(here, "bridge", f), "rb") as a, open(self.pi.path("/opt/claude-st/bridge/" + f),
+                                                                         "rb") as b:
+                self.assertEqual(a.read(), b.read(), f)
+        with open(os.path.join(here, "claude-st.service")) as fh:
+            self.assertEqual(self.unit("claude-st"), fh.read())
+        self.assertTrue(self.pi.read("/opt/claude-st/SOURCE").startswith("AERA-Gateway %s (ClaudeST " % ag.VERSION))
+        self.assertEqual(self.run_ag("update"), 0, self.err)
+        self.assertTrue(self.pi.read(self.conf).endswith(
+            "CLAUDE_ST_ARGS=--backend demo --tcp 0.0.0.0:2323 --allow 192.168.1.20\n"))
+        self.assertEqual(self.run_ag("install", "claude", "--tag", "v2.1"), 2)
+        self.assertIn("comes with AERA-Gateway now", self.err)
+
     def test_serial_and_key(self):
         self.pi.answers = ["sk-ant-sid01-test"]
         self.assertEqual(self.run_ag("install", "claude", "--from", self.src, "--port", "/dev/ttyUSB0",
