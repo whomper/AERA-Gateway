@@ -12,6 +12,11 @@ Atari (ECal,     --plain HTTP, proxy form--> Pi  ecalgate  --HTTPS--> caldav.icl
 Atari (EFTP)     --plain FTP-->              Pi  eftpgate  --FTPS-->  ftp.example.org
                                                            --SFTP-->  my.server.net
 Atari (EWeb)     --plain HTTP, proxy form--> Pi  webgate   --HTTPS--> any web site
+Atari (EConvert, --a PDF, plain HTTP-->      Pi  pdfgate   (converted on the Pi, nothing onwards)
+       EPDF)
+Atari (EMail,    --text, plain HTTP-->       Pi  translategate (a local engine, nothing onwards)
+       EWeb, EPDF)
+Atari (EPlay)    --plain HTTP-->             Pi  radiogate --HTTP(S)--> any web radio station
 Atari (ClaudeST) --STinG or a serial cable-> Pi  claude-st --HTTPS--> claude.ai
 ```
 
@@ -26,11 +31,17 @@ of them.
 | `dav`    | ECal and EContact   | `ecalgate.py`              | 8180                                     |
 | `ftp`    | EFTP                | `eftpgate.py`              | 2121, and 30000-30099 for data           |
 | `web`    | EWeb                | `webgate.py`               | 8280                                     |
+| `pdf`    | EConvert and EPDF   | `pdfgate.py` and aerapdf   | 8380                                     |
+| `translate` | EMail, EWeb, EPDF | `translategate.py`        | 8480                                     |
+| `radio`  | EPlay               | `radiogate.py`             | 8580                                     |
 | `claude` | ClaudeST            | ClaudeST's bridge          | 2323 (or a serial cable)                 |
+
+What each one speaks (requests, answers, refusals, limits) is in
+[docs/SERVICES.md](../docs/SERVICES.md).
 
 This folder is AERA-Gateway's
 ([whomper/AERA-Gateway](https://github.com/whomper/AERA-Gateway)). EMail,
-ECal, EContact, EFTP, EWeb and ClaudeST carry a copy of it, as they carry
+ECal, EContact, EFTP, EWeb, EPDF, EPlay and ClaudeST carry a copy of it, as they carry
 `common/` from AERA-Atari: change it in AERA-Gateway, never in a copy.
 
 ## Setting it up
@@ -390,6 +401,35 @@ runs it without an engine (it answers in capitals: for the tests).
 machine, the system, the memory, and the engine's quality, speed (a
 piece of 2 KB, the size the apps send) and memory on the fixed sets in
 `tests/translate/`.
+
+## radio: EPlay's web radio
+
+```
+sudo aera-gateway install radio --allow ATARI_IP
+```
+
+EPlay plays MP3 stations by itself; through the Gateway it can play any
+station. A station may send MP3, AAC, Ogg or HLS (or a `.pls` or `.m3u`
+list of stations): radiogate passes MP3 on as it comes, and has ffmpeg
+convert the rest to MP3 (128 kbit/s, 44.1 kHz, stereo), so the Atari
+always gets MP3, with the songs' titles in it. HLS in fragmented MP4
+isn't taken. EPlay can also ask for a song's cover (`/art`) and, for a
+station that names no picture, its logo from radio-browser.info, a public
+directory of stations (`/logo`): both come as 64x64 JPEGs. For a logo, the
+Gateway sends that directory the station's address and name.
+`install radio` installs ffmpeg if it isn't there; `install all`
+includes it.
+
+In EPlay on the Atari: the Gateway's IP address, port 8580. Check it from
+any browser on your network: `http://GATEWAY_IP:8580/version` answers
+"radiogate" and the ffmpeg it converts with. radiogate is EPlay's own
+(`radio/radiogate.py` there, copied here by `tools/sync-radio.sh` at the
+commit in `gateway/EPLAY`).
+
+Two stations play at once, and ffmpeg runs on one thread with 256 MB, at
+a low priority; a station on the home network needs `--allow-local`. The
+log says which Atari listened to which station's host, for how long and
+how much, never the station's path or the titles.
 
 ## claude: ClaudeST's bridge
 
