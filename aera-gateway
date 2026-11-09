@@ -1643,7 +1643,7 @@ CLAUDE_SESSION_KEY=
                  "root:claude-st")
 
     SERIAL_GONE = ("ClaudeST's serial cable isn't supported any more (ClaudeST 2.3, the Gateway %s): "
-                   "ClaudeST reaches the Gateway through STinG or MiNTnet. To move to the network: "
+                   "ClaudeST reaches the Gateway through STinG. To move to the network: "
                    "sudo aera-gateway install claude --network --atari ATARI_IP")
 
     def on_cable(self, pi):

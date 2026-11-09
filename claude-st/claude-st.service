@@ -1,5 +1,5 @@
 [Unit]
-Description=ClaudeST gateway (the Atari, through STinG <-> Claude bridge)
+Description=ClaudeST bridge (the Atari through STinG, Claude through HTTPS)
 After=network-online.target
 Wants=network-online.target
 
