@@ -64,6 +64,24 @@ class Markdown(unittest.TestCase):
         self.assertIn("docs <https://example.com>", joined)
 
 
+class Links(unittest.TestCase):
+    def test_tcp_only(self):
+        """ClaudeST 2.3 reaches the bridge through STinG only (Erez, 9 Nov
+        2026): the serial cable's --serial, --baud and --pipe are gone,
+        and the bridge says it needs --tcp"""
+        import contextlib
+        import io
+        import claude_bridge
+        self.assertFalse(hasattr(claude_bridge, "SerialLink"))
+        self.assertFalse(hasattr(claude_bridge, "PipeLink"))
+        for argv in (["--serial", "/dev/ttyUSB0"], ["--pipe", "a", "b"], ["--backend", "demo"]):
+            err = io.StringIO()
+            with unittest.mock.patch.object(sys, "argv", ["claude_bridge.py"] + argv), \
+                    contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                claude_bridge.main()
+            self.assertIn("--tcp" if argv == ["--backend", "demo"] else "unrecognized", err.getvalue(), argv)
+
+
 class Protocol(unittest.TestCase):
     def setUp(self):
         self.link = FakeLink()

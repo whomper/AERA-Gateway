@@ -17,7 +17,7 @@ sets them up, keeps them up to date and says how they are.
 | `pdf`       | EConvert and EPDF   | 8380                             | PDFs converted (and translated) on the Gateway     |
 | `translate` | EMail, EWeb, EPDF   | 8480                             | text translated on the Gateway by a local engine   |
 | `radio`     | EPlay               | 8580                             | web radio from MP3, AAC, Ogg or HLS stations, sent to the Atari as MP3, with titles, covers and logos |
-| `claude`    | ClaudeST            | 2323 (or a serial cable)         | HTTPS to claude.ai or the Anthropic API            |
+| `claude`    | ClaudeST            | 2323                             | HTTPS to claude.ai or the Anthropic API            |
 
 ## Install
 

@@ -20,7 +20,7 @@ What each service does and speaks is in [SERVICES.md](SERVICES.md).
 |---|---|---|
 | **Raspberry Pi OS 64-bit** (bookworm, trixie) on a Raspberry Pi 4 or 5 | arm64 | everything; translate needs 4 GB of memory |
 | **Debian 12 or newer, Ubuntu 22.04 or newer**, any 64-bit Linux with Docker 24 or newer (a PC, a NAS, a server) | amd64 or arm64 | everything |
-| **macOS 13 or newer** (Apple silicon or Intel) with Docker Desktop | arm64 or amd64 | everything except two things: `AERA_ALLOW` can't single out your Atari, and ClaudeST is network only (no serial cable) |
+| **macOS 13 or newer** (Apple silicon or Intel) with Docker Desktop | arm64 or amd64 | everything except one thing: `AERA_ALLOW` can't single out your Atari |
 | **Windows 10 or 11** with Docker Desktop (WSL 2) | amd64 | the same as macOS |
 
 Not supported:
