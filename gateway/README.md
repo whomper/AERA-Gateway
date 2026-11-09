@@ -63,8 +63,16 @@ sudo aera-gateway install mail imap.gmail.com smtp.gmail.com pop.gmail.com --all
 sudo aera-gateway install dav --allow ATARI_IP
 sudo aera-gateway install ftp --allow ATARI_IP
 sudo aera-gateway install web --allow ATARI_IP
+sudo aera-gateway install pdf --allow ATARI_IP
+sudo aera-gateway install translate --allow ATARI_IP     (English and German; --languages en,de,he for more)
+sudo aera-gateway install radio --allow ATARI_IP
 sudo aera-gateway install claude --network --atari ATARI_IP
 ```
+
+`install pdf` builds EPDF's converter (a few minutes), `install translate`
+downloads the engine and its languages (about 290 MB; it needs a 64-bit
+system and 4 GB), and `install radio` adds ffmpeg. Before `update-pi.sh`
+has run once, `aera-gateway` is `~/AERA-Gateway/gateway/aera-gateway`.
 
 `install all --allow ATARI_IP --mail IMAP SMTP[:587] [POP3] [--browser]`
 does them all in turn: mail only with `--mail`, those already installed
@@ -76,10 +84,30 @@ for their tests. Each gateway runs as a service of its own (`emailgate`,
 with no access to the rest of the Pi, starts now and at every boot, and
 `install` prints what to type into the Atari program.
 
+In each Atari program, the Gateway's address (not its name: plain TOS
+with STinG can't always look names up on the home network) and its port:
+
+| Atari program      | Where                                  | What                                          |
+|--------------------|----------------------------------------|-----------------------------------------------|
+| EMail              | Options > Accounts                     | server `GATEWAY_IP`; IMAP 143 (or POP3 110), SMTP 587 |
+| ECal, EContact     | Settings > Connection                  | Gateway `GATEWAY_IP`, port 8180               |
+| EFTP               | Options > Settings > Secure            | Gateway `GATEWAY_IP`, port 2121               |
+| EWeb               | Settings > Secure                      | Gateway `GATEWAY_IP`, port 8280               |
+| EConvert, EPDF     | Gateway mode: Through the Gateway      | `GATEWAY_IP`, port 8380                       |
+| EMail, EWeb, EPDF  | Settings: Translate                    | Gateway `GATEWAY_IP`, port 8480               |
+| EPlay              | Settings: Gateway                      | `GATEWAY_IP`, port 8580                       |
+| ClaudeST           | Options > Settings > Network           | `GATEWAY_IP`, port 2323                       |
+
+On a Falcon or TT, EMail, ECal, EContact, EFTP and EWeb can make the
+secure connections themselves (their Falcon mode); the Gateway is still
+needed for SFTP, and for EWeb's smaller pictures, pens, compiled scripts,
+translation and snapshots.
+
 Afterwards:
 
 ```
-~/AERA-Gateway/update-pi.sh               the latest release, every gateway on the Pi updated, settings kept
+~/AERA-Gateway/update-pi.sh               the latest release, every service installed updated, settings kept
+                                          (it adds none: a new one is install SERVICE)
 aera-gateway status                       what runs, on which ports, with which settings
 sudo aera-gateway install dav --allow-local     change a setting; the others stay
 sudo aera-gateway remove ftp
