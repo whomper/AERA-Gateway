@@ -49,7 +49,7 @@ import sys
 import tempfile
 import time
 
-VERSION = "1.38"                         # AERA-Gateway's release: the Release workflow tags it vX.Y
+VERSION = "1.39"                         # AERA-Gateway's release: the Release workflow tags it vX.Y
 HERE = os.path.dirname(os.path.realpath(__file__))
 PROG = sys.argv[0] if sys.argv[0].endswith("aera-gateway") else "aera-gateway"   # as typed, for advice
 OPT = "/opt/aera-gateway"                   # the gateways' code on the Pi
@@ -357,6 +357,18 @@ class Gateway:
             out += ["--bind", ns.bind]
         for a in ns.allow or []:
             out += ["--allow", a]
+        return out
+
+    @staticmethod
+    def kept(ns, *dests):
+        """the program's own settings among dests that aren't its defaults
+        (set by hand on the unit's line, which the installer has no option
+        for): written back as they were, so that an update keeps them"""
+        out = []
+        for d in dests:
+            v = getattr(ns, d, None)
+            if v is not None and v != ns.default.get(d):
+                out += ["--" + d.replace("_", "-"), str(v)]
         return out
 
     def ports(self, ns):
@@ -1190,6 +1202,8 @@ class Pdf(Gateway):
 
     def args(self, ns):
         out = ["--port", str(ns.port)] + super().args(ns)
+        out += self.kept(ns, "aerapdf", "fonts", "source", "max_mb", "time", "memory_mb", "jobs", "tmp",
+                         "translator")
         out += ["-v"] if ns.verbose else []
         return out + ns.extra
 
@@ -1259,6 +1273,7 @@ class Translate(Gateway):
         out = ["--port", str(ns.port)] + super().args(ns)
         if ns.engine != ns.default["engine"]:
             out += ["--engine", ns.engine]
+        out += self.kept(ns, "models", "state", "workers", "time")
         out += ["--local", self.LOCAL]          # for webgate and pdfgate (translateclient)
         out += ["-v"] if ns.verbose else []
         return out + [w for i, w in enumerate(ns.extra)
@@ -1438,6 +1453,7 @@ class Radio(Gateway):
     def args(self, ns):
         out = ["--port", str(ns.port)] + super().args(ns)
         out += ["--allow-local"] if ns.allow_local else []
+        out += self.kept(ns, "cafile", "ffmpeg", "jobs", "memory_mb", "timeout")
         out += ["-v"] if ns.verbose else []
         return out + ns.extra
 
