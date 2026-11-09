@@ -102,6 +102,20 @@ what each one speaks is in [docs/SERVICES.md](docs/SERVICES.md).
 A Raspberry Pi set up with the apps' own `install.sh` (before the gateways moved
 here) is taken over by `update`: the same services, ports and settings.
 
+## In Docker
+
+The Gateway also comes as one Docker container, with every service in it
+(Erez, 9 Nov 2026): `ghcr.io/whomper/aera-gateway`, made with each release.
+It runs on 64-bit Linux (a Raspberry Pi 4 or 5 with the 64-bit Raspberry Pi
+OS, Debian, Ubuntu; arm64 or amd64), and on macOS and Windows with Docker
+Desktop, with two limits there. 32-bit systems need the install above.
+How, and the systems in full: [docs/DOCKER.md](docs/DOCKER.md).
+
+```
+curl -fsSLO https://raw.githubusercontent.com/whomper/AERA-Gateway/main/docker/compose.yml
+nano compose.yml && docker compose up -d
+```
+
 ## Source
 
 ```
@@ -138,10 +152,13 @@ tools/
   translate-check.py translategate's engine on a Gateway: quality, speed and memory
 docs/
   SERVICES.md     the services' reference: requests, answers, refusals, limits, logs
+  DOCKER.md       the Gateway in Docker: which systems, how
+docker/           the Docker image: its Dockerfile, aera-gateway-run (what systemd does on a Pi), compose files
 tests/translate/  the fixed Hebrew/English set translate-check.py uses (no private text)
 update-pi.sh      this copy at the latest release, then aera-gateway update (with --allow: install all)
 tests/systemd.sh  aera-gateway for real, on a computer with systemd
 tests/snap.sh     install web --browser for real with Ubuntu's Chromium snap
+tests/docker.sh   the Docker image for real: every service, /data kept
 ```
 
 ClaudeST's bridge came here from ClaudeST on 9 Nov 2026 (Erez), in

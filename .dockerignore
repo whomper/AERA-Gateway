@@ -1,0 +1,8 @@
+.git
+pdf/aerapdf
+pens/aerapens
+jsc/aerajsc
+**/build
+**/__pycache__
+tests
+docs

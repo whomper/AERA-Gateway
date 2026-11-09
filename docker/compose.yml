@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 AERA | Erez Yaary
+#
+# The Gateway in Docker on Linux (a 64-bit Raspberry Pi OS, Debian, Ubuntu;
+# arm64 or amd64): docs/DOCKER.md. In this folder:
+#
+#   docker compose up -d          start (and after `docker compose pull`, update)
+#   docker compose logs -f        what the services say
+#   docker exec -it aera-gateway aera-gateway-run set-key     a new claude.ai key
+#
+# The host's network, so that the Ataris reach the services on the host's
+# own address and the services see each Atari's address (--allow, the
+# home network). Don't run it beside services installed with aera-gateway
+# on the same computer: they use the same ports.
+services:
+  aera-gateway:
+    image: ghcr.io/whomper/aera-gateway:latest      # with the Gateway's browser: :latest-browser
+    container_name: aera-gateway
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - aera-gateway:/data                          # what is kept: keys, languages, settings
+    environment:
+      AERA_ALLOW: ""            # your Atari's address (several: IP1,IP2); empty: the home network
+      AERA_MAIL: ""             # EMail: "imap.example.com smtp.example.com[:587] [pop.example.com]"
+      AERA_SERVICES: "all"      # or some of: mail dav ftp web pdf translate radio claude
+      AERA_LANGUAGES: "en,de"   # translate's languages at the first start
+      AERA_BROWSER: "0"         # 1 with the :latest-browser image: EWeb's snapshots
+      AERA_ALLOW_LOCAL: "0"     # 1: servers and stations on the home network too
+      CLAUDE_BACKEND: "claudeai"
+volumes:
+  aera-gateway:

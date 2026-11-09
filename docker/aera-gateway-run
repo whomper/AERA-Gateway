@@ -1,0 +1,456 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 AERA | Erez Yaary
+"""aera-gateway-run - the Gateway's services in a Docker container (Erez,
+9 Nov 2026): what systemd does for them on a Raspberry Pi, done here.
+
+It starts the services named in AERA_SERVICES, each as its own user, with
+the settings `aera-gateway install` would give them, and starts a service
+again when it stops (after 5 s). It also does the jobs systemd's other
+units do on a Raspberry Pi:
+  - aerapens and aerajsc: one a connection on their sockets, as a user of
+    their own, with little memory and time (webgate-pens.socket,
+    webgate-js.socket);
+  - translate's Languages job: when translategate writes a request, the job
+    runs (translategate-langs.path), and translategate starts again;
+  - the first start downloads translate's languages (AERA_LANGUAGES);
+  - with the browser image, the Gateway's browser (Xvfb and Chromium).
+Everything is logged to the container's output (docker logs).
+
+What is kept goes in /data (a volume): FTP's SSH host keys, translate's
+models, ClaudeST's settings, key and chats, the browser's profile.
+
+    aera-gateway-run                 start them (the container's command)
+    aera-gateway-run status          what runs (docker exec)
+    aera-gateway-run set-key         a new claude.ai session key (docker exec -it)
+
+The settings are environment variables (docker/compose.yml lists them):
+  AERA_SERVICES     the services, e.g. "dav ftp web pdf translate radio claude"
+                    (default: all of them; mail only with AERA_MAIL)
+  AERA_ALLOW        the Ataris' addresses (IP1,IP2); empty: the home network
+  AERA_ALLOW_LOCAL  1: dav, ftp, web and radio may reach servers at home
+  AERA_MAIL         "IMAP SMTP[:587] [POP3]": the mail provider's servers
+  AERA_LANGUAGES    translate's languages at first start (en,de; none: none)
+  AERA_BROWSER      1: web with the Gateway's browser (the -browser image)
+  AERA_VERBOSE      1: every service logs every request
+  AERA_ARGS_<KEY>   more of one service's own options, e.g. AERA_ARGS_PDF="--time 900"
+  CLAUDE_BACKEND    claudeai (default), api or demo
+  CLAUDE_SESSION_KEY, ANTHROPIC_API_KEY   the first start writes them to /data
+
+Standard Python 3 only.
+"""
+
+import grp
+import json
+import os
+import pwd
+import resource
+import shlex
+import signal
+import socket
+import subprocess
+import sys
+import threading
+
+OPT = "/opt/aera-gateway"
+DATA = "/data"
+PY = "/usr/bin/python3"
+TR_VENV = "/opt/translategate/venv/bin/python3"
+CLAUDE_VENV = "/opt/claude-st/venv/bin/python"
+CLAUDE_CONF = "/etc/claude-st/claude-st.env"
+TR_GROUP = "aera-translate"
+ALL = ("mail", "dav", "ftp", "web", "pdf", "translate", "radio", "claude")
+RESTART = 5
+STOP = threading.Event()
+
+
+def say(*words):
+    print("aera-gateway-run:", *words, file=sys.stderr, flush=True)
+
+
+def env(name, default=""):
+    return os.environ.get(name, default).strip()
+
+
+def flag(name):
+    return env(name).lower() in ("1", "yes", "true", "on")
+
+
+def allow_args():
+    out = []
+    for a in env("AERA_ALLOW").replace(",", " ").split():
+        out += ["--allow", a]
+    return out
+
+
+def services():
+    want = env("AERA_SERVICES")
+    if not want or want == "all":
+        names = [s for s in ALL if s != "mail" or env("AERA_MAIL")]
+    else:
+        names = want.replace(",", " ").split()
+    odd = [n for n in names if n not in ALL]
+    if odd:
+        sys.exit("aera-gateway-run: no service %s; there are %s" % (", ".join(odd), ", ".join(ALL)))
+    return names
+
+
+# ------------------------------------------------- the services' command lines
+
+def command(key):
+    """(user, argv, extra environment, ambient capabilities) for a service,
+    as aera-gateway install sets it up"""
+    v = ["-v"] if flag("AERA_VERBOSE") else []
+    local = ["--allow-local"] if flag("AERA_ALLOW_LOCAL") else []
+    more = shlex.split(env("AERA_ARGS_" + key.upper()))
+    if key == "mail":
+        servers = env("AERA_MAIL").split()
+        if len(servers) not in (2, 3):
+            sys.exit("aera-gateway-run: AERA_MAIL wants IMAP SMTP[:587] [POP3]")
+        # (ports below 1024: that one privilege, as the Raspberry Pi's unit gives it)
+        return "emailgate", [PY, OPT + "/emailgate.py", "-v"] + allow_args() + more + servers, {}, True
+    if key == "dav":
+        return "ecalgate", [PY, OPT + "/ecalgate.py", "--port", "8180"] + allow_args() + local + v + more, {}, False
+    if key == "ftp":
+        return "eftpgate", [PY, OPT + "/eftpgate.py", "--port", "2121", "--pasv-ports", "30000-30099",
+                            "--state", "/var/lib/eftpgate"] + allow_args() + local + v + more, {}, False
+    if key == "web":
+        browser = ["--browser"] if flag("AERA_BROWSER") else []
+        extra = {"DISPLAY": ":99", "HOME": "/var/lib/webgate"} if browser else {}
+        return "webgate", [PY, OPT + "/webgate.py", "--port", "8280"] + allow_args() + local + browser + v + more, \
+            extra, False
+    if key == "pdf":
+        return "pdfgate", [PY, OPT + "/pdfgate.py", "--port", "8380"] + allow_args() + v + more, {}, False
+    if key == "translate":
+        return "translategate", [TR_VENV, OPT + "/translategate.py", "--port", "8480", "--engine", "argos",
+                                 "--local", "/run/translategate/local.sock"] + allow_args() + v + more, {}, False
+    if key == "radio":
+        return "radiogate", [PY, OPT + "/radiogate.py", "--port", "8580"] + allow_args() + local + v + more, {}, False
+    if key == "claude":
+        conf = read_conf()
+        argv = [CLAUDE_VENV, "/opt/claude-st/bridge/claude_bridge.py", "--store", "/var/lib/claude-st"]
+        argv += shlex.split(conf.get("CLAUDE_ST_ARGS", "")) + shlex.split(conf.get("CLAUDE_ST_EXTRA", "")) + more
+        keys = {k: conf[k] for k in ("CLAUDE_SESSION_KEY", "ANTHROPIC_API_KEY") if conf.get(k)}
+        return "claude-st", argv, dict(keys, HOME="/var/lib/claude-st"), False
+    raise KeyError(key)
+
+
+def as_user(user, caps=False):
+    """the argv prefix that runs a program as user (setpriv, util-linux),
+    with CAP_NET_BIND_SERVICE alone when caps"""
+    pre = ["setpriv", "--reuid", user, "--regid", user, "--init-groups", "--no-new-privs"]
+    if caps:
+        pre += ["--inh-caps", "+net_bind_service", "--ambient-caps", "+net_bind_service",
+                "--bounding-set", "-all,+net_bind_service"]
+    else:
+        pre += ["--inh-caps", "-all", "--bounding-set", "-all"]
+    return pre + ["--"]
+
+
+# --------------------------------------------------------------- ClaudeST
+
+def read_conf():
+    out = {}
+    try:
+        with open(CLAUDE_CONF) as f:
+            for line in f:
+                k, eq, v = line.rstrip("\n").partition("=")
+                if eq and not k.startswith("#"):
+                    out[k.strip()] = v
+    except OSError:
+        pass
+    return out
+
+
+def write_conf(values):
+    """CLAUDE_CONF with values in place of its NAME= lines (0640 root:claude-st)"""
+    lines = []
+    try:
+        with open(CLAUDE_CONF) as f:
+            lines = [ln.rstrip("\n") for ln in f if ln.split("=", 1)[0] not in values]
+    except OSError:
+        lines = ["# ClaudeST's settings on the Gateway (the container's /data). A new key:",
+                 "#   docker exec -it aera-gateway aera-gateway-run set-key"]
+    lines += ["%s=%s" % kv for kv in values.items()]
+    tmp = CLAUDE_CONF + ".new"
+    with open(tmp, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    os.chmod(tmp, 0o640)
+    os.chown(tmp, 0, grp.getgrnam("claude-st").gr_gid)
+    os.replace(tmp, CLAUDE_CONF)
+
+
+def claude_conf():
+    """the settings file: its bridge's options from the environment at each
+    start (the network, for the Ataris in AERA_ALLOW or the home network);
+    the keys kept, or the first ones from the environment"""
+    conf = read_conf()
+    values = {"CLAUDE_ST_ARGS": " ".join(["--backend", env("CLAUDE_BACKEND") or "claudeai",
+                                          "--tcp", "0.0.0.0:2323"] + allow_args())}
+    for k in ("CLAUDE_SESSION_KEY", "ANTHROPIC_API_KEY"):
+        if env(k) and conf.get(k) != env(k):
+            values[k] = env(k)
+    if any(conf.get(k) != v for k, v in values.items()):
+        write_conf(values)
+
+
+def set_key():
+    import getpass
+    if not os.path.exists(CLAUDE_CONF):
+        sys.exit("aera-gateway-run: ClaudeST isn't set up in this container yet (start it once).")
+    key = getpass.getpass("Paste the claude.ai sessionKey (input hidden): ").strip()
+    if not key:
+        sys.exit("No key given, nothing changed.")
+    write_conf({"CLAUDE_SESSION_KEY": key})
+    print("Saved; ClaudeST's bridge starts again with it in a few seconds.")
+
+
+# ---------------------------------------------------- one a connection (inetd)
+
+class Inetd(threading.Thread):
+    """a unix socket whose every connection starts the program, as user,
+    the connection its standard input and output (systemd's Accept=yes):
+    aerapens and aerajsc for webgate"""
+
+    def __init__(self, path, owner, program, user, memory, cpu, seconds, most):
+        super().__init__(daemon=True)
+        self.path, self.program, self.user = path, program, user
+        self.memory, self.cpu, self.seconds = memory, cpu, seconds
+        self.slots = threading.BoundedSemaphore(most)
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.bind(path)
+        u = pwd.getpwnam(owner)
+        os.chown(path, u.pw_uid, u.pw_gid)
+        os.chmod(path, 0o600)
+        self.sock.listen(16)
+
+    def limits(self):
+        resource.setrlimit(resource.RLIMIT_AS, (self.memory, self.memory))
+        resource.setrlimit(resource.RLIMIT_CPU, (self.cpu, self.cpu))
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+    def one(self, conn):
+        with self.slots:
+            try:
+                p = subprocess.Popen(as_user(self.user) + [self.program], stdin=conn, stdout=conn,
+                                     preexec_fn=self.limits, cwd="/")
+                try:
+                    p.wait(self.seconds)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    p.wait()
+            except OSError as e:
+                say("%s: %s" % (os.path.basename(self.program), type(e).__name__))
+            finally:
+                conn.close()
+
+    def run(self):
+        while not STOP.is_set():
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            threading.Thread(target=self.one, args=(conn,), daemon=True).start()
+
+
+# --------------------------------------------------------------- the running
+
+class Service(threading.Thread):
+    """one service, started again RESTART s after it stops"""
+
+    def __init__(self, key):
+        super().__init__(daemon=True, name=key)
+        self.key, self.proc = key, None
+
+    def run(self):
+        while not STOP.is_set():
+            try:
+                user, argv, extra, caps = command(self.key)
+            except SystemExit as e:
+                say(str(e))
+                return
+            e = dict(os.environ, **extra)
+            for k in [k for k in e if k.startswith(("AERA_", "CLAUDE_SESSION", "ANTHROPIC"))]:
+                if k not in extra:
+                    del e[k]            # (the settings, the keys above all, aren't the services')
+            try:
+                self.proc = subprocess.Popen(as_user(user, caps) + argv, env=e, cwd="/")
+            except OSError as err:
+                say("%s didn't start (%s)" % (self.key, err))
+                STOP.wait(RESTART)
+                continue
+            self.proc.wait()
+            if not STOP.is_set():
+                say("%s stopped (%s); again in %d s" % (self.key, self.proc.returncode, RESTART))
+                STOP.wait(RESTART)
+
+    def restart(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+
+
+def ensure(path, user, mode=0o755, group=None):
+    os.makedirs(os.path.realpath(path), exist_ok=True)
+    u = pwd.getpwnam(user)
+    os.chown(path, u.pw_uid, grp.getgrnam(group).gr_gid if group else u.pw_gid)
+    os.chmod(path, mode)
+
+
+def translate_first():
+    """the languages, the first time (the Raspberry Pi's install translate)"""
+    models = "/opt/translategate/models"
+    if env("AERA_LANGUAGES") == "none":
+        return
+    if any(os.path.isdir(os.path.join(models, d)) and "_" in d for d in os.listdir(models)):
+        return
+    want = [c for c in env("AERA_LANGUAGES", "en,de").replace(",", " ").split()]
+    say("translate: downloading the languages %s (once; a few minutes)" % ",".join(want))
+    with open("/var/lib/translategate/request", "w") as f:
+        json.dump({"id": 0, "want": want}, f)
+    os.chown("/var/lib/translategate/request", pwd.getpwnam("translategate").pw_uid, -1)
+    subprocess.run(as_user("translategate") + [PY, OPT + "/translatelangs.py", "job"])
+    with open("/var/lib/translategate/job") as f:
+        job = json.load(f)
+    if job.get("state") != "done":
+        say("translate: the languages didn't download (%s)" % job.get("why", "?"))
+
+
+def languages_job(service):
+    """translategate-langs.path: a request from an app's Languages page,
+    done; translategate starts again by itself when it sees the job end"""
+    path = "/var/lib/translategate/request"
+    seen = os.path.getmtime(path) if os.path.exists(path) else 0
+    while not STOP.wait(2):
+        try:
+            now = os.path.getmtime(path)
+        except OSError:
+            continue
+        if now != seen:
+            seen = now
+            subprocess.run(as_user("translategate") + [PY, OPT + "/translatelangs.py", "job"])
+
+
+def browser():
+    """the Gateway's browser, as webgate's user: Xvfb, and Chromium with
+    webgate-ext, everything through webgate (Web.browser_units' flags; in
+    the container Chromium's own sandbox is off: the container is it)"""
+    ensure("/var/lib/webgate", "webgate", 0o700)
+    chromium = next((p for p in ("/usr/bin/chromium", "/usr/bin/chromium-browser") if os.path.exists(p)), None)
+    if not chromium:
+        say("web: AERA_BROWSER=1 needs the -browser image (no Chromium here)")
+        return []
+    screen = Proc("screen", "webgate", ["Xvfb", ":99", "-screen", "0", "1280x3072x24", "-nolisten", "tcp"], {})
+    port = 8281
+    args = [chromium, "--no-sandbox", "--kiosk", "--no-first-run", "--no-default-browser-check", "--noerrdialogs",
+            "--disable-infobars", "--disable-session-crashed-bubble", "--password-store=basic",
+            "--user-data-dir=/var/lib/webgate/browser", "--load-extension=%s/webgate-ext" % OPT,
+            "--disable-extensions-except=%s/webgate-ext" % OPT,
+            "--proxy-server=http://127.0.0.1:%d" % port, "--proxy-bypass-list=<-loopback>;127.0.0.1:%d" % port,
+            "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--disable-quic",
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--disable-dev-shm-usage",
+            "--window-position=0,0", "--window-size=1024,768", "about:blank"]
+    view = Proc("browser", "webgate", args, {"DISPLAY": ":99", "HOME": "/var/lib/webgate"})
+    return [screen, view]
+
+
+class Proc(Service):
+    """a helper program (the browser), started again when it stops"""
+
+    def __init__(self, key, user, argv, extra):
+        super().__init__(key)
+        self.spec = (user, argv, extra, False)
+
+    def run(self):
+        while not STOP.is_set():
+            user, argv, extra, caps = self.spec
+            try:
+                self.proc = subprocess.Popen(as_user(user) + argv, env=dict(os.environ, **extra), cwd="/",
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.proc.wait()
+            except OSError as err:
+                say("%s didn't start (%s)" % (self.key, err))
+            STOP.wait(RESTART)
+
+
+def watch_conf(service):
+    """ClaudeST's settings changed (set-key): its bridge starts again"""
+    seen = os.path.getmtime(CLAUDE_CONF) if os.path.exists(CLAUDE_CONF) else 0
+    while not STOP.wait(2):
+        now = os.path.getmtime(CLAUDE_CONF) if os.path.exists(CLAUDE_CONF) else 0
+        if now != seen:
+            seen = now
+            service.restart()
+
+
+def status():
+    with open("/run/aera-gateway/status") as f:
+        print(f.read(), end="")
+
+
+def main():
+    if sys.argv[1:] == ["set-key"]:
+        return set_key()
+    if sys.argv[1:] == ["status"]:
+        return status()
+    if sys.argv[1:]:
+        sys.exit("usage: aera-gateway-run [status | set-key]")
+    names = services()
+    version = open(OPT + "/VERSION").read().strip() if os.path.exists(OPT + "/VERSION") else "?"
+    say("AERA-Gateway %s: %s; %s" % (version, " ".join(names),
+                                     "only " + env("AERA_ALLOW") if env("AERA_ALLOW") else "the home network"))
+    # what is kept, in /data, each service's own
+    # (the image's symlinks lead each into /data)
+    for path, user, mode in (("/var/lib/eftpgate", "eftpgate", 0o700), ("/var/lib/claude-st", "claude-st", 0o700),
+                             ("/etc/claude-st", "root", 0o755),
+                             ("/var/lib/translategate", "translategate", 0o755),
+                             ("/opt/translategate/models", "translategate", 0o755),
+                             ("/var/lib/webgate", "webgate", 0o700)):
+        ensure(path, user, mode)
+    ensure("/run/translategate", "translategate", 0o750, TR_GROUP)
+    os.makedirs("/run/aera-gateway", exist_ok=True)
+    running = []
+    if "web" in names:
+        Inetd("/run/webgate-pens.sock", "webgate", "/opt/aera-gateway-pens/aerapens", "aerahelper",
+              64 << 20, 2, 5, 8).start()
+        Inetd("/run/webgate-js.sock", "webgate", "/opt/aera-gateway-jsc/aerajsc", "aerahelper",
+              512 << 20, 7, 8, 2).start()
+        if flag("AERA_BROWSER"):
+            running += browser()
+    if "translate" in names:
+        translate_first()
+    if "claude" in names:
+        claude_conf()
+    for key in names:
+        running.append(Service(key))
+    for s in running:
+        s.start()
+    for s in running:
+        if s.key == "translate":
+            threading.Thread(target=languages_job, args=(s,), daemon=True).start()
+        if s.key == "claude":
+            threading.Thread(target=watch_conf, args=(s,), daemon=True).start()
+    with open("/run/aera-gateway/status", "w") as f:
+        f.write("AERA-Gateway %s in a container: %s\n" % (version, ", ".join(names)))
+
+    def stop(*_):
+        STOP.set()
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    STOP.wait()
+    for s in running:
+        s.restart()
+    for s in running:
+        if s.proc:
+            try:
+                s.proc.wait(10)
+            except subprocess.TimeoutExpired:
+                s.proc.kill()
+    say("stopped")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 AERA | Erez Yaary
+#
+# The Gateway in Docker Desktop on macOS or Windows: docs/DOCKER.md.
+#
+#   docker compose -f compose.desktop.yml up -d
+#
+# Docker Desktop runs containers in a virtual machine: the ports are
+# published on the computer's own address, but every Atari reaches the
+# services as Docker's own address. So AERA_ALLOW can't single out your
+# Atari (leave it empty: the home network), and ClaudeST is network only
+# (no serial cable).
+services:
+  aera-gateway:
+    image: ghcr.io/whomper/aera-gateway:latest      # with the Gateway's browser: :latest-browser
+    container_name: aera-gateway
+    restart: unless-stopped
+    ports:
+      - "143:143"               # mail: IMAP
+      - "587:587"               #       SMTP
+      - "110:110"               #       POP3
+      - "8180:8180"             # dav
+      - "2121:2121"             # ftp
+      - "30000-30099:30000-30099"   # ftp's data
+      - "8280:8280"             # web
+      - "8380:8380"             # pdf
+      - "8480:8480"             # translate
+      - "8580:8580"             # radio
+      - "2323:2323"             # claude
+    volumes:
+      - aera-gateway:/data
+    environment:
+      AERA_MAIL: ""             # EMail: "imap.example.com smtp.example.com[:587] [pop.example.com]"
+      AERA_SERVICES: "all"
+      AERA_LANGUAGES: "en,de"
+      AERA_BROWSER: "0"
+      CLAUDE_BACKEND: "claudeai"
+volumes:
+  aera-gateway:
