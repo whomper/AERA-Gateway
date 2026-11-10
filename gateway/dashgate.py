@@ -508,8 +508,11 @@ def status(stats, host_header="", found=None, started=None, peers=None):
 # the new parts in place, and picks out one service's activity. Without
 # scripts it refreshes itself every 30 s (<noscript>).
 
-ACCENT = "#4cc3b5"          # (as attributes too: browsers whose SVG doesn't take CSS)
-SOFT = "#1f2730"
+# the SVGs' colours as attributes too, for a browser whose SVG doesn't take
+# them from the page's CSS (EWeb): the light look's, which such a browser
+# shows; the CSS gives the dark look's where it applies
+ACCENT = "#127a6f"
+SOFT = "#eef1f4"
 STATE = {"running": ("ok", "Running"), "starting": ("warn", "Starting"), "stopping": ("warn", "Stopping"),
          "stopped": ("bad", "Stopped"), "not installed": ("off", "Not installed")}
 

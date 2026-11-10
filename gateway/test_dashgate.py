@@ -227,7 +227,7 @@ class PageTest(unittest.TestCase):
         page = body.decode()
         for want in ('data-service="web"', "news.example.com", "192.168.1.31", "refused: not allowed",
                      "Connections this run", "Not installed", "1 try", '<meta http-equiv="refresh" content="30">',
-                     'fill="none" stroke="#4cc3b5"'):
+                     'fill="none" stroke="#127a6f"', 'fill="#eef1f4"'):
             self.assertIn(want, page)
         self.assertNotIn("%(", page)
         d = {"gateway": {"now": 0, "since": None, "address": "", "where": "systemd", "model": "", "version": "1"},
