@@ -23,7 +23,8 @@ services:
     environment:
       AERA_ALLOW: ""            # your Atari's address (several: IP1,IP2); empty: the home network
       AERA_MAIL: ""             # EMail: "imap.example.com smtp.example.com[:587] [pop.example.com]"
-      AERA_SERVICES: "all"      # or some of: mail dav ftp web pdf translate radio claude
+      AERA_SERVICES: "all"      # or some of: mail dav ftp web pdf translate radio claude dash
+      AERA_DASH_ALLOW: ""       # who may see the dashboard (http://THIS_COMPUTER:8888/); empty: the home network
       AERA_LANGUAGES: "en,de"   # translate's languages at the first start
       AERA_BROWSER: "0"         # 1 with the :latest-browser image: EWeb's snapshots
       AERA_ALLOW_LOCAL: "0"     # 1: servers and stations on the home network too

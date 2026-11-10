@@ -38,7 +38,7 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # the users, as on a Raspberry Pi; aera-translate may use translategate's socket
-RUN for u in emailgate ecalgate eftpgate webgate pdfgate translategate radiogate aerahelper; do \
+RUN for u in emailgate ecalgate eftpgate webgate pdfgate translategate radiogate dashgate aerahelper; do \
         useradd --system --no-create-home --shell /usr/sbin/nologin "$u"; done \
     && useradd --system --home-dir /var/lib/claude-st --shell /usr/sbin/nologin claude-st \
     && groupadd --system aera-translate \
@@ -79,7 +79,7 @@ RUN mkdir -p /data /etc /var/lib \
 
 VOLUME /data
 # mail 143 587 110, dav 8180, ftp 2121 and 30000-30099, web 8280, pdf 8380,
-# translate 8480, radio 8580, ClaudeST 2323
-EXPOSE 143 587 110 8180 2121 30000-30099 8280 8380 8480 8580 2323
+# translate 8480, radio 8580, ClaudeST 2323, the dashboard 8888
+EXPOSE 143 587 110 8180 2121 30000-30099 8280 8380 8480 8580 2323 8888
 STOPSIGNAL SIGTERM
 CMD ["/usr/local/bin/aera-gateway-run"]

@@ -910,6 +910,27 @@ class ClaudeTest(Base):
         self.assertEqual(self.run_ag("remove", "radio"), 0, self.err)
         self.assertIsNone(self.unit("radiogate"))
 
+    def test_dash(self):
+        self.pi.ufw = True
+        self.assertEqual(self.run_ag("install", "dashboard"), 0, self.err)
+        self.assertEqual(self.execstart("dashgate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/dashgate.py "
+                                                     "--port 8888")
+        unit = self.unit("dashgate")
+        for want in ("User=dashgate", "RuntimeDirectory=aera-dash", "RuntimeDirectoryMode=0755",
+                     "ProtectSystem=strict", "NoNewPrivileges=yes"):
+            self.assertIn(want, unit)
+        self.assertNotIn("CAP_NET_BIND_SERVICE", unit)
+        self.assertEqual(self.pi.rules, [(n, "8888") for n in ag.HOME_NETS])
+        self.assertIn(":8888/", self.out)
+        self.assertEqual(self.pi.read("/opt/aera-gateway/VERSION"), ag.VERSION + "\n")
+        # settings kept, one changed
+        self.assertEqual(self.run_ag("install", "dash", "--allow", "192.168.1.60"), 0, self.err)
+        self.assertEqual(self.run_ag("install", "dash", "-v"), 0, self.err)
+        self.assertEqual(self.execstart("dashgate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/dashgate.py "
+                                                     "--port 8888 --allow 192.168.1.60 -v")
+        self.assertEqual(self.run_ag("remove", "dash"), 0, self.err)
+        self.assertIsNone(self.unit("dashgate"))
+
     def test_install_all(self):
         rc = self.run_ag("install", "all", "--allow", "192.168.1.50", "--from", self.src,
                          "--mail", "imap.mail.me.com", "smtp.mail.me.com:587")
@@ -918,7 +939,10 @@ class ClaudeTest(Base):
             self.assertIn("--allow 192.168.1.50", self.execstart(name), name)
         self.assertIn("imap.mail.me.com smtp.mail.me.com:587", self.execstart("emailgate"))
         self.assertIn("--tcp 0.0.0.0:2323 --allow 192.168.1.50", self.pi.read(self.conf))
-        self.assertIn("Installed: mail, dav, ftp, web, %stranslate, radio, claude" %
+        # the dashboard: for the Mac or PC, so the home network, not the Atari's --allow
+        self.assertEqual(self.execstart("dashgate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/dashgate.py "
+                                                     "--port 8888")
+        self.assertIn("Installed: mail, dav, ftp, web, %stranslate, radio, dash, claude" %
                       ("pdf, " if os.path.isdir(os.path.join(ag.Pdf.PDF_SRC, "epdf")) else ""), self.out)
         # again, without --mail or --allow: everything kept as it is
         self.assertEqual(self.run_ag("install", "all", "--from", self.src), 0, self.err)
@@ -930,7 +954,7 @@ class ClaudeTest(Base):
         # install all leaves translate out on a Pi too small for its engine, and installs the others
         self.pi.write("/proc/meminfo", "MemTotal:        1948304 kB\n")
         self.assertEqual(self.run_ag("install", "all", "--allow", "192.168.1.50", "--from", self.src), 0, self.err)
-        self.assertIn("Installed: dav, ftp, web, %sradio, claude" %
+        self.assertIn("Installed: dav, ftp, web, %sradio, dash, claude" %
                       ("pdf, " if os.path.isdir(os.path.join(ag.Pdf.PDF_SRC, "epdf")) else ""), self.out)
         self.assertIn("translate (its engine needs a Pi with 4 GB of memory or more; this one has 1902 MB)", self.out)
         self.assertIsNone(self.unit("translategate"))

@@ -25,8 +25,9 @@ models, ClaudeST's settings, key and chats, the browser's profile.
     aera-gateway-run set-key         a new claude.ai session key (docker exec -it)
 
 The settings are environment variables (docker/compose.yml lists them):
-  AERA_SERVICES     the services, e.g. "dav ftp web pdf translate radio claude"
+  AERA_SERVICES     the services, e.g. "dav ftp web pdf translate radio claude dash"
                     (default: all of them; mail only with AERA_MAIL)
+  AERA_DASH_ALLOW   who may see the dashboard (IP1,IP2); empty: the home network
   AERA_ALLOW        the Ataris' addresses (IP1,IP2); empty: the home network
   AERA_ALLOW_LOCAL  1: dav, ftp, web and radio may reach servers at home
   AERA_MAIL         "IMAP SMTP[:587] [POP3]": the mail provider's servers
@@ -51,6 +52,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 
 OPT = "/opt/aera-gateway"
 DATA = "/data"
@@ -59,7 +61,8 @@ TR_VENV = "/opt/translategate/venv/bin/python3"
 CLAUDE_VENV = "/opt/claude-st/venv/bin/python"
 CLAUDE_CONF = "/etc/claude-st/claude-st.env"
 TR_GROUP = "aera-translate"
-ALL = ("mail", "dav", "ftp", "web", "pdf", "translate", "radio", "claude")
+ALL = ("mail", "dav", "ftp", "web", "pdf", "translate", "radio", "claude", "dash")
+RUN_STATUS = "/run/aera-gateway/services.json"      # for the dashboard (dashgate --container)
 RESTART = 5
 STOP = threading.Event()
 
@@ -126,6 +129,11 @@ def command(key):
                                  "--local", "/run/translategate/local.sock"] + allow_args() + v + more, {}, False
     if key == "radio":
         return "radiogate", [PY, OPT + "/radiogate.py", "--port", "8580"] + allow_args() + local + v + more, {}, False
+    if key == "dash":
+        who = []
+        for a in env("AERA_DASH_ALLOW").replace(",", " ").split():
+            who += ["--allow", a]
+        return "dashgate", [PY, OPT + "/dashgate.py", "--port", "8888", "--container"] + who + v + more, {}, False
     if key == "claude":
         conf = read_conf()
         argv = [CLAUDE_VENV, "/opt/claude-st/bridge/claude_bridge.py", "--store", "/var/lib/claude-st"]
@@ -263,6 +271,31 @@ class Inetd(threading.Thread):
 
 # --------------------------------------------------------------- the running
 
+STATES = {}
+_STATES = threading.Lock()
+
+
+def note(key, state, argv=None):
+    """what the dashboard shows of a service: running or stopped, since
+    when, its options (never a key: those are in its environment)"""
+    with _STATES:
+        s = STATES.setdefault(key, {"state": "stopped", "since": None, "args": []})
+        s["state"] = state
+        s["since"] = time.time() if state == "running" else None
+        if argv is not None:
+            s["args"] = argv[2:]
+        try:
+            tmp = RUN_STATUS + ".new"
+            with open(tmp, "w") as f:
+                json.dump({"started": START, "services": STATES}, f)
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, RUN_STATUS)
+        except OSError:
+            pass
+
+
+START = None
+
 class Service(threading.Thread):
     """one service, started again RESTART s after it stops"""
 
@@ -287,7 +320,9 @@ class Service(threading.Thread):
                 say("%s didn't start (%s)" % (self.key, err))
                 STOP.wait(RESTART)
                 continue
+            note(self.key, "running", argv)
             self.proc.wait()
+            note(self.key, "stopped")
             if not STOP.is_set():
                 say("%s stopped (%s); again in %d s" % (self.key, self.proc.returncode, RESTART))
                 STOP.wait(RESTART)
@@ -402,6 +437,8 @@ def main():
         return status()
     if sys.argv[1:]:
         sys.exit("usage: aera-gateway-run [status | set-key]")
+    global START
+    START = time.time()
     names = services()
     version = open(OPT + "/VERSION").read().strip() if os.path.exists(OPT + "/VERSION") else "?"
     say("AERA-Gateway %s: %s; %s" % (version, " ".join(names),
@@ -416,6 +453,8 @@ def main():
         ensure(path, user, mode)
     ensure("/run/translategate", "translategate", 0o750, TR_GROUP)
     os.makedirs("/run/aera-gateway", exist_ok=True)
+    if "dash" in names:
+        ensure("/run/aera-dash", "dashgate", 0o755)       # its socket, for the gateways
     running = []
     if "web" in names:
         Inetd("/run/webgate-pens.sock", "webgate", "/opt/aera-gateway-pens/aerapens", "aerahelper",

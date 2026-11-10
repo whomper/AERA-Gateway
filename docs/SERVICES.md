@@ -27,6 +27,7 @@ In the examples, `GATEWAY_IP` is the Gateway's address on your home network,
 - [translate: translation for the apps](#translate-translation-for-the-apps)
 - [radio: EPlay](#radio-eplay)
 - [claude: ClaudeST](#claude-claudest)
+- [dash: the dashboard](#dash-the-dashboard)
 
 | Service     | For                       | Port(s)                          | Onwards                                         |
 |-------------|---------------------------|----------------------------------|-------------------------------------------------|
@@ -38,6 +39,7 @@ In the examples, `GATEWAY_IP` is the Gateway's address on your home network,
 | `translate` | EMail, EWeb, EPDF         | 8480; a local socket             | nothing: a local engine translates              |
 | `radio`     | EPlay                     | 8580                             | HTTP and HTTPS to radio stations; radio-browser.info for logos |
 | `claude`    | ClaudeST                  | 2323, or a serial cable          | HTTPS to claude.ai or the Anthropic API         |
+| `dash`      | a browser on the home network | 8888; a local socket         | nothing: it shows the others                    |
 
 A port never moves without the owning app's OK: the Ataris have them in
 their settings.
@@ -976,3 +978,74 @@ one-letter answers are in ClaudeST's `PROTOCOL.md`.
 - **State:** `/etc/claude-st/claude-st.env` (the settings and the session or
   API key; root and claude-st only) and `/var/lib/claude-st` (chats kept by the
   API backend). An update and a remove keep both.
+
+---
+
+## dash: the dashboard
+
+dashgate (`gateway/dashgate.py`, the Gateway's own; Erez, 10 Nov 2026): one
+read-only page for a browser on the Mac or PC, at `http://GATEWAY_IP:8888/`.
+It shows each service running or not and since when, its ports and what it
+speaks; the connections today and this run, with the last eight hours as a
+line; the Ataris that came, what they used and any that were refused; the
+recent connections (time, Atari, service, the server it went to, connected
+or refused); the settings (who may connect, servers at home, the mail
+servers, the browser, translate's languages, ClaudeST's backend; never a
+password or a key); and the computer's memory, disk, processor load and
+temperature. It follows the computer's light or dark look, with a button to
+change it, and asks again every 4 s. It loads nothing from the internet.
+
+### Install
+
+```
+sudo aera-gateway install dash [--allow IP] [--port N] [-v]
+```
+
+`install all` includes it, for the home network: `--allow` there names the
+Ataris, and the Mac or PC isn't one. In Docker it is on by default
+(`AERA_DASH_ALLOW` for `--allow`). An `update` doesn't add it to a Pi that
+hasn't got it: `sudo aera-gateway install dash` once.
+
+### Requests
+
+| Request | Answer |
+|---|---|
+| `GET /` | the page (`/dash.css`, `/dash.js` with it) |
+| `GET /status.json` | what the page shows: `gateway` (version, address, systemd or container, model, since), `services` (key, state, since, ports, today, total, trend, live, last), `ataris`, `events` (the last 50), `settings`, `computer` |
+
+Every answer has `Cache-Control: no-store` and a Content-Security-Policy
+that lets the page run only its own script and ask only the Gateway.
+
+### Where the numbers come from
+
+- **The gateways tell it.** `aeragate.client_ok()` (an Atari connects) and
+  `aeragate.lookup()` (it goes to a server) each send one datagram to
+  `/run/aera-dash/events.sock`: `c ATARI_IP ok`, `c ATARI_IP no` or
+  `t ATARI_IP HOST`. They never wait for it and never fail when it isn't
+  there. dashgate knows which gateway sent each by the sender's user, which
+  the kernel gives it (`SO_PASSCRED`): another user's are dropped. No app's
+  code changed for it.
+- **ClaudeST's bridge** doesn't use aeragate: its connections are counted
+  from the kernel's list of connections (`/proc/net/tcp`), as are the
+  connections open now on every service's port.
+- **The services' states and settings:** from systemd and the units'
+  command lines on a Raspberry Pi; from `aera-gateway-run`
+  (`/run/aera-gateway/services.json`) in a container.
+- **The counts start again** when dashgate starts (Erez, 10 Nov 2026).
+
+### Refusals
+
+| Status | Body | When |
+|---|---|---|
+| 403 | `dashgate: not from this computer` | the browser's computer isn't allowed |
+| 404 | `dashgate: no such page` | another address |
+
+### Limits, log, needs
+
+- The last 200 connections are kept in memory, the last 50 shown.
+- **Who may see it:** the home network, or only `--allow`'s addresses. It
+  shows the Ataris' addresses and the servers they went to, as the log does.
+- **Log:** that it listens; with `-v`, every request.
+- **Needs:** standard Python 3. Its own user, `dashgate`; its socket in
+  `/run/aera-dash`, gone when it stops.
+- **State:** none on disk.

@@ -44,8 +44,8 @@ waitport() {
 
 echo "== the services, each on its port"
 start
-for p in 143 587 8180 2121 8280 8380 8480 8580 2323; do waitport "$p"; done
-ok "mail, dav, ftp, web, pdf, translate, radio and claude answer"
+for p in 143 587 8180 2121 8280 8380 8480 8580 2323 8888; do waitport "$p"; done
+ok "mail, dav, ftp, web, pdf, translate, radio, claude and the dashboard answer"
 
 python3 - <<'PY'
 import socket, urllib.request
@@ -71,8 +71,26 @@ with op.open("http://webgate/scripts", timeout=20) as r:
 s = socket.create_connection(("127.0.0.1", 2121), timeout=10)
 assert s.recv(200).startswith(b"220 eftpgate"), "no eftpgate banner"
 s.close()
-# translategate through its local socket, as pdfgate's user would
 print("ok: dav, pdf, translate, radio, web (with aerajsc) and ftp answer as they should")
+# the dashboard: each service running, and the connections above counted
+import json, time
+for _ in range(20):
+    st, _, body = get("http://127.0.0.1:8888/status.json")
+    d = json.loads(body)
+    svc = {s["key"]: s for s in d["services"]}
+    if svc["dav"]["total"] >= 1 and svc["web"]["total"] >= 1:
+        break
+    time.sleep(1)
+assert d["gateway"]["where"] == "container" and d["gateway"]["version"], d["gateway"]
+assert all(svc[k]["state"] == "running" for k in ("mail", "dav", "ftp", "web", "pdf", "translate", "radio",
+                                                  "claude")), [(k, s["state"]) for k, s in svc.items()]
+assert svc["dav"]["total"] >= 1 and svc["web"]["total"] >= 1 and svc["ftp"]["total"] >= 1, \
+    [(k, s["total"]) for k, s in svc.items()]
+assert d["ataris"][0]["ip"] == "127.0.0.1", d["ataris"]
+assert "imap.invalid" in d["settings"]["mail"], d["settings"]
+st, h, body = get("http://127.0.0.1:8888/")
+assert b"AERA-Gateway" in body and "script-src 'self'" in h["Content-Security-Policy"]
+print("ok: the dashboard: every service running, the connections counted, the settings")
 PY
 
 docker exec -i "$NAME" setpriv --reuid pdfgate --regid pdfgate --init-groups -- \
@@ -93,6 +111,7 @@ for p in os.listdir("/proc"):
 ' > /tmp/aera-ps.txt
 grep -q '^emailgate .*emailgate.py' /tmp/aera-ps.txt || fail "emailgate isn't its own user"
 grep -q '^webgate .*webgate.py' /tmp/aera-ps.txt || fail "webgate isn't its own user"
+grep -q '^dashgate .*dashgate.py' /tmp/aera-ps.txt || fail "dashgate isn't its own user"
 grep -q '^claude-st .*claude_bridge.py' /tmp/aera-ps.txt || fail "the bridge isn't claude-st's"
 ! grep -q '^root .*/opt/' /tmp/aera-ps.txt || fail "a service runs as root"
 ok "each service as its own user"

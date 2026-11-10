@@ -61,7 +61,8 @@ The settings are in the compose file's `environment:`:
 |---|---|
 | `AERA_ALLOW` | your Atari's address (several: `IP1,IP2`); empty: the home network (Linux only) |
 | `AERA_MAIL` | EMail's servers: `"imap.example.com smtp.example.com[:587] [pop.example.com]"`; empty: no mail |
-| `AERA_SERVICES` | `all`, or some of `mail dav ftp web pdf translate radio claude` |
+| `AERA_SERVICES` | `all`, or some of `mail dav ftp web pdf translate radio claude dash` |
+| `AERA_DASH_ALLOW` | who may see the dashboard (`IP1,IP2`); empty: the home network |
 | `AERA_LANGUAGES` | translate's languages, downloaded at the first start (`en,de`; then from the apps' Languages page) |
 | `AERA_BROWSER` | `1` with the `-browser` image: the Gateway's browser for EWeb |
 | `AERA_ALLOW_LOCAL` | `1`: dav, ftp, web and radio may reach servers and stations on the home network |
@@ -71,7 +72,9 @@ The settings are in the compose file's `environment:`:
 | `CLAUDE_SESSION_KEY`, `ANTHROPIC_API_KEY` | ClaudeST's key, taken at the first start (or set it later, below) |
 
 In each Atari program, the Gateway is the computer's address, with the
-ports in the [README](../README.md).
+ports in the [README](../README.md). The dashboard is at
+`http://THIS_COMPUTER:8888/` (on Docker Desktop also `http://localhost:8888/`);
+there, every Atari shows as Docker's own address.
 
 ## Keeping it up to date
 

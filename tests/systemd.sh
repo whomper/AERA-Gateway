@@ -486,6 +486,40 @@ running radiogate
 [ ! -e /etc/systemd/system/radiogate.service ] || fail "remove radio left its unit"
 ok "radio"
 
+echo "== dash: dashgate, the dashboard; the gateways tell it through aeragate"
+"$GW/aera-gateway" install dash > "$W/dash.out" 2>&1 || { cat "$W/dash.out"; fail "install dash"; }
+running dashgate
+listens 8888
+unit_has dashgate "^ExecStart=/usr/bin/python3 /opt/aera-gateway/dashgate.py --port 8888$"
+unit_has dashgate "^User=dashgate"
+unit_has dashgate "^RuntimeDirectory=aera-dash"
+[ -S /run/aera-dash/events.sock ] || fail "no /run/aera-dash/events.sock"
+systemctl is-active --quiet ecalgate || "$GW/aera-gateway" install dav > /dev/null
+python3 - <<'PY'
+import json, time, urllib.request
+urllib.request.urlopen("http://127.0.0.1:8180/", timeout=30).read()
+for _ in range(20):
+    d = json.loads(urllib.request.urlopen("http://127.0.0.1:8888/status.json", timeout=30).read())
+    svc = {s["key"]: s for s in d["services"]}
+    if svc["dav"]["total"] >= 1:
+        break
+    time.sleep(0.5)
+assert svc["dav"]["state"] == "running" and svc["dav"]["since"], svc["dav"]
+assert svc["dav"]["total"] >= 1, svc["dav"]          # told by ecalgate, in its own sandbox
+assert svc["radio"]["state"] == "not installed", svc["radio"]
+assert d["gateway"]["where"] == "systemd" and d["gateway"]["version"], d["gateway"]
+assert d["ataris"] and d["ataris"][0]["ip"] == "127.0.0.1", d["ataris"]
+page = urllib.request.urlopen("http://127.0.0.1:8888/", timeout=30)
+assert b"AERA-Gateway" in page.read() and "script-src 'self'" in page.headers["Content-Security-Policy"]
+print("ok: the page, each service's state from systemd, a dav connection counted")
+PY
+"$GW/aera-gateway" update > "$W/update.out" 2>&1 || { cat "$W/update.out"; fail "update with dash"; }
+unit_has dashgate "dashgate.py --port 8888$"
+running dashgate
+"$GW/aera-gateway" remove dash
+[ ! -e /etc/systemd/system/dashgate.service ] || fail "remove dash left its unit"
+ok "dash"
+
 echo "== claude: the recipe leaves what ClaudeST's pi/install.sh left, then takes AERA-Gateway's own bridge"
 snap() {
   mkdir -p "$1"

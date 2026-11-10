@@ -7,7 +7,7 @@
 #
 # Docker Desktop runs containers in a virtual machine: the ports are
 # published on the computer's own address, but every Atari reaches the
-# services as Docker's own address. So AERA_ALLOW can't single out your
+# services as Docker's own address (the dashboard shows that one too). So AERA_ALLOW can't single out your
 # Atari (leave it empty: the home network), and ClaudeST is network only
 # (no serial cable).
 services:
@@ -27,6 +27,7 @@ services:
       - "8480:8480"             # translate
       - "8580:8580"             # radio
       - "2323:2323"             # claude
+      - "8888:8888"             # the dashboard: http://localhost:8888/
     volumes:
       - aera-gateway:/data
     environment:
