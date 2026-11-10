@@ -23,7 +23,7 @@ typedef struct {
 	char pics;			/* its text holds a picture's line (ts_set_pics) */
 } TSPAGE;
 
-typedef struct {
+typedef struct tstore {
 	TSPAGE *pg;
 	long npages;
 	char *pool;			/* the pages in memory, one after another */
@@ -34,6 +34,9 @@ typedef struct {
 	unsigned long tick;
 	int fh;				/* the cache file, open; -1 not yet */
 	long writes, reads, opens;	/* file writes, reads and opens, for the tests */
+	/* a page this store hasn't got is taken from under's (EPDF's
+	   translations over the pages as read: View > Translate) */
+	struct tstore *under;
 } TSTORE;
 
 /* budget: the bytes kept in memory (the pool), path: the cache file */

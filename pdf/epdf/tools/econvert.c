@@ -8,7 +8,8 @@
  *   econvert --render PAGE OUT.ppm IN.pdf  page PAGE (1-based) drawn 640 wide, and its drawings listed
  *            (--width W, --jpeg-pic: its JPEGs through pic.c, as render.ovl draws them)
  *
- * options: --pages none|mono|colour (whole pages: none, mono, mono and colour; mono),
+ * options: --pages none|mono|colour|colouronly (whole pages: none, mono, mono and colour,
+ *          colour only; mono),
  *          --photos indexed|jpeg (indexed), --pictures page|screen (screen), --page-width N, --picture-width N (640: a screen's), --canvas KB (any), --progress ("progress DONE TOTAL" lines on stderr), --fonts DIR (the standard fonts' files,
  *          Liberation*.ttf; /usr/share/fonts/truetype/liberation), --width N (640)
  */
@@ -175,7 +176,8 @@ int main(int argc, char **argv)
 			width = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--pages") && i + 1 < argc) {
 			i++;
-			o.pages = !strcmp(argv[i], "none") ? CV_PAGES_NONE : !strcmp(argv[i], "colour") ? CV_PAGES_COLOUR : CV_PAGES_MONO;
+			o.pages = !strcmp(argv[i], "none") ? CV_PAGES_NONE : !strcmp(argv[i], "colour") ? CV_PAGES_COLOUR :
+				  !strcmp(argv[i], "colouronly") ? CV_PAGES_COLOUR_ONLY : CV_PAGES_MONO;
 		} else if (!strcmp(argv[i], "--font-kb") && i + 1 < argc) {
 			o.font_budget = atol(argv[++i]) * 1024L;	/* (as EConvert's quarter of what is free) */
 		} else if (!strcmp(argv[i], "--jpeg-pic")) {

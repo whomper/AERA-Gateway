@@ -31,5 +31,8 @@ int tp_split(const char *text, long n, TPARA *p);
    *outlen its bytes; NULL when its paragraphs don't match (or memory) */
 char *tp_join(const char *text, long n, const TPARA *p, const char *utf8, long ulen, long *outlen);
 void tp_free(TPARA *p);
+/* called now and then while a page is cut up and put back (EPDF: a turn
+   for the machine); NULL none */
+extern void (*tp_turn)(void);
 
 #endif

@@ -33,6 +33,24 @@ void doc_close(void);
 int doc_is_open(void);
 const char *doc_path(void);
 const char *doc_name(void);
+/* View > Translate: each page's translation (doc.c keeps them, in memory
+   only), the page's state */
+enum { TR_NONE, TR_DONE, TR_SAME, TR_FAILED, TR_NOTHING, TR_PARTIAL };
+int doc_tr_begin(const char *to);	/* the translations' store for language to: 0, -1 */
+void doc_tr_forget(void);
+void doc_set_translate(int on);		/* the view shows the translations, or the pages as read */
+int doc_tr_state(long n);
+const char *doc_tr_from(long n);
+/* page n's translation (Atari text; NULL with TR_SAME, TR_FAILED, TR_NOTHING) */
+int doc_tr_put(long n, int state, const char *text, long len, const char *from);
+const char *doc_page_original(long n, long *len);	/* the page as read */
+int doc_tr_from_file(void);
+const char *lang_name(const char *code);	/* epdf.c: "he" -> "Hebrew" */		/* a converted PDF translated into it: nothing to ask */
+const char *doc_tr_file_to(void);
+/* the document open is a copy made from path (its name shown) */
+void doc_set_original(const char *path);
+/* that PDF, or the document's own path */
+const char *doc_original(void);
 long doc_pages(void);
 long doc_read(void);			/* pages whose text is read */
 int doc_pending(void);			/* pages still to read */
@@ -50,14 +68,19 @@ void doc_pic_drop_ahead(void);	/* a picture ahead stopped for one shown */
    rows made of all (*of 0: not made a row at a time) */
 long doc_reading(int *prog);
 int doc_pic_progress(long *page, long *made, long *of);
-const char *doc_status(void);		/* the About box's line */
+const char *doc_status(void);
+void epdf_net_line(char *out, int n);	/* the About box's connection line, or "" */		/* the About box's line */
 const char *doc_page_text(long n, long *len);	/* NULL when not read yet */
 long doc_page_len(long n);		/* -1 when not read yet; nothing read */
 #include "docview.h"
 DOCVIEW *doc_view(void);		/* NULL without a document */
 int doc_prepared(void);			/* a converted PDF (EConvert's) */
+/* a page can be drawn at any size here (render.ovl on a Falcon or TT: a
+   PDF's own pages, or a converted copy's from its original) */
+int doc_page_drawable(void);
 int doc_drawn(void);			/* its pages drawn as printed by render.ovl (stage 2) */
 int doc_pic_drawing(void);		/* the picture being made is a page drawn */
+void doc_pic_stop_page_unless(long obj, int w, int h);	/* a zoom: another page's drawing stopped */
 extern char doc_font_dir[200];
 int doc_has_pages(void);		/* ... with its pages whole (View > Pages) */
 int doc_pages_mode(void);		/* the view shows them */
@@ -109,6 +132,16 @@ int win_zoom_at(short mx, short my);
 int win_zoomed(void);
 void win_zoom_end(void);
 int win_zoom_key(short scan);
+/* View > Zoom in (dir 1) and Zoom out (-1) on View > Pages' page in view
+   (100 to 400 %): can it, and do it */
+int win_zoom_can(int dir);
+void win_zoom_step(int dir);
+void win_zoom_actual(void);		/* View > Actual size */
+/* the zoomed picture dragged by (dx, dy): 1 when it moved */
+int win_zoom_pan(long dx, long dy);
+extern void (*has_menu_states)(void);
+/* a new document: every zoom offered again */
+void win_zoom_forget(void);
 /* doc.c: a page's picture (View > Pages) and its double: 1, its object and size */
 int doc_double_of(long obj, long *dbl, long *w, long *h);
 

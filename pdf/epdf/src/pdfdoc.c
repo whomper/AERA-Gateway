@@ -111,8 +111,14 @@ ok:
 		POBJ *a = d->root ? pd_get(d, d->root, "AERA") : NULL;
 
 		if (a && a->t == PO_DICT && pdf_is_name(pd_get(d, a, "Type"), "AERAPrepared") &&
-		    pd_int(d, a, "Version", 0) == 1)
+		    pd_int(d, a, "Version", 0) == 1) {
+			POBJ *t = pd_get(d, a, "Translate");
+			const char *nm = t && t->t == PO_DICT ? pd_name(d, t, "To") : NULL;
+
 			d->prepared = 1;
+			if (nm && strlen(nm) < sizeof d->tr_to)
+				strcpy(d->tr_to, nm);
+		}
 	}
 	d->cur = &d->a;
 	return 0;
@@ -130,6 +136,9 @@ int pdf_prepared_page(PDOC *d, long n, SBUF *text, PPREP *pp)
 	const char *term = NULL;
 
 	pp->mono = pp->colour = -1;
+	pp->trans = -1;
+	pp->from[0] = '\0';
+	pp->same = 0;
 	pp->w = 612;
 	pp->h = 792;
 	if (!d->prepared || !(pg = pdf_page(d, n, &res, &box, &rot)))
@@ -165,10 +174,31 @@ int pdf_prepared_page(PDOC *d, long n, SBUF *text, PPREP *pp)
 			*wh[k][1] = im && im->t == PO_DICT ? pd_int(d, im, "Height", 0) : 0;
 		}
 	}
+	pp->trans = ref_num(pd_getraw(a, "Translation"));
+	{
+		const char *nm = pd_name(d, a, "From");
+
+		if (nm && !strcmp(nm, "Same"))
+			pp->same = 1;
+		else if (nm && strlen(nm) < sizeof pp->from)
+			strcpy(pp->from, nm);
+	}
 	t = pd_get(d, a, "Text");
 	if (!t || t->t != PO_DICT)
 		return -1;
 	if (pdf_stream(d, t, ref_num(pd_getraw(a, "Text")), text, &term, 4L << 20) != 0 || term)
+		return -1;
+	return 0;
+}
+
+int pdf_prepared_translation(PDOC *d, const PPREP *pp, SBUF *text)
+{
+	POBJ *t = pp->trans >= 0 ? pdf_get(d, pp->trans) : NULL;
+	const char *term = NULL;
+
+	if (!t || t->t != PO_DICT)
+		return -1;
+	if (pdf_stream(d, t, pp->trans, text, &term, 4L << 20) != 0 || term)
 		return -1;
 	return 0;
 }

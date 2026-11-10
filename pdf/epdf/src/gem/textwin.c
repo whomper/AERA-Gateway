@@ -21,6 +21,7 @@
 #include "bidi.h"
 #include "pic.h"
 #include "click.h"
+#include "trview.h"
 #include "pics.h"
 #include "enlarge.h"
 #include "epdf.h"
@@ -250,10 +251,17 @@ static int fill_set;
 static void draw_head(short x, short y, short w, long page)
 {
 	static const char badge[] = "Optimised";
-	char s[32];
+	char s[64];
 	short n, my = (short)(y + ch / 2), tx, end = (short)(x + w - MARGIN - 1), bx = 0, bw = 0, bh = 0, sw = 0, sh = 0, small = 0;
 
-	n = (short)snprintf(s, sizeof s, " Page %ld ", page + 1);
+	if (tr_on() && doc_tr_state(page) == TR_DONE && doc_tr_from(page)[0])
+		/* the page shown translated: where it came from (Erez, 8 Nov 2026:
+		   "Page 3 \xFA from Hebrew") */
+		n = (short)snprintf(s, sizeof s, " Page %ld \xFA from %s ", page + 1, lang_name(doc_tr_from(page)));
+	else
+		n = (short)snprintf(s, sizeof s, " Page %ld ", page + 1);
+	if (n > (short)sizeof s - 1)
+		n = (short)sizeof s - 1;
 	tx = (short)(x + MARGIN + 2 * cw);
 	if (doc_prepared()) {
 		/* the text centred in the system's small font, 3 pixels each side
@@ -1050,11 +1058,32 @@ void win_progress_draw(void)
  * as they come); Up, Down and the page keys move it, Esc, Backspace,
  * Return or a click give the text back as it was.
  */
+void (*has_menu_states)(void);		/* (epdf.c's menu_states: Zoom in and out greyed or not) */
+
 static struct {
 	int on;
 	DVPIC p;			/* the picture at the size shown whole */
 	long top, left;			/* its first row and column in view */
+	int pct;			/* a page of View > Pages zoomed: 150 to 400 (0: a picture) */
+	DVPIC base;			/* that page's line as View > Pages shows it */
+	/* a converted PDF's page: its own picture enlarged at once (made in a
+	   second or so from what is stored), then the page drawn sharp at that
+	   size (render.ovl, seconds to tens of seconds) in its place when it
+	   is ready (Erez, 8 Nov 2026: "tens of seconds of wait time") */
+	MFDB pre;			/* the page's picture as View > Pages shows it, enlarged */
+	int pre_heap;
 } zoom;
+
+/* View > Zoom in and Zoom out's steps (Erez, 8 Nov 2026: keypad + and -,
+   100 to 400 %; a click on a page still goes to 200 % and back) */
+static const short zsteps[] = { 100, 150, 200, 300, 400 };
+static int zoom_failed_at;		/* the size that couldn't be made (this document): not offered again */
+#define NZSTEPS (int)(sizeof zsteps / sizeof zsteps[0])
+
+static void zoom_pre_free(void)
+{
+	pics_enlarge_free(&zoom.pre, zoom.pre_heap);
+}
 
 int win_zoomed(void)
 {
@@ -1066,37 +1095,70 @@ void win_zoom_end(void)
 	if (!zoom.on)
 		return;
 	zoom.on = 0;
+	zoom.pct = 0;
+	zoom_pre_free();
+	doc_pic_stop_page_unless(zoom.base.obj, zoom.base.w, zoom.base.h);	/* (a zoomed page still drawing gives way) */
+	if (has_menu_states)
+		has_menu_states();
 	win_draw_all();
 }
 
 static void draw_zoom(const GRECT *c)
 {
 	PICE *e = pics_get(zoom.p.obj, zoom.p.w, zoom.p.h, zoom.p.flip);
+	const MFDB *from;
 	short x = (short)(work.x + (work.w - zoom.p.w) / 2), y = work.y;
 	long made = e && e->bm.fd_addr ? (e->state == PICS_READY ? zoom.p.h : e->ready) : 0;
+
+	if (e && e->state == PICS_READY && zoom.pre.fd_addr) {
+		zoom_pre_free();	/* (the sharp one is here) */
+		log_event("zoom-sharp", NULL, NULL);
+	}
+	if (zoom.pre.fd_addr && (!e || e->state != PICS_READY)) {
+		from = &zoom.pre;	/* the enlarged one till the sharp one is made */
+		made = zoom.p.h;
+	} else
+		from = e ? &e->bm : NULL;
 	long y1 = zoom.top + work.h < zoom.p.h ? zoom.top + work.h : zoom.p.h;
 	short vw = (short)(zoom.p.w - zoom.left < work.w ? zoom.p.w - zoom.left : work.w);	/* its columns in view */
+	long m1 = made < y1 ? made : y1;
 
 	if (x < work.x)
 		x = work.x;
-	blank(c, work.x, (short)(work.x + work.w), work.y, work.h);
+	/* only what the picture doesn't cover blanked first: a drag moves it
+	   without the window flashing white */
+	blank(c, work.x, x, work.y, work.h);
+	blank(c, (short)(x + vw), (short)(work.x + work.w), work.y, work.h);
+	if (made > zoom.top)
+		blank(c, x, (short)(x + vw), (short)(y + (m1 - zoom.top)), (short)(work.h - (m1 - zoom.top)));
+	else
+		blank(c, x, (short)(x + vw), work.y, work.h);
 	if (e)
 		e->page = zoom.p.page;
 	if (made > zoom.top) {
 		MFDB scr;
 		short pxy[8];
-		long m1 = made < y1 ? made : y1;
 
-		memset(&scr, 0, sizeof scr);
-		pxy[0] = (short)zoom.left;
-		pxy[1] = (short)zoom.top;
-		pxy[2] = (short)(zoom.left + vw - 1);
-		pxy[3] = (short)(m1 - 1);
-		pxy[4] = x;
-		pxy[5] = y;
-		pxy[6] = (short)(x + vw - 1);
-		pxy[7] = (short)(y + (m1 - zoom.top) - 1);
-		vro_cpyfm(vdi_h, 3, pxy, &e->bm, &scr);
+		/* the part in c (the VDI's raster copy takes no clipping: a
+		   window over this one, or a redraw of a piece of it) */
+		short dx0 = x, dy0 = y, dx1 = (short)(x + vw - 1), dy1 = (short)(y + (m1 - zoom.top) - 1);
+
+		if (dx0 < c->x) dx0 = c->x;
+		if (dy0 < c->y) dy0 = c->y;
+		if (dx1 > c->x + c->w - 1) dx1 = (short)(c->x + c->w - 1);
+		if (dy1 > c->y + c->h - 1) dy1 = (short)(c->y + c->h - 1);
+		if (dx1 >= dx0 && dy1 >= dy0) {
+			memset(&scr, 0, sizeof scr);
+			pxy[0] = (short)(zoom.left + (dx0 - x));
+			pxy[1] = (short)(zoom.top + (dy0 - y));
+			pxy[2] = (short)(zoom.left + (dx1 - x));
+			pxy[3] = (short)(zoom.top + (dy1 - y));
+			pxy[4] = dx0;
+			pxy[5] = dy0;
+			pxy[6] = dx1;
+			pxy[7] = dy1;
+			vro_cpyfm(vdi_h, 3, pxy, (MFDB *)from, &scr);
+		}
 	} else {
 		/* its frame till its rows come */
 		short yb = (short)(y + (y1 - zoom.top) - 1);
@@ -1110,8 +1172,224 @@ static void draw_zoom(const GRECT *c)
 	vst_color(vdi_h, 1);
 }
 
+/* w x h at the screen's depth fits in memory, with room to spare */
+static int zoom_fits(long w, long h)
+{
+	long bytes = (w + 15) / 16 * 2 * (planes > 8 ? 16 : planes) * h;
+
+	return (long)Malloc(-1L) >= bytes + 128 * 1024L;
+}
+
+/* a page of View > Pages at pct of its line's size: its picture (drawn
+   bigger by render.ovl on a Falcon or TT, in colour; else EConvert's
+   double, at 200 % only), *w and *h; 0 when there is none at that size */
+static int zoom_page_pic(const DVPIC *b, int pct, DVPIC *out)
+{
+	long w = (long)b->w * pct / 100, h = (long)b->h * pct / 100, d, dw, dh;
+
+	*out = *b;
+	if (doc_page_drawable() && !(zoom_failed_at && pct >= zoom_failed_at)) {
+		out->obj = PICS_PAGE + b->page;
+		out->flip = 0;
+	} else if (pct == 200 && doc_double_of(b->obj, &d, &dw, &dh) && dw > 0 && dh > 0) {
+		out->obj = d;
+		w = dw < 2L * cols * cw ? dw : 2L * cols * cw;
+		h = dh * w / dw * 16 / (pix_aspect > 0 ? pix_aspect : 16);
+	} else
+		return 0;
+	if (h > 8 * 1024)
+		return 0;
+	if (!zoom_fits(w, h))
+		return 0;
+	out->w = (int)w;
+	out->h = (int)h;
+	return 1;
+}
+
+/* p (a page's zoomed picture) shown, and until it is made (render.ovl:
+   seconds to tens of seconds) the page's picture as View > Pages has it
+   enlarged at once, its pixels nearest (Erez, 8 Nov 2026: "tens of
+   seconds of wait time ... the user may think there is an error"), where
+   memory holds both */
+static void zoom_set_pic(const DVPIC *p)
+{
+	long bytes = (p->w + 15) / 16 * 2 * (planes > 8 ? 16 : planes) * (long)p->h;
+	PICE *b;
+
+	zoom_pre_free();
+	zoom.p = *p;
+	doc_pic_stop_page_unless(p->obj, p->w, p->h);	/* (the page drawing at another size gives way at once) */
+	b = pics_get(zoom.base.obj, zoom.base.w, zoom.base.h, zoom.base.flip);
+	if (p->obj >= PICS_PAGE && b && b->state == PICS_READY && (long)Malloc(-1L) >= 2 * bytes + 128 * 1024L) {
+		unsigned long t0 = tos_ms();
+
+		graf_mouse(BUSYBEE, NULL);
+		if (pics_enlarge(b, p->w, p->h, &zoom.pre, &zoom.pre_heap) == 0) {
+			char a[24];
+
+			snprintf(a, sizeof a, "%lu ms", tos_ms() - t0);
+			log_event("zoom-enlarged", a, NULL);
+		} else
+			memset(&zoom.pre, 0, sizeof zoom.pre);
+		graf_mouse(ARROW, NULL);
+	}
+}
+
+/* the page line in view (View > Pages): the first row of a page's picture
+   from the top, or the one at row r */
+static int page_line_at(long r0, long r1, DVPIC *out)
+{
+	DOCVIEW *v = doc_view();
+	long r, n, page, off;
+	int kind;
+	const char *s;
+
+	if (!v || !doc_pages_mode())
+		return 0;
+	for (r = r0; r <= r1 && dv_row(v, r, &kind, &s, &n, &page, &off); r++)
+		if (kind == DV_PIC && v->pic.w >= 32) {
+			*out = v->pic;
+			out->page = page;
+			out->row = 0;
+			return 1;
+		}
+	return 0;
+}
+
+/* the zoom to step k of zsteps (0: View > Pages again), the point
+   (fx, fy) of the window kept where it is */
+static void zoom_to(int k, short fx, short fy)
+{
+	DVPIC p;
+	long cx, cy, ow, oh;
+
+	if (k <= 0) {
+		win_zoom_end();
+		return;
+	}
+	if (!zoom_page_pic(&zoom.base, zsteps[k], &p))
+		return;
+	ow = zoom.on ? zoom.p.w : zoom.base.w;
+	oh = zoom.on ? zoom.p.h : zoom.base.h;
+	/* the point under (fx, fy) in the old picture, then in the new */
+	cx = (zoom.on ? zoom.left : 0) + (fx - work.x - (work.w - (ow < work.w ? ow : work.w)) / 2);
+	cy = (zoom.on ? zoom.top : zoom.base.row) + (fy - work.y);
+	cx = cx * p.w / (ow > 0 ? ow : 1);
+	cy = cy * p.h / (oh > 0 ? oh : 1);
+	zoom_set_pic(&p);
+	zoom.pct = zsteps[k];
+	zoom.left = cx - (fx - work.x);
+	zoom.top = cy - (fy - work.y);
+	{
+		long mx = zoom.p.w > work.w ? zoom.p.w - work.w : 0, my = zoom.p.h > work.h ? zoom.p.h - work.h : 0;
+
+		zoom.left = zoom.left < 0 ? 0 : zoom.left > mx ? mx : zoom.left;
+		zoom.top = zoom.top < 0 ? 0 : zoom.top > my ? my : zoom.top;
+	}
+	zoom.on = 1;
+	{
+		char a[16];
+
+		snprintf(a, sizeof a, "%d", zoom.pct);
+		log_event("zoom", a, NULL);
+	}
+	if (has_menu_states)
+		has_menu_states();
+	win_draw_all();
+}
+
+static int zoom_step_now(void)
+{
+	int k;
+
+	for (k = 0; k < NZSTEPS; k++)
+		if (zsteps[k] >= (zoom.pct ? zoom.pct : 100))
+			return k;
+	return NZSTEPS - 1;
+}
+
+void win_zoom_forget(void)
+{
+	zoom_failed_at = 0;
+}
+
+/* the zoom a step smaller after the bigger page couldn't be made */
+static void zoom_back(void)
+{
+	int k = zoom_step_now();
+
+	zoom_failed_at = zoom.pct;
+	zoom_to(k - 1, (short)(work.x + work.w / 2), (short)(work.y + work.h / 2));
+}
+
+int win_zoom_can(int dir)
+{
+	DVPIC b, p;
+	int k;
+
+	if (zoom.on && !zoom.pct)
+		return 0;			/* (a picture shown whole, not a page) */
+	if (dir < 0)
+		return zoom.on;
+	if (zoom.on)
+		b = zoom.base;
+	else if (!page_line_at(0, rows, &b))
+		return 0;
+	for (k = zoom_step_now() + 1; k < NZSTEPS; k++)
+		if (zoom_page_pic(&b, zsteps[k], &p))
+			return 1;
+	return 0;
+}
+
+void win_zoom_step(int dir)
+{
+	int k = zoom_step_now();
+	DVPIC p;
+
+	if (zoom.on && !zoom.pct)
+		return;
+	if (!zoom.on) {
+		long r;
+
+		if (dir < 0 || !page_line_at(0, rows, &zoom.base))
+			return;
+		/* the page's first row in view: where its picture starts */
+		for (r = 0; r <= rows; r++) {
+			DVPIC q;
+
+			if (page_line_at(r, r, &q) && q.page == zoom.base.page) {
+				DOCVIEW *v = doc_view();
+				long n, page, off;
+				int kind;
+				const char *s;
+
+				dv_row(v, r, &kind, &s, &n, &page, &off);
+				zoom.base.row = (int)(v->pic.row * ch - r * ch);	/* (rows of it above the window: negative) */
+				break;
+			}
+		}
+		zoom.base.row = zoom.base.row < 0 ? -zoom.base.row : 0;
+	}
+	if (dir < 0) {
+		zoom_to(k - 1, (short)(work.x + work.w / 2), (short)(work.y + work.h / 2));
+		return;
+	}
+	for (k = k + 1; k < NZSTEPS; k++)
+		if (zoom_page_pic(&zoom.base, zsteps[k], &p)) {
+			zoom_to(k, (short)(work.x + work.w / 2), (short)(work.y + work.h / 2));
+			return;
+		}
+}
+
+/* View > Actual size: View > Pages' page as it was */
+void win_zoom_actual(void)
+{
+	if (zoom.on && zoom.pct)
+		zoom_to(0, (short)(work.x + work.w / 2), (short)(work.y + work.h / 2));
+}
+
 /* a click at (mx, my) on a picture with more pixels than it shows: shown
-   whole; 1 when it was one */
+   whole (a page of View > Pages: at 200 %); 1 when it was one */
 int win_zoom_at(short mx, short my)
 {
 	DOCVIEW *v = doc_view();
@@ -1130,40 +1408,61 @@ int win_zoom_at(short mx, short my)
 	x = pic_x(v->pic.w);
 	if (mx < x || mx >= x + v->pic.w)
 		return 0;
+	if (doc_pages_mode() && v->pic.w >= 32) {
+		/* a page: 200 %, the point clicked kept under the mouse */
+		DVPIC p;
+		int k;
+
+		zoom.base = v->pic;
+		zoom.base.page = page;
+		zoom.base.row = 0;
+		for (k = 0; k < NZSTEPS && zsteps[k] != 200; k++)
+			;
+		if (zoom_page_pic(&zoom.base, 200, &p)) {
+			short fx = mx, fy = my;
+
+			/* (the point's place in the page's line: its row and column) */
+			zoom.on = 0;
+			zoom.pct = 0;
+			{
+				long cx = mx - x, cy = (long)v->pic.row * ch + (my - work.y - r * ch);
+
+				zoom_set_pic(&p);
+				zoom.pct = 200;
+				zoom.left = cx * p.w / v->pic.w - (fx - work.x);
+				zoom.top = cy * p.h / v->pic.h - (fy - work.y);
+			}
+			{
+				long mxl = zoom.p.w > work.w ? zoom.p.w - work.w : 0, myl = zoom.p.h > work.h ? zoom.p.h - work.h : 0;
+
+				zoom.left = zoom.left < 0 ? 0 : zoom.left > mxl ? mxl : zoom.left;
+				zoom.top = zoom.top < 0 ? 0 : zoom.top > myl ? myl : zoom.top;
+			}
+			zoom.on = 1;
+			log_event("zoom", "200", NULL);
+			if (has_menu_states)
+				has_menu_states();
+			win_draw_all();
+			return 1;
+		}
+	}
 	e = pics_get(v->pic.obj, v->pic.w, v->pic.h, v->pic.flip);
 	if (!enlargeable(e, &v->pic))
 		return 0;
-	{
-		/* a page whose double EConvert made: that one, its own size */
-		long d, dw, dh;
-
-		if (doc_double_of(v->pic.obj, &d, &dw, &dh) && dw > 0 && dh > 0) {
-			static PICE dd;
-
-			memset(&dd, 0, sizeof dd);
-			dd.sw = dw;
-			dd.sh = dh;
-			e = &dd;
-			zoom.p.obj = d;
-		} else
-			zoom.p.obj = v->pic.obj;
-	}
+	zoom.p.obj = v->pic.obj;
 	/* its own pixels, up to twice the text column (wider than the window:
-	   Left and Right move it; a converted page drawn at double size), as
-	   much of that as memory holds: the machine's own (Erez, 5 Nov) */
+	   Left and Right move it), as much of that as memory holds: the
+	   machine's own (Erez, 5 Nov) */
 	w = e->sw < 2L * cols * cw ? e->sw : 2L * cols * cw;
 	for (;;) {
-		long bytes;
-
 		h = e->sh * w / e->sw * 16 / (pix_aspect > 0 ? pix_aspect : 16);
 		if (h < 1)
 			h = 1;
 		if (h > 8 * 1024)
 			h = 8 * 1024;
-		bytes = (w + 15) / 16 * 2 * (planes > 8 ? 16 : planes) * h;
 		if (w <= v->pic.w + 4)
 			return 0;	/* (no room for more than is shown) */
-		if ((long)Malloc(-1L) >= bytes + 128 * 1024L)
+		if (zoom_fits(w, h))
 			break;
 		w = w * 3 / 4;
 	}
@@ -1177,9 +1476,43 @@ int win_zoom_at(short mx, short my)
 	zoom.p.h = (int)h;
 	zoom.top = 0;
 	zoom.left = 0;
+	zoom.pct = 0;
 	zoom.on = 1;
 	log_event("zoom", NULL, NULL);
 	win_draw_all();
+	return 1;
+}
+
+/* the zoomed picture moved by (dx, dy) pixels (a drag): 1 when it moved */
+int win_zoom_pan(long dx, long dy)
+{
+	long l = zoom.left - dx, t = zoom.top - dy;
+	long mx = zoom.p.w > work.w ? zoom.p.w - work.w : 0, my = zoom.p.h > work.h ? zoom.p.h - work.h : 0;
+
+	if (!zoom.on)
+		return 0;
+	l = l < 0 ? 0 : l > mx ? mx : l;
+	t = t < 0 ? 0 : t > my ? my : t;
+	if (l == zoom.left && t == zoom.top)
+		return 0;
+	zoom.left = l;
+	zoom.top = t;
+	{
+		/* drawn while the button is held: not BEG_UPDATE of our own,
+		   which TOS's AES holds back till the release (5.8, click.h) */
+		GRECT r, c;
+		int took = press_update_begin();
+
+		graf_mouse(M_OFF, NULL);
+		wind_get(win, WF_FIRSTXYWH, &r.x, &r.y, &r.w, &r.h);
+		while (r.w > 0 && r.h > 0) {
+			if (overlap(&r, &work, &c))
+				draw_zoom(&c);
+			wind_get(win, WF_NEXTXYWH, &r.x, &r.y, &r.w, &r.h);
+		}
+		graf_mouse(M_ON, NULL);
+		press_update_end(took);
+	}
 	return 1;
 }
 
@@ -1206,6 +1539,8 @@ int win_zoom_key(short scan)
 	case 0x01: case 0x0e: case 0x1c: case 0x72: case 0x61:	/* Esc, Backspace, Return, Enter, Undo */
 		win_zoom_end();
 		return 1;
+	case 0x4a: case 0x4e:					/* keypad - and +: Zoom out, in */
+		return 0;
 	case 0x48: step = -2L * ch; break;			/* Up */
 	case 0x50: step = 2L * ch; break;			/* Down */
 	case 0x49: step = -(long)(work.h - ch); break;		/* Page Up */
@@ -1564,8 +1899,17 @@ void win_pic_ready(long obj)
 	if (!v || win < 0 || iconified)
 		return;
 	if (zoom.on) {
-		if (obj == zoom.p.obj)
+		if (obj == zoom.p.obj) {
+			PICE *e = pics_get(zoom.p.obj, zoom.p.w, zoom.p.h, zoom.p.flip);
+
+			if (zoom.pct && e && e->state == PICS_FAILED) {
+				/* no memory for the page this big: a step back */
+				log_event("zoom-failed", NULL, NULL);
+				zoom_back();
+				return;
+			}
 			win_redraw(&work);
+		}
 		return;
 	}
 	for (r = 0; r <= rows && dv_row(v, r, &kind, &s, &n, &page, &off); r++)

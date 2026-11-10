@@ -20,6 +20,7 @@
 #include "pdf.h"
 #include "plat.h"
 #include "tstore.h"
+#include "crash.h"
 #include "docview.h"
 #include "epdf.h"
 #include "coro.h"
@@ -64,11 +65,38 @@ static int abandon;			/* the document closes: stop the page and the picture */
    slices' hook): doc stays NULL until it is done */
 static PDOC *odoc;
 static char opath[256], ocache[256];
+/* the PDF a copy shown was made from (the Gateway's: its name the
+   window's, File > Save Optimised...'s and the page drawn bigger's) */
+static char orig[256];
 static int opening, open_ok, ocols, olines;
 static long onpages;
 static unsigned long slice_end;		/* tos_ms() when the slice is up */
 static PTEXT *rt;			/* the page read (taken with the document) */
 static PPREP rprep;			/* a converted PDF's page read: its whole pictures */
+static SBUF rtrans;			/* and its /Translation, when it has one (rprep.trans) */
+static int rtrans_ok;
+
+/* View > Translate (Erez, 8 Nov 2026; AERA-Atari standards/TRANSLATION-
+   SERVICE.md): each page's translation in a store of its own, in memory
+   only (never on the Atari's disk), over the pages as read (trstore.under:
+   a page not translated yet shows as it is). The view shows it while
+   Translate is on; the original store is untouched, so Off shows the
+   pages as they are at once */
+static TSTORE trstore;
+static int tr_open, tr_mode;
+static signed char *trst;		/* each page: TR_* */
+static char (*trfrom)[8];		/* the language it was in ("" not known) */
+static char tr_target[8];		/* the language asked for */
+static long tr_reread;			/* a converted PDF's pages read again for their /Translation: left to do */
+
+/* a converted PDF the Gateway translated into the language asked for:
+   its pages' /Translation shown, nothing asked of translategate */
+static int tr_from_file(void)
+{
+	return tr_open && doc && doc->prepared && doc->tr_to[0] && !strcmp(doc->tr_to, tr_target);
+}
+
+
 /* a converted PDF's pages whole (View > Pages): each page a picture's line,
    its own picture (16 colours where the screen has them, else mono) */
 static TSTORE pstore;
@@ -92,7 +120,8 @@ static struct {
 static void pages_note(long n, const PPREP *pp)
 {
 	char b[48];
-	int col = pp->colour >= 0 && planes >= 4;
+	/* (colour only: a mono screen shows the colour page, dithered) */
+	int col = pp->colour >= 0 && (planes >= 4 || pp->mono < 0);
 	long obj = col ? pp->colour : pp->mono, w = col ? pp->colour_w : pp->mono_w, h = col ? pp->colour_h : pp->mono_h;
 	int k = 0;
 
@@ -187,6 +216,11 @@ int doc_has_pages(void)
 	return doc && (doc->prepared || drawn) && pages_have;
 }
 
+int doc_page_drawable(void)
+{
+	return doc && (drawn || (doc->prepared && rdraw_machine() && pf_size(rdraw_path) > 0));
+}
+
 int doc_drawn(void)
 {
 	return doc && drawn;
@@ -206,6 +240,8 @@ static void page_pic_stop(void);
 
 /* the view on the pages' text or on their pictures: laid out again from
    the page at the top (the caller lays the window out and draws it) */
+static TSTORE *text_store(void);
+
 void doc_set_pages(int on)
 {
 	long top;
@@ -220,11 +256,130 @@ void doc_set_pages(int on)
 	lm = view.lines_mode;
 	dv_free(&view);
 	pages_mode = on;
-	if (dv_init(&view, on ? &pstore : &store, npages, cols, lm) != 0) {
+	if (dv_init(&view, on ? &pstore : text_store(), npages, cols, lm) != 0) {
 		pages_mode = 0;
 		dv_init(&view, &store, npages, cols, lm);
 	}
 	dv_goto_page(&view, top);
+}
+
+/* ---------------------------------------------------------------- View > Translate */
+
+/* the store the text view shows */
+static TSTORE *text_store(void)
+{
+	return tr_mode && tr_open ? &trstore : &store;
+}
+
+int doc_tr_begin(const char *to)
+{
+	long budget;
+
+	if (!doc)
+		return -1;
+	if (tr_open && strcmp(tr_target, to))
+		doc_tr_forget();	/* (another language: those translations are no use) */
+	if (tr_open)
+		return 0;
+	snprintf(tr_target, sizeof tr_target, "%s", to);
+	/* in memory alone: an eighth of what is free, 32 to 512 KB */
+	budget = (long)Malloc(-1L) / 8;
+	budget = budget < 32768L ? 32768L : budget > 524288L ? 524288L : budget;
+	if (ts_open(&trstore, npages, budget, "") != 0)
+		return -1;
+	trst = calloc((size_t)npages, 1);
+	trfrom = calloc((size_t)npages, sizeof *trfrom);
+	if (!trst || !trfrom) {
+		free(trst);
+		free(trfrom);
+		trst = NULL;
+		trfrom = NULL;
+		ts_close(&trstore);
+		return -1;
+	}
+	trstore.under = &store;
+	tr_open = 1;
+	/* a converted PDF translated into it: its pages read again for their
+	   /Translation, the page in view first (doc_slice) */
+	tr_reread = tr_from_file() ? npages : 0;
+	return 0;
+}
+
+int doc_tr_from_file(void)
+{
+	return tr_from_file();
+}
+
+/* the translations dropped (another language, the document closed) */
+void doc_tr_forget(void)
+{
+	if (!tr_open)
+		return;
+	if (tr_mode && !pages_mode)
+		doc_set_translate(0);
+	tr_mode = 0;
+	ts_close(&trstore);
+	free(trst);
+	free(trfrom);
+	trst = NULL;
+	trfrom = NULL;
+	tr_open = 0;
+}
+
+void doc_set_translate(int on)
+{
+	long top;
+	int cols, lm;
+
+	if (!doc || (on && !tr_open) || !on == !tr_mode)
+		return;
+	tr_mode = on;
+	if (pages_mode)
+		return;			/* (the pages' pictures stay; the text when Pages goes off) */
+	top = dv_page_at_top(&view);
+	cols = view.cols;
+	lm = view.lines_mode;
+	dv_free(&view);
+	if (dv_init(&view, text_store(), npages, cols, lm) != 0) {
+		tr_mode = 0;
+		dv_init(&view, &store, npages, cols, lm);
+	}
+	dv_goto_page(&view, top);
+}
+
+int doc_tr_state(long n)
+{
+	return tr_open && n >= 0 && n < npages ? trst[n] : TR_NONE;
+}
+
+const char *doc_tr_from(long n)
+{
+	return tr_open && n >= 0 && n < npages ? trfrom[n] : "";
+}
+
+int doc_tr_put(long n, int state, const char *text, long len, const char *from)
+{
+	if (!tr_open || n < 0 || n >= npages)
+		return -1;
+	if (text && ts_put(&trstore, n, text, len) != 0)
+		return -1;
+	trst[n] = (signed char)state;
+	snprintf(trfrom[n], sizeof trfrom[n], "%s", from ? from : "");
+	if (tr_mode && !pages_mode)
+		dv_page_ready(&view, n);	/* (its rows counted again: the window draws them) */
+	return 0;
+}
+
+/* the page's text as read (the original), for its translation */
+const char *doc_page_original(long n, long *len)
+{
+	return doc ? ts_get(view.ts ? view.ts : &store, n, len) : NULL;
+}
+
+/* the document's own translation's language (a converted PDF the Gateway translated) */
+const char *doc_tr_file_to(void)
+{
+	return doc && doc->prepared ? doc->tr_to : "";
 }
 static long rpage_oom;			/* the reader's refused allocations before it */
 static PICE *rpic;			/* the picture being decoded, NULL none */
@@ -300,6 +455,11 @@ static void reader(void)
 			/* a converted PDF: the page's text as the store keeps it */
 			if (pdf_prepared_page(doc, rpage, &rt->text, &rprep) != 0)
 				rt->failed = 1;
+			else if (rprep.trans >= 0 && tr_from_file()) {
+				/* (read only with Translate on: Off reads nothing new) */
+				rtrans.len = 0;
+				rtrans_ok = pdf_prepared_translation(doc, &rprep, &rtrans) == 0;
+			}
 		} else
 			pdf_page_text(doc, rpage, rt);
 		rdone = 1;
@@ -404,7 +564,12 @@ static int page_rows(long n, int w, int h, void (*row)(void *u, long y, const un
 
 		/* its canvas a page whole where it can (bands read the page again
 		   for each: 4 to 15 times slower) */
-		rdoc = o->open(opath, doc_font_dir, fr / 8, fr * 2 / 3, err, sizeof err);
+		/* a converted copy's pages drawn bigger from its original
+		   (Erez, 8 Nov 2026: zoomed in colour), where it is still there;
+		   else from the copy itself */
+		const char *from = orig[0] && pf_size(orig) > 0 ? orig : opath;
+
+		rdoc = o->open(from, doc_font_dir, fr / 8, fr * 2 / 3, err, sizeof err);
 		if (!rdoc) {
 			log_event("render-open", err, NULL);
 			*why = abandon ? PIC_STOPPED : PIC_MEMORY;
@@ -430,12 +595,20 @@ static int page_rows(long n, int w, int h, void (*row)(void *u, long y, const un
 				 pg.glyphs, pg.images);
 			log_event("page-drawn", a, NULL);
 		}
+		if (pg.images_missed > 0 && pg.images_missed == pg.images && pg.glyphs == 0) {
+			/* nothing on it drawn: a page that is one picture (a
+			   converted copy's) without the memory for it, white */
+			free(pn);
+			draw_page = -1;
+			*why = PIC_MEMORY;
+			return 0;
+		}
 		draw_rows = 1;
 		rows_t0 = tos_ms();
-		if (pal && pal->n >= 2 && pal->n <= 16 && planes >= 1 && planes <= 4 && o->size >= (short)sizeof(ROVL) && !pn)
+		if (pal && pal->n >= 2 && pal->n <= 256 && planes >= 1 && planes <= 8 && o->size >= (short)sizeof(ROVL) && !pn)
 			pn = malloc((size_t)((w + 15) / 16 * 2) * planes * 8);
 		for (i = 0; i < pg.rows && y < h; i++, y++) {
-			/* 2 to 16 colours: eight rows at a time dithered by
+			/* 2 to 256 colours: eight rows at a time dithered by
 			   render.ovl into the screen's planes (common's dither as
 			   68000 code took 35 s of a page's 39 on Falcon-4, and dotted
 			   the white: 248; the pens put into planes a pixel at a
@@ -509,6 +682,17 @@ static void page_pic_stop(void)
 	log_event("picture", "page-stopped", NULL);
 }
 
+/* a page being drawn that isn't obj at w x h stopped at once, its slot let
+   go: a zoom wants its own page now (Erez, 9 Nov 2026: "as soon as the
+   user zooms in, the current image viewing process need to stop and the
+   zoomed in image viewing must start"); it is drawn again when it is
+   wanted again */
+void doc_pic_stop_page_unless(long obj, int w, int h)
+{
+	if (rpic && rpic->obj >= PICS_PAGE && !(rpic->obj == obj && rpic->w == w && rpic->h == h))
+		page_pic_stop();
+}
+
 int doc_pic_drawing(void)
 {
 	return rpic && rpic->obj >= PICS_PAGE;
@@ -558,7 +742,11 @@ int doc_pic_start(void)
 		/* its stack: 12 KB, 64 KB once pages are drawn (render.ovl's);
 		   between pictures the decoder waits at its loop's top, so it
 		   starts again on a bigger one */
-		long need = drawn ? DRAW_STACK : PIC_STACK;
+		/* (any document whose pages render.ovl draws: a converted
+		   copy's zoomed page too, since 1.10. That one ran on the
+		   pictures' 12 KB and overran it: Erez's EDOS copy, a page
+		   clicked in View > Pages, 4 bombs past the stack's top, 8 Nov) */
+		long need = drawn || (e->obj >= PICS_PAGE) || doc_page_drawable() ? DRAW_STACK : PIC_STACK;
 
 		if (pic_stack && pic_stack_size < need) {
 			free(pic_stack);
@@ -597,6 +785,29 @@ int doc_pic_start(void)
 
 /* the picture on for ms milliseconds: 1 when it is done (the window's
    bitmap made, or failed), its object in *obj */
+/* the background stacks' deepest use so far, in crash.log's "last status"
+   (the hub, 8 Nov 2026: a crash near a stack's end shows itself there);
+   asked after a picture on a 68020 or better (a scan of the stack's unused
+   part, a few ms there), only when it is deeper than before */
+static void stacks_note(void)
+{
+	static long rmax, pmax;
+	long r = read_started ? coro_used(read_stack, READ_STACK) : 0;
+	long p = pic_started ? coro_used(pic_stack, pic_stack_size) : 0;
+	char a[80];
+
+	if (r <= rmax && p <= pmax)
+		return;
+	if (r > rmax)
+		rmax = r;
+	if (p > pmax)
+		pmax = p;
+	snprintf(a, sizeof a, "stacks: reading %ld of %ld, pictures %ld of %ld", rmax, READ_STACK, pmax,
+		 pic_stack_size);
+	crash_note(a);
+	log_event("stacks", a, NULL);
+}
+
 int doc_pic_slice(unsigned long ms, long *obj)
 {
 	if (!rpic)
@@ -618,6 +829,8 @@ int doc_pic_slice(unsigned long ms, long *obj)
 		return 0;
 	}
 	*obj = rpic->obj;
+	if (rdraw_machine())
+		stacks_note();
 	if (rpic_rows)
 		pics_made(rpic, rpic_ok, rpic_why);
 	else
@@ -648,7 +861,11 @@ int doc_pic_busy(void)
    the one ahead stopped, its slot let go (made again later, if room) */
 void doc_pic_drop_ahead(void)
 {
-	if (!rpic || !rpic->ahead || !pics_shown_waiting())
+	/* one ahead of the view gives way to one it shows; one the window
+	   shows but not on the page in focus gives way to that page's (Erez,
+	   8 Nov 2026: the page in focus first) */
+	if (!rpic || !((rpic->ahead && pics_shown_waiting()) ||
+		       (!rpic->ahead && pics_focus >= 0 && rpic->page != pics_focus && pics_focus_busy())))
 		return;
 	abandon = 1;
 	while (!pdone) {
@@ -723,6 +940,21 @@ const char *doc_name(void)
 	return name;
 }
 
+void doc_set_original(const char *path)
+{
+	const char *base = strrchr(path, '\\');
+
+	strncpy(orig, path, sizeof orig - 1);
+	orig[sizeof orig - 1] = '\0';
+	strncpy(name, base ? base + 1 : path, sizeof name - 1);
+	name[sizeof name - 1] = '\0';
+}
+
+const char *doc_original(void)
+{
+	return orig[0] ? orig : opath;
+}
+
 long doc_pages(void)
 {
 	return npages;
@@ -773,6 +1005,7 @@ void doc_close(void)
 	stacks_used();
 #endif
 	dv_free(&view);
+	doc_tr_forget();
 	ts_close(&store);
 	if (pstore_open)
 		ts_close(&pstore);
@@ -821,6 +1054,7 @@ int doc_open(const char *path, int cols, int lines_mode, const char *cache)
 	}
 	strncpy(opath, path, sizeof opath - 1);
 	opath[sizeof opath - 1] = '\0';
+	orig[0] = '\0';
 	strncpy(ocache, cache ? cache : "", sizeof ocache - 1);
 	ocache[sizeof ocache - 1] = '\0';
 	ocols = cols;
@@ -888,7 +1122,7 @@ static long open_done(void)
 
 int doc_pending(void)
 {
-	return opening || (doc && done < npages);
+	return opening || (doc && (done < npages || tr_reread > 0));
 }
 
 void doc_want(long page)
@@ -903,7 +1137,7 @@ long doc_slice(unsigned long ms)
 {
 	long i, n = -1, len = 0;
 	char *a;
-	int rt_failed;
+	int rt_failed, was_read;
 
 	if (!doc_pending())
 		return -1;
@@ -918,11 +1152,13 @@ long doc_slice(unsigned long ms)
 		/* the next page not yet read, from `next` on and round */
 		for (i = 0; i < npages; i++) {
 			n = (next + i) % npages;
-			if (!ts_have(&store, n))
+			if (!ts_have(&store, n) || (tr_reread > 0 && trst[n] == TR_NONE))
 				break;
 		}
-		if (i == npages)
+		if (i == npages) {
+			tr_reread = 0;
 			return -1;
+		}
 		rpage = n;
 		rdone = 0;
 	}
@@ -959,6 +1195,7 @@ long doc_slice(unsigned long ms)
 				rt->text.s[i] = '\r';
 		a = rt->text.s && rt->text.len > 0 ? cs_to_atari(rt->text.s, rt->text.len, CS_UTF8, &len) : NULL;
 	}
+	was_read = ts_have(&store, n);	/* (read again for its /Translation: counted once) */
 	if (ts_put(&store, n, a ? a : "", a ? len : 0) != 0) {
 		/* no room for it: shown as empty, not read again */
 		ts_put(&store, n, "", 0);
@@ -966,8 +1203,22 @@ long doc_slice(unsigned long ms)
 	} else
 		ts_set_pics(&store, n, doc->prepared ? a && tv_find(a, len, 0x7F) >= 0 : rt->piclines > 0);
 	free(a);
+	if (tr_from_file()) {
+		/* a page the Gateway translated with the conversion: kept as it came */
+		if (rprep.same)
+			doc_tr_put(n, TR_SAME, NULL, 0, "");
+		else if (rtrans_ok && rtrans.len > 0)
+			doc_tr_put(n, TR_DONE, rtrans.s, rtrans.len, rprep.from);
+		else
+			doc_tr_put(n, TR_NOTHING, NULL, 0, "");
+		if (tr_reread > 0)
+			tr_reread--;
+		rtrans_ok = 0;
+		sb_free(&rtrans);
+	}
 	ptext_free(rt);
-	done++;
+	if (!was_read)
+		done++;
 #ifdef EPDF_STACKS
 	if (done % 25 == 0)
 		stacks_used();
@@ -997,7 +1248,15 @@ const char *doc_page_text(long n, long *len)
 /* page n's text's length as stored, without reading it; -1 when not read */
 long doc_page_len(long n)
 {
-	return doc && ts_have(&store, n) ? store.pg[n].len : -1;
+	TSTORE *t = view.ts ? view.ts : &store;
+	long len;
+
+	if (!doc || !ts_have(t, n))
+		return -1;
+	if (t != &store && t->pg && t->pg[n].len >= 0)
+		return t->pg[n].len;
+	(void)len;
+	return store.pg[n].len;
 }
 
 const char *doc_status(void)

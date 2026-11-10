@@ -14,6 +14,8 @@
 #include "charset.h"
 #include "trpara.h"
 
+void (*tp_turn)(void);
+
 static int add_seg(TPARA *p, int *cap, long a, long b, int send)
 {
 	if (p->nseg == *cap) {
@@ -87,6 +89,9 @@ int tp_split(const char *t, long n, TPARA *p)
 	while (i < n) {
 		long a = i, e = line_end(t, n, i);
 
+		if (tp_turn && p->nseg && (p->nseg & 3) == 0)
+			tp_turn();
+
 		if (kept_line(t, a, e)) {
 			/* a line kept as it is, its end too (a soft break after one
 			   such: kept also) */
@@ -153,6 +158,9 @@ char *tp_join(const char *t, long n, const TPARA *p, const char *u, long ulen, l
 	(void)n;
 	for (s = 0; s < p->nseg; s++) {
 		const TPSEG *g = &p->seg[s];
+
+		if (tp_turn && (s & 3) == 3)
+			tp_turn();
 
 		if (!g->send) {
 			if (grow(&out, &cap, len + (g->b - g->a) + 1))

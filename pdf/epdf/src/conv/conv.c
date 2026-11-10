@@ -873,7 +873,7 @@ static int convert_page(CV *c, long n)
 		unsigned char *d;
 		char dict[256];
 
-		if (c->o->pages == CV_PAGES_COLOUR && has_colour(r, n)) {
+		if ((c->o->pages == CV_PAGES_COLOUR || c->o->pages == CV_PAGES_COLOUR_ONLY) && has_colour(r, n)) {
 			/* TOS's 16 colours, in their registers' order: EPDF shows
 			   the page with each colour's pen, no dither of its own */
 			static const unsigned char pal[16][3] = {
@@ -914,6 +914,8 @@ static int convert_page(CV *c, long n)
 		}
 		int was = r->mono_glyphs;
 
+		if (colour >= 0 && c->o->pages == CV_PAGES_COLOUR_ONLY)
+			goto whole_done;	/* (the colour page only: no mono, no double) */
 		if (!r->mono_glyphs) {
 			/* drawn again with the mono page's glyphs (the colour page and
 			   the drawings had the grey-edged ones) */
@@ -975,6 +977,7 @@ static int convert_page(CV *c, long n)
 				}
 			}
 		}
+whole_done:
 		r->mono_glyphs = was;
 	}
 	/* what other viewers draw */
@@ -1217,7 +1220,8 @@ int cv_convert(const char *in, const char *out, const CVOPT *o, CVSTAT *st, char
 	w_obj(&c->w, 1);
 	w_printf(&c->w, "<< /Type /Catalog /Pages 2 0 R\n/AERA << /Type /AERAPrepared /Version 1 /Creator (EConvert 1.1)\n"
 		 "/Prepared [/Text /Pictures /Drawings%s%s%s] /Photos /%s\n",
-		 o->pages != CV_PAGES_NONE ? " /PageMono" : "", o->pages == CV_PAGES_COLOUR ? " /PageColour" : "",
+		 o->pages == CV_PAGES_MONO || o->pages == CV_PAGES_COLOUR ? " /PageMono" : "",
+		 o->pages == CV_PAGES_COLOUR || o->pages == CV_PAGES_COLOUR_ONLY ? " /PageColour" : "",
 		 o->translate_to && o->translate ? " /Translation" : "", o->photos == CV_PHOTOS_JPEG ? "JPEG" : "Indexed");
 	if (o->translate_to && o->translate)
 		w_printf(&c->w, "/Translate << /To /%s >>\n", o->translate_to);

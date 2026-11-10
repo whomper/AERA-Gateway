@@ -31,6 +31,10 @@ PICE *pics_next(void);			/* one to decode, marked decoding (one shown first) */
    -1 no room (every slot taken, or the memory too short to spare) */
 int pics_ahead(long obj, int w, int h, int flip, long page);
 int pics_shown_waiting(void);		/* a picture the window shows waits to be decoded */
+/* the page in focus (the window's top page): its pictures made first, and
+   while one is wanted or being made nothing else takes turns from it */
+extern long pics_focus;
+int pics_focus_busy(void);
 void pics_release(PICE *e);		/* its slot let go (an ahead one stopped) */
 /* the decoder's answer for a picture made whole: std (the standard
    bitmap) or NULL (why) */
@@ -62,6 +66,10 @@ extern int (*pics_page_rows)(long page, int w, int h, void (*row)(void *u, long 
 			     void (*planes_row)(void *u, long y, const unsigned char *planes), const PIC_PAL *pal,
 			     int planes, void *u, int *why);
 void pics_forget(void);
+/* src (made) enlarged to w x h at once, nearest pixels, into a bitmap of
+   its own (out, device format; heap for pics_enlarge_free): 0, -1 */
+int pics_enlarge(const PICE *src, int w, int h, MFDB *out, int *heap);
+void pics_enlarge_free(MFDB *m, int heap);
 void pics_exit(void);
 
 #endif

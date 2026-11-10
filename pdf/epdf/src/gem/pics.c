@@ -632,7 +632,7 @@ int pics_rows(PDOC *d, PICE *e, int nplanes, PIC_PAL *pl, int *why)
 	if (e->obj >= PICS_PAGE) {
 		/* a page drawn as printed: its rows dithered as a photo's */
 		how = pics_page_rows ? pics_page_rows(e->obj - PICS_PAGE, e->w, e->h, sink_row, sink_planes,
-						      nplanes <= 4 && !e->flip ? pl : NULL, nplanes, &k, why) : -1;
+						      nplanes <= 8 && !e->flip ? pl : NULL, nplanes, &k, why) : -1;	/* (render.ovl's pens: 256 colours too, Erez's) */
 		if (how < 0) {
 			*why = PIC_UNSUPPORTED;
 			how = 0;
@@ -745,17 +745,37 @@ int pics_waiting(void)
 }
 
 /* a picture waiting to be decoded (now marked so), or NULL */
+long pics_focus = -1;
+
 PICE *pics_next(void)
 {
 	int i, pass;
 
-	for (pass = 0; pass < 2; pass++)	/* one the window shows, then one ahead */
+	/* the page in focus's first (Erez, 8 Nov 2026: "always prioritize the
+	   current page"), then the others the window shows, then one ahead */
+	for (i = 0; pics_focus >= 0 && i < NPICS; i++)
+		if (cache[i].state == PICS_WANTED && !cache[i].ahead && cache[i].page == pics_focus) {
+			cache[i].state = PICS_DECODING;
+			return &cache[i];
+		}
+	for (pass = 0; pass < 2; pass++)
 		for (i = 0; i < NPICS; i++)
 			if (cache[i].state == PICS_WANTED && cache[i].ahead == pass) {
 				cache[i].state = PICS_DECODING;
 				return &cache[i];
 			}
 	return NULL;
+}
+
+int pics_focus_busy(void)
+{
+	int i;
+
+	for (i = 0; pics_focus >= 0 && i < NPICS; i++)
+		if ((cache[i].state == PICS_WANTED || cache[i].state == PICS_DECODING) && !cache[i].ahead &&
+		    cache[i].page == pics_focus)
+			return 1;
+	return 0;
 }
 
 int pics_shown_waiting(void)
@@ -950,6 +970,181 @@ void pics_done(PICE *e, unsigned char *std, long bytes, int why)
 	e->ready = e->h;
 	e->state = PICS_READY;
 	log_event("picture", "ready", NULL);
+}
+
+/* src's bitmap made w x h, each pixel the nearest of src's (a picture
+   enlarged at once, while a sharp one is made: Erez, 8 Nov 2026, "tens of
+   seconds of wait time"); out a bitmap the screen copies from, device
+   format; *heap as bm_alloc's. 0, or -1 (memory) */
+int pics_enlarge(const PICE *src, int w, int h, MFDB *out, int *heap)
+{
+	const MFDB *sb = &src->bm;
+	int np = sb->fd_nplanes, p;
+	long swd = sb->fd_wdwidth, dwd = (w + 15) / 16, y, x, prev = -1;
+	long splane = swd * 2 * (long)sb->fd_h, dplane = dwd * 2 * (long)h;
+	long bytes = dwd * 2 * (long)(np > 8 ? 16 : np) * h;
+	unsigned char *sstd = NULL, *dstd = NULL, *dev;
+	long *xs;
+	unsigned long *tab = NULL;
+	int nb;
+	MFDB a, b;
+
+	if (!sb->fd_addr || src->state != PICS_READY || w <= 0 || h <= 0 || sb->fd_w <= 0 || sb->fd_h <= 0)
+		return -1;
+	if (!(xs = malloc((size_t)w * sizeof *xs)))
+		return -1;
+	for (x = 0; x < w; x++)
+		xs[x] = x * (long)src->w / w;
+	/* the zoom's steps (1.5, 2, 3, 4 times exactly): a source byte's 8
+	   pixels become nb by a table, a row in a few hundred lookups rather
+	   than a test a pixel (5 s for a page at 200 % on the emulated Falcon) */
+	nb = 0;
+	if ((long)w * 2 == (long)src->w * 3)
+		nb = 12;
+	else if (w == src->w * 2)
+		nb = 16;
+	else if (w == src->w * 3)
+		nb = 24;
+	else if (w == src->w * 4)
+		nb = 32;
+	if (nb && !(tab = malloc(256 * sizeof *tab)))
+		nb = 0;
+	if (nb) {
+		int v, b, k;
+
+		for (v = 0; v < 256; v++) {
+			unsigned long t = 0;
+
+			for (k = 0; k < nb; k++) {
+				b = k * 8 / nb;		/* (the source pixel nearest: as xs[] has it) */
+				t = t << 1 | ((v >> (7 - b)) & 1);
+			}
+			tab[v] = t;
+		}
+	}
+	if (!(dev = bm_alloc(bytes, heap))) {
+		free(xs);
+		return -1;
+	}
+	memset(&a, 0, sizeof a);
+	a.fd_w = (short)(dwd * 16);
+	a.fd_h = (short)h;
+	a.fd_wdwidth = (short)dwd;
+	a.fd_nplanes = (short)np;
+	if (np == 16) {
+		/* (chunky: a pixel a word) */
+		const unsigned short *sp = sb->fd_addr;
+		unsigned short *dp = (unsigned short *)dev;
+
+		for (y = 0; y < h; y++) {
+			long sy = y * (long)src->h / h;
+
+			if (sy == prev)
+				memcpy(dp + y * dwd * 16, dp + (y - 1) * dwd * 16, (size_t)dwd * 32);
+			else
+				for (x = 0; x < w; x++)
+					dp[y * dwd * 16 + x] = sp[sy * swd * 16 + xs[x]];
+			prev = sy;
+		}
+	} else {
+		/* (planes apart, the standard format: the device's turned to it
+		   and back, but on one plane, where they are the same) */
+		if (np > 1) {
+			if (!(sstd = malloc((size_t)(splane * np))) || !(dstd = malloc((size_t)(dplane * np)))) {
+				free(sstd);
+				free(xs);
+				free(tab);
+				if (*heap)
+					free(dev);
+				else
+					Mfree(dev);
+				return -1;
+			}
+			b = *sb;
+			b.fd_addr = sstd;
+			b.fd_stand = 1;
+			vr_trnfm(vdi_h, (MFDB *)sb, &b);
+		}
+		{
+			const unsigned char *S = np > 1 ? sstd : sb->fd_addr;
+			unsigned char *D = np > 1 ? dstd : dev;
+
+			for (y = 0; y < h; y++) {
+				long sy = y * (long)src->h / h;
+
+				for (p = 0; p < np; p++) {
+					unsigned char *dr = D + p * dplane + y * dwd * 2;
+
+					if (sy == prev)
+						memcpy(dr, dr - dwd * 2, (size_t)dwd * 2);
+					else if (nb) {
+						/* a byte's 8 pixels to nb at once (the table),
+						   streamed out a byte at a time */
+						const unsigned char *sr = S + p * splane + sy * swd * 2;
+						unsigned long acc = 0;
+						int bits = 0;
+						long i, o = 0, n = (src->w + 7) / 8, lim = dwd * 2;
+
+						for (i = 0; i < n && o < lim; i++) {
+							unsigned long v = tab[sr[i]];
+							int k = nb;
+
+							while (k > 0) {
+								int take = k > 16 ? 16 : k;
+
+								acc = acc << take | (v >> (k - take) & ((1UL << take) - 1));
+								bits += take;
+								k -= take;
+								while (bits >= 8 && o < lim) {
+									dr[o++] = (unsigned char)(acc >> (bits - 8));
+									bits -= 8;
+								}
+							}
+						}
+						if (bits > 0 && o < lim)
+							dr[o++] = (unsigned char)(acc << (8 - bits));
+						while (o < lim)
+							dr[o++] = 0;
+					} else {
+						const unsigned char *sr = S + p * splane + sy * swd * 2;
+
+						memset(dr, 0, (size_t)dwd * 2);
+						for (x = 0; x < w; x++)
+							if (sr[xs[x] >> 3] & (0x80 >> (xs[x] & 7)))
+								dr[x >> 3] |= (unsigned char)(0x80 >> (x & 7));
+					}
+				}
+				prev = sy;
+			}
+		}
+		if (np > 1) {
+			a.fd_addr = dstd;
+			a.fd_stand = 1;
+			b = a;
+			b.fd_addr = dev;
+			b.fd_stand = 0;
+			vr_trnfm(vdi_h, &a, &b);
+			free(sstd);
+			free(dstd);
+		}
+	}
+	free(xs);
+	free(tab);
+	*out = a;
+	out->fd_addr = dev;
+	out->fd_stand = 0;
+	return 0;
+}
+
+void pics_enlarge_free(MFDB *m, int heap)
+{
+	if (m->fd_addr) {
+		if (heap)
+			free(m->fd_addr);
+		else
+			Mfree(m->fd_addr);
+	}
+	m->fd_addr = NULL;
 }
 
 /* the font or the window changed: the pictures are made again at their new sizes */

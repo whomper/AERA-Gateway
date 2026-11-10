@@ -175,8 +175,15 @@ void ts_set_pics(TSTORE *s, long n, int pics)
 		s->pg[n].pics = pics != 0;
 }
 
+static int own(const TSTORE *s, long n)
+{
+	return n >= 0 && n < s->npages && s->pg[n].len >= 0;
+}
+
 int ts_pics(const TSTORE *s, long n)
 {
+	if (!own(s, n) && s->under)
+		return ts_pics(s->under, n);
 	return n >= 0 && n < s->npages && s->pg[n].len > 0 && s->pg[n].pics;
 }
 
@@ -184,8 +191,8 @@ const char *ts_peek(const TSTORE *s, long n, long *len)
 {
 	int i;
 
-	if (!ts_have(s, n))
-		return NULL;
+	if (!own(s, n))
+		return s->under ? ts_peek(s->under, n, len) : NULL;
 	*len = s->pg[n].len;
 	if (s->pg[n].in_ram)
 		return s->pool + s->pg[n].off;
@@ -197,7 +204,7 @@ const char *ts_peek(const TSTORE *s, long n, long *len)
 
 int ts_have(const TSTORE *s, long n)
 {
-	return n >= 0 && n < s->npages && s->pg[n].len >= 0;
+	return own(s, n) || (s->under && ts_have(s->under, n));
 }
 
 const char *ts_get(TSTORE *s, long n, long *len)
@@ -205,8 +212,8 @@ const char *ts_get(TSTORE *s, long n, long *len)
 	int i, best = 0, h;
 	char *p;
 
-	if (!ts_have(s, n))
-		return NULL;
+	if (!own(s, n))
+		return s->under ? ts_get(s->under, n, len) : NULL;
 	*len = s->pg[n].len;
 	if (s->pg[n].in_ram)
 		return s->pool + s->pg[n].off;

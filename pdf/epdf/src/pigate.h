@@ -21,6 +21,8 @@ typedef struct {
 	const char *pictures;		/* "page", "screen"; NULL */
 	int page_w, pic_w;		/* 0: the Pi's default */
 	int page_double;		/* 1, 0; -1: the Pi's default */
+	const char *translate;		/* a language (ISO 639-1): each page's text translated too
+					   (docs/PI-GATEWAY.md, "translate"); NULL: not asked */
 } PGOPT;
 
 /* where the job is, for the progress bar */

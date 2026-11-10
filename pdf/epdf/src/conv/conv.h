@@ -8,7 +8,11 @@
 #ifndef CONV_H
 #define CONV_H
 
-enum { CV_PAGES_NONE, CV_PAGES_MONO, CV_PAGES_COLOUR };
+/* whole pages: none, mono, mono and colour, colour only (Erez, 10 Nov
+   2026: "What if I just want color pages, why would I spend time on
+   mono?": a page with colour then has no mono one, a page without colour
+   its mono one) */
+enum { CV_PAGES_NONE, CV_PAGES_MONO, CV_PAGES_COLOUR, CV_PAGES_COLOUR_ONLY };
 enum { CV_PHOTOS_INDEXED, CV_PHOTOS_JPEG };
 /* a picture's stored size: its size on the page (a point a pixel), or its
    own pixels (a drawing: the page drawn's) up to pic_w, for EPDF to show

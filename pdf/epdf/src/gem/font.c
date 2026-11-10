@@ -107,7 +107,7 @@ static void apply(fontsel *s)
 	chosen = 1;
 }
 
-/* View > Font...: 1 when another font was chosen (now set) */
+/* Options > Font...: 1 when another font was chosen (now set) */
 int font_dialog(void)
 {
 	static fontsel fs;

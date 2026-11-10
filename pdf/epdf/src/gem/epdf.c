@@ -40,6 +40,13 @@
 #include "progbar.h"
 #include "badge.h"
 #include "gwopen.h"
+#include "trview.h"
+#include "aboutline.h"
+#include "charset.h"
+#include "bidi.h"
+#include "translate.h"
+#include "langs.h"
+#include "popup.h"
 #include "gatedlg.h"
 
 short ap_id;
@@ -54,9 +61,10 @@ static char start_dir[160];		/* EPDF.PRG's folder: EPDF.INF, CRASH.LOG, EPDF.TXC
 static char inf_path[180], cache_path[180];
 static INF inf;
 static int lines_mode;
-/* File > Open on the Gateway (Erez, 7 Nov 2026): a PDF that isn't
+/* Options > Open on the Gateway (Erez, 7 Nov 2026): a PDF that isn't
    converted is converted by the Gateway while it is shown (gwopen.c) */
 static int gw_on;
+static unsigned short tr_port = TR_PORT;	/* translategate's */
 static char gate_host[64];
 static unsigned short gate_port = GATE_PORT;
 static char open_dir[160] = "";		/* where Open looks first (FOLDER=) */
@@ -111,6 +119,16 @@ static void settings_read(void)
 		strcpy(gate_host, v);
 	if ((v = inf_get(&inf, "GATEPORT")) != NULL && atol(v) > 0 && atol(v) < 65536)
 		gate_port = (unsigned short)atol(v);
+	{
+		/* View > Translate and the language (Erez, 8 Nov 2026) */
+		int t = (v = inf_get(&inf, "TRANSLATE")) != NULL && v[0] == '1';
+		const char *to = inf_get(&inf, "TRANSLATETO");
+
+		if ((v = inf_get(&inf, "TRPORT")) != NULL && atol(v) > 0 && atol(v) < 65536)
+			tr_port = (unsigned short)atol(v);	/* (translategate's elsewhere: the rigs) */
+		tr_setup(gate_host, tr_port);
+		tr_set(t, to && translate_code_ok(to) ? to : "");
+	}
 }
 
 static void settings_write(void)
@@ -166,18 +184,16 @@ static void open_failed(void)
    window saying so, and opened() follows when it is done */
 static void open_doc(const char *p)
 {
-	char copy[256];
-
-	if (gw_on && !gw_in_copy_folder(p) && gw_copy(p, copy, sizeof copy)) {
-		log_event("gateway-copy", NULL, NULL);
-		p = copy;		/* converted before: that copy, at once */
-	}
 	gw_stop();			/* (another document's conversion: given up) */
+	win_zoom_end();
+	win_zoom_forget();
 	copy_end(NULL);			/* a copy of the old document's text: given up */
+	tr_stop();			/* (the old document's page under translation) */
 	if (doc_open(p, win_cols(), lines_mode, cache_path) != 0) {
 		open_failed();
 		return;
 	}
+	gw_forget(p);			/* (the Gateway's copies but the one open: never kept) */
 	find_dir = 0;
 	win_status(NULL);
 	win_title();
@@ -189,19 +205,18 @@ static void open_doc(const char *p)
 static int settings_dialog(void);
 
 /* the document open isn't converted: the Gateway converts it while it is
-   shown (File > Open on the Gateway ticked) */
+   shown (Options > Open on the Gateway ticked) */
 static void gateway_begin(void)
 {
 	int r;
 
-	if (!gw_on || !doc_is_open() || doc_prepared() || gw_busy() || gw_in_copy_folder(doc_path()))
+	if (!gw_on || !doc_is_open() || doc_prepared() || gw_busy() || gw_is_temp(doc_path()))
 		return;
-	r = gw_start(doc_path(), gate_host, gate_port);
+	gw_set_translate(tr_on() ? tr_to() : "");	/* (Translate on: the Gateway translates with the conversion) */
+	r = gw_start(doc_path(), doc_path(), gate_host, gate_port);
 	if (r == GW_NO_ADDRESS && settings_dialog())
-		r = gw_start(doc_path(), gate_host, gate_port);
-	if (r == GW_NO_FOLDER)
-		alert(1, "[1][The folder atari can't be made beside %.20s: the disk is write-protected.][ OK ]", doc_name());
-	else if (r == GW_NO_NETWORK)
+		r = gw_start(doc_path(), doc_path(), gate_host, gate_port);
+	if (r == GW_NO_NETWORK)
 		alert(1, "[1][The Gateway is reached through STinG, MiNTnet or MagiC-Net, and none of them is running.][ OK ]");
 	else if (r == GW_NO_MEMORY)
 		alert(1, "[3][Not enough memory to send it to the Gateway.][ OK ]");
@@ -217,8 +232,15 @@ static void gateway_end(void)
 
 	snprintf(q, sizeof q, "%d", r);
 	log_event("gateway-done", q, NULL);
-	if (r == 0)
+	if (r == 0) {
+		char src[256];
+
+		snprintf(src, sizeof src, "%s", gw_source());
 		open_doc(copy);
+		if (doc_is_open() || doc_opening())
+			doc_set_original(src);	/* (its name the PDF's: the copy is EPDF's own) */
+		win_title();
+	}
 	else if (r == -3)
 		alert(1, "[1][The Gateway at %.24s doesn't answer. Check that it is on and that the PDF converter is installed on it.][ OK ]",
 		      gw_host());
@@ -229,6 +251,7 @@ static void gateway_end(void)
 static void opened(void)
 {
 	bg_opened();
+	tr_new_document();
 	gateway_begin();
 	win_title();
 	menu_states();
@@ -262,6 +285,72 @@ static void open_dialog(void)
 	open_doc(full);
 }
 
+/* File > Save Optimised... (Erez, 8 Nov 2026): the converted PDF open (an
+   "Optimised" one: the Gateway's copy, or EConvert's file) written where
+   the user says, as it is: nothing converted again. Under the PDF's own
+   name by default, in its folder; written to a temporary name and renamed
+   (6.4's safe save) */
+int pf_wopen(const char *path);
+long pf_wwrite(int h, const void *data, long len);
+int pf_wclose(int h, const char *path, int keep);
+
+static void save_optimised(void)
+{
+	static char name[16];
+	char dir[200], full[256], *s;
+	const char *o = doc_original();
+	short button;
+	int in, out, ok = 1;
+	char *buf;
+	long n;
+
+	if (!doc_is_open() || !doc_prepared())
+		return;
+	snprintf(name, sizeof name, "%.12s", doc_name());
+	s = strrchr(o, '\\');
+	if (s)
+		snprintf(dir, sizeof dir, "%.*s\\*.PDF", (int)(s - o), o);
+	else
+		snprintf(dir, sizeof dir, "%c:\\*.PDF", (char)('A' + Dgetdrv()));
+	if (!fsel_exinput(dir, name, &button, "Save the optimised PDF") || !button || !name[0])
+		return;
+	strcpy(full, dir);
+	s = strrchr(full, '\\');
+	if (!s)
+		return;
+	strcpy(s + 1, name);
+	if (!strcasecmp(full, doc_path()))
+		return;			/* (itself) */
+	if (pf_size(full) >= 0 && alert(2, "[2][%.30s is there already.|Replace it?][Replace|Cancel]", name) != 1)
+		return;
+	if ((in = pf_open(doc_path(), PF_READ)) < 0) {
+		alert(1, "[1][EPDF can't read the optimised PDF.][ OK ]");
+		return;
+	}
+	if (!(buf = malloc(32768L)) || (out = pf_wopen(full)) < 0) {
+		free(buf);
+		pf_close(in);
+		alert(1, "[1][%.30s can't be written there.][ OK ]", name);
+		return;
+	}
+	graf_mouse(BUSYBEE, NULL);
+	while ((n = pf_read(in, buf, 32768L)) > 0)
+		if (pf_wwrite(out, buf, n) != n) {
+			ok = 0;
+			break;
+		}
+	if (n < 0)
+		ok = 0;
+	pf_close(in);
+	free(buf);
+	if (pf_wclose(out, full, ok) != 0)
+		ok = 0;
+	graf_mouse(ARROW, NULL);
+	log_event("save-optimised", ok ? "ok" : "failed", NULL);
+	if (!ok)
+		alert(1, "[1][%.30s couldn't be written: the disk may be full.][ OK ]", name);
+}
+
 /* ---------------------------------------------------------------- the selection, Find, Copy */
 
 static char find_text[65];
@@ -273,11 +362,12 @@ static long find_left;			/* pages it may still look at */
    every step of a selection dragged) */
 static void menu_states(void)
 {
-	static const short cmd[6] = { CMD_COPY, CMD_SELALL, CMD_FIND, CMD_FINDNEXT, CMD_FINDPREV, CMD_PAGES };
-	static signed char was[6] = { -1, -1, -1, -1, -1, -1 };
+	static const short cmd[10] = { CMD_COPY, CMD_SELALL, CMD_FIND, CMD_FINDNEXT, CMD_FINDPREV, CMD_PAGES,
+				       CMD_SAVEOPT, CMD_ZOOMIN, CMD_ZOOMOUT, CMD_ZOOMACTUAL };
+	static signed char was[10] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
 	static signed char tick = -1;
 	DOCVIEW *v = doc_view();
-	signed char now[6];
+	signed char now[10];
 	int i;
 
 	menus_due = 0;
@@ -287,7 +377,10 @@ static void menu_states(void)
 	now[1] = now[2] = v != NULL;
 	now[3] = now[4] = v && find_text[0];
 	now[5] = doc_has_pages() != 0;		/* (greyed for a file without its pages whole) */
-	for (i = 0; i < 6; i++)
+	now[6] = v && doc_prepared();		/* Save Optimised...: a converted PDF's */
+	now[7] = v && doc_pages_mode() && win_zoom_can(1);
+	now[8] = now[9] = v && doc_pages_mode() && win_zoom_can(-1);
+	for (i = 0; i < 10; i++)
 		if (now[i] != was[i]) {
 			menu_ienable(menu.tree, mbar_object(&menu, cmd[i]), now[i]);
 			was[i] = now[i];
@@ -437,7 +530,7 @@ static void copy(void)
 	if (!v || v->sel_p0 < 0 || cp.on)
 		return;
 	if (!clip_put_begin()) {
-		win_status("no clipboard to copy to");
+		win_status("Couldn't write the clipboard.");
 		return;
 	}
 	memset(&cp, 0, sizeof cp);
@@ -472,7 +565,7 @@ static int copy_step(void)
 		cp.on = 0;		/* clip_put_end is called here, not by copy_end */
 		if (clip_put_end(ok) && ok) {
 			snprintf(n, sizeof n, "%ld", cp.len);
-			copy_end(cp.missing ? "copied; pages not read yet left out" : "copied");
+			copy_end(cp.missing ? "Copied to the clipboard. Pages not read yet were left out." : "Copied to the clipboard.");
 			log_event("copied", n, NULL);	/* the copy done, its status shown */
 		} else {
 			copy_end("nothing copied");
@@ -519,7 +612,7 @@ static int copy_step(void)
 	if (q > cp.piece && !clip_put_step(cp.piece, (long)(q - cp.piece))) {
 		cp.on = 0;
 		clip_put_end(0);
-		copy_end("the clipboard couldn't be written");
+		copy_end("Couldn't write the clipboard.");
 		return 0;
 	}
 	cp.len += (long)(q - cp.piece);
@@ -565,7 +658,29 @@ static void click(short mx, short my, short kstate, int dbl)
 	int how;
 
 	if (win_zoomed()) {
-		win_zoom_end();		/* (a click gives the text back) */
+		/* held and moved: the page dragged under the mouse (Erez, 8 Nov
+		   2026); a click alone gives the text back */
+		if (press_track(&anywhere, mx, my, 0, held_msg, 0, 0) != PRESS_DRAG) {
+			win_zoom_end();
+			menu_states();
+			return;
+		}
+		wind_update(BEG_MCTRL);
+		graf_mouse(FLAT_HAND, NULL);
+		for (;;) {
+			short nx, ny;
+
+			graf_mkstate(&nx, &ny, &mb, &ks);
+			if (!(mb & 1))
+				break;
+			if (nx != mx || ny != my) {
+				win_zoom_pan(nx - mx, ny - my);
+				mx = nx;
+				my = ny;
+			}
+		}
+		graf_mouse(ARROW, NULL);
+		wind_update(END_MCTRL);
 		return;
 	}
 	if (!dbl && !(kstate & (K_LSHIFT | K_RSHIFT)) && win_zoom_at(mx, my))
@@ -640,19 +755,88 @@ static void select_word(short mx, short my)
  * the selection. Only the menu bar's commands, with their keys; Copy
  * first, as a double-click is a selection's.
  */
+/* the right-click menu's Translate... (Erez, 8 Nov 2026): the words
+   selected (their first 2 KB) sent to translategate as one short request,
+   the answer shown in a box over the window, which nothing else changes */
+static void translate_selection(void)
+{
+	DOCVIEW *v = doc_view();
+	SBUF b;
+	long p, o0, o1, len, outlen = 0;
+	char from[TR_LANG], err[120], *out;
+
+	if (!v || v->sel_p0 < 0 || !tr_to()[0] || !gate_host[0])
+		return;
+	sb_init(&b);
+	for (p = v->sel_p0; p <= v->sel_p1 && b.len < TR_PIECE_DEFAULT; p++) {
+		const char *t = doc_page_text(p, &len);
+
+		if (!t)
+			break;
+		o0 = p == v->sel_p0 ? v->sel_o0 : 0;
+		o1 = p == v->sel_p1 ? v->sel_o1 : len;
+		if (o1 > len)
+			o1 = len;
+		if (o1 > o0)
+			sb_add(&b, t + o0, o1 - o0 > TR_PIECE_DEFAULT - b.len ? TR_PIECE_DEFAULT - b.len : o1 - o0);
+		if (p < v->sel_p1)
+			sb_add(&b, "\n", 1);
+	}
+	{
+		long i;
+
+		for (i = 0; i < b.len; i++)
+			if (b.s[i] == '\r' || b.s[i] == '\n' || b.s[i] == '\t' || (unsigned char)b.s[i] == 0x7F)
+				b.s[i] = ' ';	/* (one piece of words: the soft breaks and line ends as spaces) */
+	}
+	if (b.len == 0) {
+		sb_free(&b);
+		return;
+	}
+	graf_mouse(BUSYBEE, NULL);
+	out = translate_atari(gate_host, tr_port, tr_to(), NULL, b.s, b.len, NULL, from, &outlen, err, sizeof err);
+	graf_mouse(ARROW, NULL);
+	sb_free(&b);
+	log_event("translate-selection", out ? "ok" : "failed", NULL);
+	if (!out) {
+		alert(1, "[1][The words can't be translated:|%.40s][ OK ]", err);
+		return;
+	}
+	{
+		/* the answer as it came: common's alert wraps it into lines of 30
+		   at the spaces and puts Hebrew into the order it is seen (bidi);
+		   its own marks and the line ends made harmless, cut to what five
+		   lines hold */
+		char msg[150];
+		long i, n = outlen < (long)sizeof msg - 4 ? outlen : (long)sizeof msg - 4;
+
+		for (i = 0; i < n; i++) {
+			char c = out[i];
+
+			msg[i] = c == '[' ? '(' : c == ']' ? ')' : (c == '|' || c == '\n' || c == '\r' || c == '\t') ? ' ' : c;
+		}
+		if (n < outlen)
+			memcpy(msg + n, "...", 3), n += 3;
+		msg[n] = '\0';
+		free(out);
+		alert(1, "[0][%s][ OK ]", msg);
+	}
+}
+
 static void context_menu(short mx, short my)
 {
 	static const struct { const char *label; int cmd; } all[] = {
-		{ "  Copy                   ^C ", CMD_COPY },
-		{ "  Select all             ^A ", CMD_SELALL },
+		{ "Copy                  ^C", CMD_COPY },
+		{ "Translate...            ", CMD_TRSEL },
+		{ "Select all            ^A", CMD_SELALL },
 		{ "-", CMD_NONE },
-		{ "  Find...                ^F ", CMD_FIND },
-		{ "  Find next              ^G ", CMD_FINDNEXT },
+		{ "Find...               ^F", CMD_FIND },
+		{ "Find next             ^G", CMD_FINDNEXT },
 		{ "-", CMD_NONE },
-		{ "  Previous page       ^Left ", CMD_PREV },
-		{ "  Next page          ^Right ", CMD_NEXT },
+		{ "Previous page      ^Left", CMD_PREV },
+		{ "Next page         ^Right", CMD_NEXT },
 		{ "-", CMD_NONE },
-		{ "  The page's lines          ", CMD_LINES }
+		{ "The page's lines        ", CMD_LINES }
 	};
 	enum { N = sizeof all / sizeof all[0] };
 	static char alt[N][40];
@@ -663,19 +847,24 @@ static void context_menu(short mx, short my)
 	for (i = 0; i < N; i++) {
 		int c = all[i].cmd, grey = !v && c != CMD_LINES;
 
-		if (c == CMD_COPY && (!v || v->sel_p0 < 0))
+		if ((c == CMD_COPY || c == CMD_TRSEL) && (!v || v->sel_p0 < 0))
 			grey = 1;
+		if (c == CMD_TRSEL && (!tr_to()[0] || !gate_host[0]))
+			grey = 1;		/* (no language or no Gateway yet: Settings) */
 		if (c == CMD_FINDNEXT && !find_text[0])
 			grey = 1;
 		lab[i] = all[i].label;
 		if (grey || (c == CMD_LINES && lines_mode)) {
-			alt[i][0] = grey ? '~' : '\x08';	/* greyed, or ticked (popup.h) */
-			strncpy(alt[i] + 1, all[i].label + (grey ? 0 : 1), sizeof alt[i] - 2);
+			/* greyed, or ticked: the mark before the words (popup.h's
+			   popup_m: the box adds the margin, D15) */
+			alt[i][0] = grey ? '~' : '\x08';
+			strncpy(alt[i] + 1, all[i].label, sizeof alt[i] - 2);
+			alt[i][sizeof alt[i] - 1] = '\0';
 			lab[i] = alt[i];
 		}
 	}
 	log_event("menu", "popup", NULL);
-	r = popup(mx, my, lab, N);
+	r = popup_m(mx, my, lab, N);
 	if (r >= 0 && all[r].cmd != CMD_NONE)
 		command(all[r].cmd);
 }
@@ -708,7 +897,7 @@ static void command(int c)
 {
 	char n[8];
 
-	if (c != CMD_ABOUT)
+	if (c != CMD_ABOUT && c != CMD_ZOOMIN && c != CMD_ZOOMOUT && c != CMD_ZOOMACTUAL)
 		win_zoom_end();		/* (a picture shown whole: the text back first) */
 	switch (c) {
 	case CMD_ABOUT:
@@ -716,6 +905,34 @@ static void command(int c)
 		break;
 	case CMD_OPEN:
 		open_dialog();
+		break;
+	case CMD_SAVEOPT:
+		save_optimised();
+		break;
+	case CMD_ZOOMIN:
+	case CMD_ZOOMOUT:
+		win_zoom_step(c == CMD_ZOOMIN ? 1 : -1);
+		menu_states();
+		break;
+	case CMD_ZOOMACTUAL:
+		win_zoom_actual();
+		menu_states();
+		break;
+	case CMD_TRSEL:
+		translate_selection();
+		break;
+	case CMD_TRANSLATE:
+		if (!tr_to()[0] && !settings_dialog())
+			break;		/* (no language yet: Settings first) */
+		if (!tr_to()[0])
+			break;
+		tr_set(!tr_on(), NULL);
+		setting("TRANSLATE", tr_on() ? "1" : "0", "1: View > Translate ticked (the text view translated)");
+		if (has_menu)
+			menu_icheck(menu.tree, mbar_object(&menu, CMD_TRANSLATE), tr_on());
+		log_event("translate", tr_on() ? "on" : "off", tr_to());
+		win_layout();
+		win_draw_all();
 		break;
 	case CMD_GATEWAY:
 		gw_on = !gw_on;
@@ -733,6 +950,9 @@ static void command(int c)
 	case CMD_CLOSE:
 	case CMD_QUIT:
 		quit_now = 1;
+		break;
+	case CMD_KEYS:
+		keys_dialog();
 		break;
 	case CMD_GUIDE:
 		if (help_key(start_dir, "epdf.hyp", NULL, "About"))
@@ -802,16 +1022,200 @@ static void command(int c)
 	}
 }
 
-/* File > Settings... (^,): where the Gateway is; 1 when OK */
+/* a language's name for the page heads and Settings, by its code (the
+   Gateway's own names where it gave them: lang_names) */
+static SBUF lang_names;			/* "CODE<TAB>NAME" lines, the last GET /languages */
+
+const char *lang_name(const char *code)
+{
+	static const char *const known[] = {
+		"en", "English", "he", "Hebrew", "de", "German", "fr", "French", "es", "Spanish",
+		"it", "Italian", "nl", "Dutch", "pt", "Portuguese", "ru", "Russian", "ar", "Arabic",
+		"pl", "Polish", "sv", "Swedish", "da", "Danish", "fi", "Finnish", "no", "Norwegian",
+		"nb", "Norwegian", "cs", "Czech", "hu", "Hungarian", "el", "Greek", "tr", "Turkish",
+		"ja", "Japanese", "zh", "Chinese", "ko", "Korean", "uk", "Ukrainian", "ro", "Romanian",
+		NULL
+	};
+	static char nm[TR_LANGNAME];
+	int i;
+	long k, cl;
+
+	if (!code || !code[0])
+		return "";
+	cl = (long)strlen(code);
+	for (k = 0; lang_names.s && k < lang_names.len;) {
+		const char *l = lang_names.s + k, *e = memchr(l, '\n', (size_t)(lang_names.len - k));
+		long ll = e ? e - l : lang_names.len - k;
+
+		if (ll > cl + 1 && !memcmp(l, code, (size_t)cl) && l[cl] == '\t') {
+			long nl = ll - cl - 1, al;
+			char *a = cs_to_atari(l + cl + 1, nl, CS_UTF8, &al);
+
+			if (a) {
+				snprintf(nm, sizeof nm, "%.*s", (int)al, a);
+				free(a);
+				return nm;
+			}
+		}
+		k += ll + 1;
+	}
+	for (i = 0; known[i]; i += 2)
+		if (!strcmp(known[i], code))
+			return known[i + 1];
+	return code;
+}
+
+/* Settings > Translate into: the languages the Gateway has installed, in a
+   menu at the button (GET /languages) */
+/* the About box's first line (1.3): how EPDF reaches the Gateway, left
+   out while nothing of EPDF's uses it */
+void epdf_net_line(char *out, int n)
+{
+	static int probed;
+	long page;
+
+	out[0] = '\0';
+	if (!gate_host[0] && !gw_on && !tr_on())
+		return;
+	if (!probed)
+		probed = 1, net_init();	/* (what is there: nothing is opened) */
+	about_net_line(out, n, net_stack(), gate_host[0] ? ABOUT_GATEWAY : ABOUT_NO_GATEWAY,
+		       gw_busy() || tr_page(&page) ? ABOUT_ONLINE : ABOUT_READY);
+}
+
+/* the network for the Gateway's languages (Settings), started here as
+   tr_slice and gw_start start it; said when there is none */
+static int net_up(void)
+{
+	static int ready;
+
+	if (!ready && !(ready = net_init()))
+		alert(1, "[1][The Gateway is reached through|STinG, MiNTnet or MagiC-Net,|and none is running.][ OK ]");
+	return ready;
+}
+
+static int pick_language(char *to, int tocap, char *name, int namecap, short bx, short by)
+{
+	char err[120];
+	const char *lab[TR_LANGS_MAX];
+	char codes[TR_LANGS_MAX][TR_LANG];
+	char names[TR_LANGS_MAX][TR_LANGNAME];
+	short n = 0, r, sel = 0;
+	long k;
+
+	const char *gh = gate_dialog_host();
+
+	if (!gh[0]) {
+		alert(1, "[1][Type the Gateway's address first:|the Secure page.][ OK ]");
+		return 0;
+	}
+	if (gw_busy()) {
+		/* (the Gateway copy's connection is open, parked: one at a time) */
+		alert(1, "[1][EPDF is waiting for the Gateway|to convert a PDF. Ask again|when it has come.][ OK ]");
+		return 0;
+	}
+	if (!net_up())
+		return 0;
+	graf_mouse(BUSYBEE, NULL);
+	sb_reset(&lang_names);
+	k = translate_languages(gh, tr_port, &lang_names, err, sizeof err);
+	graf_mouse(ARROW, NULL);
+	log_event("languages", k ? "ok" : "failed", NULL);
+	if (!k) {
+		alert(1, "[1][The Gateway's languages can't be had:|%.40s][ OK ]", err);
+		return 0;
+	}
+	for (k = 0; lang_names.s && k < lang_names.len && n < TR_LANGS_MAX;) {
+		const char *l = lang_names.s + k, *e = memchr(l, '\n', (size_t)(lang_names.len - k)), *t;
+		long ll = e ? e - l : lang_names.len - k;
+
+		t = memchr(l, '\t', (size_t)ll);
+		if (t && t - l < TR_LANG && t > l) {
+			snprintf(codes[n], sizeof codes[n], "%.*s", (int)(t - l), l);
+			if (translate_code_ok(codes[n])) {
+				snprintf(names[n], sizeof names[n], "%s%s", strcmp(codes[n], to) ? "" : "\x08",
+					 lang_name(codes[n]));	/* (the one chosen: ticked) */
+				if (!strcmp(codes[n], to))
+					sel = n;
+				lab[n] = names[n];
+				n++;
+			}
+		}
+		k += ll + 1;
+	}
+	if (!n) {
+		alert(1, "[1][The Gateway has no languages installed:|see Languages....][ OK ]");
+		return 0;
+	}
+	/* over its button, the row chosen on it, as the AES's own pop-ups
+	   (5.7; EHypView's over_button: rows of ch + 2, from 2 pixels down) */
+	r = popup_m(bx, (short)(by - 3 - sel * (ch + 2)), lab, n);
+	if (r < 0)
+		return 0;
+	snprintf(to, (size_t)tocap, "%s", codes[r]);
+	snprintf(name, (size_t)namecap, "%s", lang_name(codes[r]));
+	return 1;
+}
+
+/* Settings > Languages...: the family's dialog (common's langs.c); the
+   install the Gateway then runs is followed in the status bar */
+static langs_job ljob;
+static int ljob_on;
+
+static void languages_dialog(void)
+{
+	static langs l;
+	int r;
+
+	const char *gh = gate_dialog_host();
+
+	if (!gh[0]) {
+		alert(1, "[1][Type the Gateway's address first:|the Secure page.][ OK ]");
+		return;
+	}
+	if (gw_busy()) {
+		/* (the Gateway copy's connection is open, parked: one at a time) */
+		alert(1, "[1][EPDF is waiting for the Gateway|to convert a PDF. Ask again|when it has come.][ OK ]");
+		return;
+	}
+	if (!net_up())
+		return;
+	memset(&l, 0, sizeof l);
+	l.host = gh;
+	l.port = tr_port;
+	r = langs_run(&l);
+	log_event("languages-dialog", r == 1 ? "ok" : r == 0 ? "cancel" : "failed", NULL);
+	if (r == 1 && l.job) {
+		langs_job_begin(&ljob, gh, tr_port, l.job, l.add_mb, tos_ms());
+		ljob_on = 1;
+	}
+}
+
 static int settings_dialog(void)
 {
-	char port[8];
+	char port[8], to[TR_LANG];
+	int was_on = tr_on();
 
-	if (!gate_dialog(gate_host, (int)sizeof gate_host, &gate_port))
+	/* the page being translated given up (it is asked again after): its
+	   job is parked inside a connection, and the dialog's questions to the
+	   Gateway (Translate into, Languages...) open one of their own on this
+	   stack, which conn.c can't have two of (the hub's review, 9 Nov 2026:
+	   an Address Error, 3 of 3) */
+	tr_stop();
+
+	snprintf(to, sizeof to, "%s", tr_to());
+	if (!gate_dialog_tr(gate_host, (int)sizeof gate_host, &gate_port, to, (int)sizeof to, lang_name(to),
+			    pick_language, languages_dialog))
 		return 0;
 	setting("GATE", gate_host, "the Gateway's address (Through the Gateway)");
 	snprintf(port, sizeof port, "%u", (unsigned)gate_port);
 	setting("GATEPORT", port, "the Gateway's port for PDFs (8380)");
+	tr_setup(gate_host, tr_port);
+	if (strcmp(to, tr_to())) {
+		setting("TRANSLATETO", to, "the language View > Translate translates into");
+		tr_set(was_on, to);
+		win_draw_all();
+	}
 	return 1;
 }
 
@@ -828,6 +1232,15 @@ static void key(short kstate, short k)
 		return;			/* an iconified window takes no keys (5.1) */
 	if (win_zoom_key(scan))
 		return;			/* a picture shown whole takes them */
+	if ((scan == 0x4e || scan == 0x4a) && doc_pages_mode()) {
+		command(scan == 0x4e ? CMD_ZOOMIN : CMD_ZOOMOUT);	/* the keypad's + and - */
+		return;
+	}
+	if (tr_busy() && scan == 0x01 && !cp.on && !find_dir && !gw_busy()) {
+		tr_halt();		/* Esc: the document's translation given up */
+		log_event("translate-stopped", NULL, NULL);
+		return;
+	}
 	if (gw_busy() && scan == 0x01 && !cp.on && !find_dir) {
 		gw_stop();		/* Esc: the Gateway's conversion given up */
 		log_event("gateway-stopped", NULL, NULL);
@@ -858,7 +1271,15 @@ static void key(short kstate, short k)
 		case 0x10: command(CMD_QUIT); return;		/* ^Q */
 		case 0x2e: command(CMD_COPY); return;		/* ^C */
 		case 0x1e: command(CMD_SELALL); return;		/* ^A */
-		case 0x21: command(shift(kstate) ? CMD_FONT : CMD_FIND); return;	/* ^F; Shift+^F: Font... */
+		case 0x21:			/* ^F (Font... has no key: Erez, 9 Nov 2026) */
+			if (!shift(kstate))
+				command(CMD_FIND);
+			return;
+		/* View > Pages' zoom, EWeb's keys: ^+ (^= and the keypad's), ^-,
+		   ^0 (Erez, 9 Nov 2026) */
+		case 0x0d: case 0x4e: if (doc_pages_mode()) command(CMD_ZOOMIN); return;
+		case 0x0c: case 0x4a: if (doc_pages_mode()) command(CMD_ZOOMOUT); return;
+		case 0x0b: case 0x70: if (doc_pages_mode()) command(CMD_ZOOMACTUAL); return;
 		case 0x22: command(shift(kstate) ? CMD_FINDPREV : CMD_FINDNEXT); return;	/* ^G, Shift+^G */
 		}
 		return;
@@ -946,7 +1367,7 @@ static void message(const short *msg)
 static void progress(void)
 {
 	char w[64];
-	long pg, made, of, n = doc_pages(), p0, p1, rp;
+	long pg, made, of, n = doc_pages(), p0, p1, rp, tp;
 	int pm = 0, pic;
 
 	rp = doc_reading(&pm);
@@ -966,6 +1387,11 @@ static void progress(void)
 
 		gw_words(w, sizeof w, &d, &t);	/* (the three phases: guideline 7.3) */
 		win_progress(6, w, d, t);
+	} else if (tr_page(&tp)) {
+		snprintf(w, sizeof w, "Translating page %ld of %ld", tp + 1, n);
+		win_progress(7, w, 0, 0);
+	} else if (ljob_on) {
+		win_progress(8, ljob.text, langs_job_permille(&ljob), PB_FULL);
 	} else if (rp >= 0 && (!pic || (rp >= p0 && rp <= p1))) {
 		snprintf(w, sizeof w, "Reading page %ld of %ld", rp + 1, n);
 		win_progress(1, w, doc_read() * 1000L + pm, n * 1000L);
@@ -996,6 +1422,7 @@ static long arrived_pic = -1;		/* a picture made, its rows still to draw */
 static long rows_pic = -1, rows_from, rows_to;	/* a picture being made: its new rows, to draw */
 static int pic_turn;			/* pictures and pages take turns */
 static int gw_turn;			/* the Gateway's exchange and the reading take turns */
+static int tr_turn;			/* and the translation */
 
 /* the reading on for a piece of the slice; 1 when a page came, whose rows
    are drawn in a turn of their own (a page's rows and the slice that read
@@ -1037,6 +1464,7 @@ int main(void)
 	ap_id = appl_init();
 	if (ap_id < 0)
 		return 1;
+	key_state_init();	/* (keys typed while busy or starting keep their Shift and Control: common's gem.c) */
 	if (dspjpeg_present())
 		pic_dsp = &dspjpeg_port_jpeg;	/* a Falcon: its DSP decodes the JPEGs it takes (EPDF dithers on the CPU) */
 	dlg_title = "EPDF";			/* dialogs in a window (MiNT, MagiC): 3.5 */
@@ -1076,6 +1504,8 @@ int main(void)
 	}
 	path_join(inf_path, sizeof inf_path, start_dir, "epdf.inf");
 	path_join(cache_path, sizeof cache_path, start_dir, "epdf.txc");
+	gw_set_temp_dir(start_dir);
+	has_menu_states = menu_states;
 	/* stage 2: render.ovl and the standard fonts beside the program */
 	path_join(rdraw_path, sizeof rdraw_path, start_dir, "render.ovl");
 	path_join(doc_font_dir, sizeof doc_font_dir, start_dir, "fonts");
@@ -1133,6 +1563,7 @@ int main(void)
 		if (has_menu) {
 			menu_icheck(menu.tree, mbar_object(&menu, CMD_LINES), lines_mode);
 			menu_icheck(menu.tree, mbar_object(&menu, CMD_GATEWAY), gw_on);
+			menu_icheck(menu.tree, mbar_object(&menu, CMD_TRANSLATE), tr_on());
 		}
 		menu_states();
 	}
@@ -1165,7 +1596,9 @@ int main(void)
 	while (!quit_now) {
 		short which, flags = MU_MESAG | MU_KEYBD | MU_BUTTON;
 		unsigned long t;
-		int pending = doc_pending() || find_dir || doc_pic_busy() || pics_waiting() || cp.on || gw_busy();
+		pics_focus = doc_view() ? dv_page_at_top(doc_view()) : -1;
+		int pending = doc_pending() || find_dir || doc_pic_busy() || pics_waiting() || cp.on || gw_busy() ||
+			      tr_busy() || ljob_on;
 
 		progress();
 
@@ -1232,7 +1665,10 @@ int main(void)
 						break;
 					t0 = t1;
 				}
-			} else if ((doc_pic_busy() || pics_waiting()) && bg_may_work() && ((pic_turn ^= 1) || !doc_pending())) {
+			} else if ((doc_pic_busy() || pics_waiting()) && bg_may_work() &&
+				   ((pic_turn ^= 1) || !doc_pending() || pics_focus_busy())) {
+				/* (the page in focus's picture: every turn, the reading
+				   and the rest after it: Erez, 8 Nov 2026) */
 				long obj = -1;
 
 				doc_pic_drop_ahead();	/* (one shown waits: the one ahead gives way) */
@@ -1266,6 +1702,25 @@ int main(void)
 				bg_begin();
 				if (gw_slice(40))
 					gateway_end();
+			} else if (tr_busy() && bg_may_work() && ((tr_turn ^= 1) || !doc_pending())) {
+				/* View > Translate: the page in view's translation, every
+				   other turn with the reading (Translate off: never here) */
+				long tn;
+				const char *why;
+
+				bg_begin();
+				if ((tn = tr_slice(30)) >= 0)
+					win_page_ready(tn);
+				if ((why = tr_failed()) != NULL)
+					alert(1, "[1][The pages can't be translated:|%.40s][ OK ]", why);	/* (one a document) */
+			} else if (ljob_on && bg_may_work()) {
+				/* the Gateway installing languages (Settings > Languages...) */
+				int st;
+
+				bg_begin();
+				st = langs_job_step(&ljob, tos_ms());
+				if (st == 2)
+					ljob_on = 0;
 			} else if (pending && bg_may_work()) {
 				bg_begin();
 				/* a search first: the user waits for it; the reading after */
@@ -1291,6 +1746,11 @@ int main(void)
 	mbar_free(&menu);
 	copy_end(NULL);
 	doc_close();
+	tr_stop();
+	gw_stop();
+	while (gw_busy())
+		gw_slice(50);		/* (stopped at its next wait: its file closed) */
+	gw_forget(NULL);		/* (the Gateway's copies: kept only by Save Optimised...) */
 	pics_exit();
 	font_exit();
 	inf_free(&inf);

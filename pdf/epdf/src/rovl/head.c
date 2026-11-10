@@ -103,6 +103,7 @@ static int rv_page(void *doc, long n, int width, int y0, ROVL_PAGE *out)
 {
 	RDOC *x = doc;
 	int rc;
+	long keep = x->r.canvas_max;
 
 	stopped = 0;
 	x->d.stopping = 0;
@@ -110,6 +111,17 @@ static int rv_page(void *doc, long n, int width, int y0, ROVL_PAGE *out)
 	render_clock = ms;
 	pic_dsp = dsp_on && dspjpeg_present() ? &dspjpeg_port_jpeg : NULL;
 	rc = render_page_from(&x->r, n, width, y0);
+	/* no room for its canvas (a page drawn bigger: View > Zoom in, Erez
+	   8 Nov 2026): in smaller bands, each reading the page again, down to
+	   16 rows; slower, but drawn */
+	while (rc && !x->r.c.px && !stopped && !x->d.stopping && (long)width * 2 * 16 < (x->r.canvas_max > 0 ?
+	       x->r.canvas_max : (long)width * 2 * 8192)) {
+		long was = x->r.canvas_max > 0 ? x->r.canvas_max : (long)width * 2 * 8192;
+
+		x->r.canvas_max = was / 2;
+		rc = render_page_from(&x->r, n, width, y0);
+	}
+	x->r.canvas_max = keep;		/* (the next page tries whole again; this one's bands go on in its canvas) */
 	memset(out, 0, sizeof *out);
 	if (stopped || x->d.stopping)
 		return -2;
@@ -151,7 +163,7 @@ static int rv_pens(void *doc, const unsigned char (*pal)[3], int n, int planes, 
 {
 	RCANVAS *c = &((RDOC *)doc)->r.c;
 
-	if (y < 0 || rows <= 0 || y + rows > c->rows || !c->px || planes < 1 || planes > 4)
+	if (y < 0 || rows <= 0 || y + rows > c->rows || !c->px || planes < 1 || planes > 8)
 		return -1;
 	return pens_planes(c->px + (long)y * c->w, c->w, rows, c->y0 + y, pal, n, planes, out);
 }

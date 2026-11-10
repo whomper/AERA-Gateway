@@ -364,14 +364,14 @@ binary/ROVLTEST.PRG: $(ROVLT_OBJ) build/m68000/crt0.o build/m68000/nf.o common/a
 # window has found a 68030 (Convert on: This Atari); an ST only sends.
 EC_GEM_SRC = src/econv/econvert.c src/gem/gemui.c src/view/inf.c common/atari/gem.c common/atari/crash.c \
              common/ui/mbar.c common/ui/aboutbox.c common/ui/aboutline.c common/ui/alert.c common/ui/dialog.c \
-             common/ui/field.c common/ui/av.c common/ui/text.c common/ui/help.c common/ui/dd.c common/ui/progbar.c \
+             common/ui/field.c common/ui/av.c common/ui/text.c common/ui/help.c common/ui/dd.c common/ui/progbar.c common/ui/popup.c common/ui/panebar.c common/ui/iconify.c common/ui/settings.c common/ui/dlgbuild.c common/ui/tooltip.c common/ui/offdraw.c \
              common/ui/click.c common/ui/clip.c common/ui/accmem.c common/src/bidi.c common/ui/fsel.c common/ui/scrsize.c \
              src/pdfio_tos.c src/conv/cvio_tos.c common/src/util.c common/src/futil.c $(RT_C) \
              $(BSSL_SRC) src/pigate.c src/pftime_tos.c common/src/conn.c common/src/tls_none.c src/gem/gatedlg.c \
              common/atari/net_tos.c common/atari/sting.c
 EC_CV_SRC  = $(filter-out src/conv/cvio_tos.c src/pdfio_tos.c common/src/util.c common/src/futil.c \
                $(RT_C) $(BSSL_SRC),$(CV_ATARI_SRC))
-build/m68000ec/%.o: XFLAGS += -DPDF_DRAW -DAERA_NO_FLOAT -Isrc/gem -Isrc/view -Icommon/ui -Isrc/conv
+build/m68000ec/%.o: XFLAGS += -DDLG_CLICK -DPDF_DRAW -DAERA_NO_FLOAT -Isrc/gem -Isrc/view -Icommon/ui -Isrc/conv
 build/m68000ec/version.o: build/m68000/version.c | build/m68000ec
 	$(XCC) $(XFLAGS) -c -o $@ $<
 build/m68000ec/coro.o: src/gem/coro.S | build/m68000ec
@@ -406,11 +406,12 @@ GEM_SRC = src/gem/epdf.c src/gem/doc.c src/gem/rdraw.c common/src/ovl.c src/gem/
           common/ui/alert.c common/ui/dialog.c common/ui/field.c common/ui/av.c common/ui/text.c common/ui/clip.c common/ui/iconify.c common/ui/help.c common/ui/dd.c common/ui/popup.c common/ui/fontsel.c common/ui/click.c common/ui/progbar.c common/ui/enlarge.c \
           common/src/charset.c common/src/bidi.c common/ui/accmem.c common/atari/bigbuf.c common/atari/dspjpeg.c \
           src/gem/gwopen.c src/gem/gatedlg.c src/pigate.c src/pftime_tos.c src/conv/cvio_tos.c common/src/conn.c \
-          common/src/tls_none.c common/atari/net_tos.c common/atari/sting.c common/ui/scrsize.c
+          common/src/tls_none.c common/atari/net_tos.c common/atari/sting.c common/ui/scrsize.c \
+          src/gem/trview.c src/view/trpara.c common/src/translate.c common/ui/langs.c common/ui/panebar.c common/ui/settings.c common/ui/dlgbuild.c
 GEM_OBJ = $(patsubst %.c,build/m68000/%.o,$(GEM_SRC)) build/m68000/version.o build/m68000/sting_s.o
 build/m68000/sting_s.o: common/atari/sting.S | build/m68000
 	$(XCC) -m68000 -c -o $@ $<
-$(patsubst %.c,build/m68000/%.o,$(GEM_SRC)): XFLAGS += -Isrc/gem -Isrc/rovl -Isrc/view -Icommon/ui -I$(T)/tjpgd -I$(T)/nsgif/include -I$(T)/nsgif/src
+$(patsubst %.c,build/m68000/%.o,$(GEM_SRC)): XFLAGS += -DDLG_CLICK -Isrc/gem -Isrc/rovl -Isrc/view -Icommon/ui -I$(T)/tjpgd -I$(T)/nsgif/include -I$(T)/nsgif/src
 # the Falcon's DSP for JPEGs, from pic.c's own header reader (one 68000
 # program for every Atari, guideline 7.4); no PNG or GIF decoder (a PDF's
 # pictures are JPEG or its own streams: 20 KB of the resident size, the
@@ -498,6 +499,7 @@ dist: binary/EPDF.PRG binary/render.ovl binary/ECONVERT.PRG help
 
 gui-test: binary/EPDF.PRG binary/LAUNCH.PRG
 	python3 tests/hatari/gui.py ST:mono build/gui
+	python3 tests/hatari/fontdlg.py build/fontdlg ST:mono
 
 # each file's opens and lookups from Hatari's GEMDOS trace, a 40-page book on
 # a 1 MB ST (the text goes to EPDF.TXC), against the job's budget (6.5)
@@ -552,14 +554,14 @@ speed-test: build/aprof/EPDF.PRG binary/LAUNCH.PRG
 	python3 tests/hatari/speed.py build/speed
 .PHONY: speed-test
 # EConvert's the same way (a 68030's: tests/hatari/econv_speed.py, Falcon-4)
-build/aprof/gem30.o: common/atari/gem.c $(HDRS) | build
+build/aprof/gem00ec.o: common/atari/gem.c $(HDRS) | build
 	mkdir -p build/aprof
-	$(XCC) $(XFLAGS) -m68030 -msoft-float -DAES_PROFILE=20 -c -o $@ $<
-build/aprof/ECONVERT.PRG: binary/ECONVERT.PRG build/aprof/gem30.o
-	$(XCC) -m68030 -msoft-float -nostdlib -static -no-pie -Wl,--emit-relocs -Wl,-T,common/atari/link.ld -Wl,--gc-sections \
+	$(XCC) $(XFLAGS) -m68000 -DDLG_CLICK -DAERA_NO_FLOAT -DAES_PROFILE=20 -c -o $@ $<
+build/aprof/ECONVERT.PRG: binary/ECONVERT.PRG build/aprof/gem00ec.o
+	$(XCC) -m68000 -nostdlib -static -no-pie -Wl,--emit-relocs -Wl,-T,common/atari/link.ld -Wl,--gc-sections \
 	  -Wl,--build-id=none -Wl,-z,noexecstack -Wl,--no-warn-rwx-segments -o build/aprof/econvert.elf \
-	  build/m68030cv/crt0_ec.o build/m68030/nf.o build/m68030cv/crash_s.o build/m68030cv/coro.o \
-	  $(filter-out build/m68030cv/common/atari/gem.o,$(EC_OBJS)) build/aprof/gem30.o -lgcc
+	  build/m68000ec/crt0_ec.o build/m68000/nf.o build/m68000ec/crash_s.o build/m68000ec/coro.o \
+	  $(filter-out build/m68000ec/common/atari/gem.o,$(EC_OBJS)) build/aprof/gem00ec.o -lgcc
 	PRGFLAGS=7 python3 common/tools/elf2tos.py build/aprof/econvert.elf $@
 econv-speed-test: build/aprof/ECONVERT.PRG binary/LAUNCH.PRG
 	python3 tests/hatari/econv_speed.py build/econv-speed

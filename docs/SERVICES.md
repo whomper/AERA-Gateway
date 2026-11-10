@@ -644,7 +644,7 @@ Every option is optional, and each may be given once:
 
 | Option | Values |
 |---|---|
-| `pages` | `none`, `mono`, `colour` |
+| `pages` | `none`, `mono`, `colour`, `colouronly` (colour only on the pages that have colour; EPDF 2.8) |
 | `photos` | `indexed`, `jpeg` |
 | `pictures` | `page`, `screen` |
 | `page_width` | 160-4096 |

@@ -157,6 +157,7 @@ typedef struct pdoc {
 	   thousandths (their stored bytes read; a progress bar's) */
 	int page_prog;
 	int prepared;			/* a converted PDF (EConvert's, docs/CONVERTED-PDF.md): its version, 0 none */
+	char tr_to[8];			/* a translated one's catalog /AERA /Translate /To ("" none) */
 	char err[96];
 } PDOC;
 
@@ -222,8 +223,17 @@ typedef struct {
 	long w, h;
 	long dbl;			/* the mono page at twice the width (-1 none) */
 	long mono_w, mono_h, colour_w, colour_h, dbl_w, dbl_h;	/* their own pixels (0 not known) */
+	/* a translated file's (CONVERTED-PDF.md, "The translation"): the
+	   page's /Translation (-1 none), /From's language ("" none) and 1 when
+	   /From is /Same (the text was in the target language already) */
+	long trans;
+	char from[8];
+	int same;
 } PPREP;
 int pdf_prepared_page(PDOC *d, long n, SBUF *text, PPREP *pp);
+/* the page's /Translation (pp from pdf_prepared_page) into text: 0, or -1 */
+int pdf_prepared_translation(PDOC *d, const PPREP *pp, SBUF *text);
+
 
 /* ------------------------------------------------------------------ text */
 typedef struct {
