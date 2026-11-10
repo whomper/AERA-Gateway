@@ -144,6 +144,9 @@ extern void (*has_menu_states)(void);
 void win_zoom_forget(void);
 /* doc.c: a page's picture (View > Pages) and its double: 1, its object and size */
 int doc_double_of(long obj, long *dbl, long *w, long *h);
+int doc_pic_permille(long obj);	/* page picture obj being drawn: thousandths, or -1 */
+void win_band_tick(void);	/* the sharper page's band: its per cent again */
+long doc_stand_in(long obj);	/* the stored page shown till page picture obj is drawn sharp, or -1 */
 
 /* font.c: the text view's font (FONT= in EPDF.INF) */
 void font_init(const char *setting, const char *dir);

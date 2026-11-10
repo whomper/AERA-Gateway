@@ -231,6 +231,25 @@ static int nearest(const unsigned char (*pal)[3], int n, int r, int g, int b)
 	return best;
 }
 
+/* c near one of pal's pens: that pen, else -1 (render.ovl's snap_pen, 2.5:
+   the 16 colours' page took a pattern over every grey, its text's edges
+   too, Erez's photos of 10 Nov 2026); kept by colour in snap (-2 unknown) */
+#define SNAP_D (9L * 28 * 28)
+
+static int snap_of(signed char *snap, const unsigned char (*pal)[3], int n, unsigned c)
+{
+	int key = (int)((c >> 11) << 10 | ((c >> 6) & 31) << 5 | (c & 31));
+
+	if (snap[key] == -2) {
+		int r = R8(c), g = G8(c), b = B8(c), k = nearest(pal, n, r, g, b);
+		int dr = r - pal[k][0], dg = g - pal[k][1], db = b - pal[k][2];
+		long d = (long)dr * dr * 3 + (long)dg * dg * 4 + (long)db * db * 2;
+
+		snap[key] = (signed char)(d < SNAP_D ? k : -1);
+	}
+	return snap[key];
+}
+
 void dither_pal(const uint16_t *px, int w, int h, const unsigned char (*pal)[3], int n, unsigned char *out)
 {
 	dither_pal_rows(px, w, h, 0, pal, n, out);
@@ -242,7 +261,7 @@ void dither_pal_rows(const uint16_t *px, int w, int h, int ytop, const unsigned 
 	/* each 15-bit colour's nearest, the first found keeping it: kept for the
 	   whole page (cleared at its first row), so a page in bands gets the
 	   same as in one piece */
-	static signed char *inv;
+	static signed char *inv, *snap;
 	int x, y, rb = (w + 1) / 2, white = nearest(pal, n, 255, 255, 255), black = nearest(pal, n, 0, 0, 0);
 	short off[64];
 
@@ -250,8 +269,12 @@ void dither_pal_rows(const uint16_t *px, int w, int h, int ytop, const unsigned 
 		off[x] = (short)((bayer[x] - 32) * 3);	/* about -96 .. 93: the 16 colours' steps */
 	if (!inv)
 		inv = malloc(32768);
+	if (!snap)
+		snap = malloc(32768);
 	if (inv && ytop == 0)
 		memset(inv, -1, 32768);
+	if (snap && ytop == 0)
+		memset(snap, -2, 32768);
 	memset(out, 0, (size_t)rb * h);
 	for (y = 0; y < h; y++) {
 		const uint16_t *s = px + (long)y * w;
@@ -268,6 +291,8 @@ void dither_pal_rows(const uint16_t *px, int w, int h, int ytop, const unsigned 
 				best = white;
 			else if (!c)
 				best = black;
+			else if (snap && (best = snap_of(snap, pal, n, c)) >= 0)
+				;	/* near a pen: that pen, no pattern (a fill, a text's ink and its edge's grey) */
 			else {
 				int d = t[x & 7], r = clamp8(R8(c) + d), g = clamp8(G8(c) + d), b = clamp8(B8(c) + d);
 				int key = (r >> 3) << 10 | (g >> 3) << 5 | (b >> 3);

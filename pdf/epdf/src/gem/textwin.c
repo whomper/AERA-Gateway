@@ -443,9 +443,61 @@ static void enlarge_icon(const GRECT *c, short x, short y)
 	fill_set = 0;
 }
 
+/* "Drawing a sharper page... 40%" across a page's picture at x, y, w wide
+   (Erez, 10 Nov 2026: "There is no indication that a better visual is
+   being prepared. It should say so in a more prominent location"): a
+   black band with white words, a row high */
+static int band_pct = -1;		/* the per cent the band shows */
+
+static void sharper_band(const GRECT *c, short x, short y, short w, long obj)
+{
+	char t[48];
+	short p[4], n, cx = c->x, cy = c->y, cx1 = (short)(c->x + c->w - 1), cy1 = (short)(c->y + c->h - 1);
+	int pm = doc_pic_permille(obj);
+
+	band_pct = pm < 0 ? 0 : pm / 10;
+	snprintf(t, sizeof t, pm < 0 ? "Drawing a sharper page..." : "Drawing a sharper page... %d%%", band_pct);
+	n = (short)strlen(t);
+	p[0] = x < cx ? cx : x;
+	p[1] = y < cy ? cy : y;
+	p[2] = (short)(x + w - 1 > cx1 ? cx1 : x + w - 1);
+	p[3] = (short)(y + ch - 1 > cy1 ? cy1 : y + ch - 1);
+	if (p[2] < p[0] || p[3] < p[1])
+		return;
+	vswr_mode(vdi_h, MD_REPLACE);
+	vsf_interior(vdi_h, 1);
+	vsf_color(vdi_h, 1);
+	vsf_perimeter(vdi_h, 0);
+	vr_recfl(vdi_h, p);
+	fill_set = 0;
+	if (n * cw <= w) {
+		short q[4] = { p[0], p[1], p[2], p[3] };
+
+		text_clip(vdi_h, q);
+		vswr_mode(vdi_h, MD_TRANS);
+		vst_color(vdi_h, 0);
+		text_n(vdi_h, (short)(x + (w - n * cw) / 2), y, t, n);
+		text_noclip(vdi_h);
+		vst_color(vdi_h, 1);
+	}
+	vswr_mode(vdi_h, MD_REPLACE);
+}
+
+/* a page's picture drawn sharp (PICS_PAGE + page) with its stored page to
+   show till then (doc_stand_in): the stored one, when it is ready */
+static PICE *stand_in(const DVPIC *pr, const PICE *e)
+{
+	long so = pr->obj >= PICS_PAGE && !(e && e->state == PICS_READY) ? doc_stand_in(pr->obj) : -1;
+	PICE *s = so >= 0 ? pics_get(so, pr->w, pr->h, pr->flip) : NULL;
+
+	if (s)
+		s->page = pr->page;
+	return s && s->state == PICS_READY && s->bm.fd_addr ? s : NULL;
+}
+
 static void draw_pic(const GRECT *c, short y, const DVPIC *pr)
 {
-	PICE *e = pics_get(pr->obj, pr->w, pr->h, pr->flip);
+	PICE *e = pics_get(pr->obj, pr->w, pr->h, pr->flip), *st = stand_in(pr, e);
 	short x = pic_x(pr->w), right = (short)(c->x + c->w), tx = (short)(work.x + MARGIN);
 	long y0 = pr->row * ch, y1 = y0 + ch > pr->h ? pr->h : y0 + ch;
 	/* the rows made: all of it, or (made a row at a time) those so far,
@@ -456,6 +508,37 @@ static void draw_pic(const GRECT *c, short y, const DVPIC *pr)
 		e->page = pr->page;
 	blank(c, tx, x, y, ch);
 	blank(c, (short)(x + pr->w), right, y, ch);
+	if (st) {
+		/* the sharp rows made, the stored page's under them, and the band
+		   at the picture's top in view */
+		MFDB scr;
+		short pxy[8];
+		long a = y0, k;
+
+		memset(&scr, 0, sizeof scr);
+		for (k = 0; k < 2; k++) {
+			long b = k ? y1 : (m1 > y0 ? m1 : y0);
+			const MFDB *from = k ? &st->bm : &e->bm;
+
+			if (b <= a)
+				continue;
+			pxy[0] = 0;
+			pxy[1] = (short)a;
+			pxy[2] = (short)(pr->w - 1);
+			pxy[3] = (short)(b - 1);
+			pxy[4] = x;
+			pxy[5] = (short)(y + (a - y0));
+			pxy[6] = (short)(x + pr->w - 1);
+			pxy[7] = (short)(y + (b - y0) - 1);
+			vro_cpyfm(vdi_h, 3, pxy, (MFDB *)from, &scr);
+			a = b;
+		}
+		if (y1 - y0 < ch)
+			blank(c, x, (short)(x + pr->w), (short)(y + (y1 - y0)), (short)(ch - (y1 - y0)));
+		if (pr->row == 0 || y <= work.y)
+			sharper_band(c, x, y, (short)pr->w, pr->obj);
+		return;
+	}
 	if (m1 > y0) {
 		MFDB scr;
 		short pxy[8];
@@ -1168,6 +1251,8 @@ static void draw_zoom(const GRECT *c)
 		line_col(x, y, x, yb, 1);
 		line_col((short)(x + vw - 1), y, (short)(x + vw - 1), yb, 1);
 	}
+	if (zoom.p.obj >= PICS_PAGE && e && e->state != PICS_READY && e->state != PICS_FAILED)
+		sharper_band(c, x, work.y, vw, zoom.p.obj);	/* (the sharp page on its way) */
 	vswr_mode(vdi_h, MD_REPLACE);
 	vst_color(vdi_h, 1);
 }
@@ -1220,6 +1305,8 @@ static void zoom_set_pic(const DVPIC *p)
 	zoom.p = *p;
 	doc_pic_stop_page_unless(p->obj, p->w, p->h);	/* (the page drawing at another size gives way at once) */
 	b = pics_get(zoom.base.obj, zoom.base.w, zoom.base.h, zoom.base.flip);
+	if (!(b && b->state == PICS_READY))
+		b = stand_in(&zoom.base, b);	/* (the stored page, while the sharp one is drawn) */
 	if (p->obj >= PICS_PAGE && b && b->state == PICS_READY && (long)Malloc(-1L) >= 2 * bytes + 128 * 1024L) {
 		unsigned long t0 = tos_ms();
 
@@ -1913,9 +2000,9 @@ void win_pic_ready(long obj)
 		return;
 	}
 	for (r = 0; r <= rows && dv_row(v, r, &kind, &s, &n, &page, &off); r++)
-		if (kind == DV_PIC && v->pic.obj == obj) {
+		if (kind == DV_PIC && (v->pic.obj == obj || doc_stand_in(v->pic.obj) == obj)) {
 			if (first < 0)
-				first = r;
+				first = r;	/* (or the page it stands in for, till it is drawn sharp) */
 			last = r;
 		}
 	if (first >= 0)
@@ -1947,6 +2034,35 @@ void win_pic_rows(long obj, long from, long to)
 		}
 	if (first >= 0)
 		win_draw_rows(first, last + 1);
+}
+
+/* the sharper page's band, its per cent where it changed (epdf.c's turns,
+   at most four times a second): the band's row, or the zoomed view's top */
+void win_band_tick(void)
+{
+	static unsigned long last;
+	DOCVIEW *v = doc_view();
+	long r, n, page, off;
+	int kind, pm;
+	const char *s;
+
+	if (!v || win < 0 || iconified || tos_ms() - last < 250)
+		return;
+	last = tos_ms();
+	if (zoom.on) {
+		if (zoom.p.obj >= PICS_PAGE && (pm = doc_pic_permille(zoom.p.obj)) >= 0 && pm / 10 != band_pct) {
+			GRECT g = { work.x, work.y, work.w, (short)ch };
+
+			win_redraw(&g);
+		}
+		return;
+	}
+	for (r = 0; r <= rows && dv_row(v, r, &kind, &s, &n, &page, &off); r++)
+		if (kind == DV_PIC && doc_stand_in(v->pic.obj) >= 0) {
+			if ((pm = doc_pic_permille(v->pic.obj)) >= 0 && pm / 10 != band_pct)
+				win_draw_rows(r, r + 1);	/* (its top in view: the band's row) */
+			return;
+		}
 }
 
 /* page n's text came: its rows drawn again where it shows; the rest of

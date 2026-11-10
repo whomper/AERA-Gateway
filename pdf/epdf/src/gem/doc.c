@@ -115,7 +115,22 @@ char doc_font_dir[200] = "fonts";	/* the standard fonts' (epdf.c: beside the pro
    size: kept by page, read on the main stack (doc_double_of) */
 static struct {
 	long obj, dbl, w, h;
+	long stand;			/* the stored page shown till the sharp one is drawn (0: none) */
 } *pdbl;
+
+/* a converted copy's pages drawn sharp on a Falcon or TT in colour, from
+   its original by render.ovl, over the stored page (Erez, 10 Nov 2026: the
+   Pages view's stored 16 colours looked worse than the text view's
+   pictures): -1 not known yet for this document */
+static int sharp = -1;
+
+static int sharp_pages(void)
+{
+	if (sharp < 0)
+		sharp = doc && doc->prepared && planes >= 4 && rdraw_machine() && pf_size(rdraw_path) > 0 &&
+			orig[0] && pf_size(orig) > 0;
+	return sharp;
+}
 
 static void pages_note(long n, const PPREP *pp)
 {
@@ -124,12 +139,22 @@ static void pages_note(long n, const PPREP *pp)
 	int col = pp->colour >= 0 && (planes >= 4 || pp->mono < 0);
 	long obj = col ? pp->colour : pp->mono, w = col ? pp->colour_w : pp->mono_w, h = col ? pp->colour_h : pp->mono_h;
 	int k = 0;
+	long stand;
 
 	if (!pstore_open)
 		return;
 	if (w <= 0 || h <= 0) {
 		w = 640;		/* (a file of 1.1's) */
 		h = pp->w > 0 ? 640L * pp->h / pp->w : 828L;
+	}
+	stand = 0;
+	/* (where memory holds the stored page, the sharp one and render.ovl's
+	   canvas whole: on a 4 MB Falcon it didn't, its canvas went to bands,
+	   33 s, and the sharp page failed) */
+	if (obj >= 0 && sharp_pages() &&
+	    (long)Malloc(-1L) >= 2 * ((w + 15) / 16 * 2 * planes * h) + w * h * 2 + 768 * 1024L) {
+		stand = obj;		/* (shown till render.ovl's is drawn) */
+		obj = PICS_PAGE + n;
 	}
 	if (obj >= 0) {
 		/* (its size the picture's own: shown as it is made where the
@@ -144,6 +169,7 @@ static void pages_note(long n, const PPREP *pp)
 		pdbl[n].dbl = pp->dbl >= 0 && pp->dbl_w > w ? pp->dbl : -1;
 		pdbl[n].w = pp->dbl_w;
 		pdbl[n].h = pp->dbl_h;
+		pdbl[n].stand = stand;
 	}
 	ts_put(&pstore, n, b, k);		/* (none: the page's head alone) */
 }
@@ -209,6 +235,15 @@ int doc_double_of(long obj, long *dbl, long *w, long *h)
 			return 1;
 		}
 	return 0;
+}
+
+/* the stored page shown for page picture obj (PICS_PAGE + n) till it is
+   drawn sharp: its object, or -1 */
+long doc_stand_in(long obj)
+{
+	long n = obj - PICS_PAGE;
+
+	return obj >= PICS_PAGE && pdbl && n >= 0 && n < onpages && pdbl[n].stand > 0 ? pdbl[n].stand : -1;
 }
 
 int doc_has_pages(void)
@@ -893,6 +928,17 @@ long doc_reading(int *prog)
 	return rpage >= 0 ? rpage : next;
 }
 
+/* page picture obj (PICS_PAGE + n) being drawn: how far, in thousandths,
+   or -1 when it isn't the one being drawn */
+int doc_pic_permille(long obj)
+{
+	long page, made, of;
+
+	if (!rpic || rpic->obj != obj || !doc_pic_progress(&page, &made, &of) || of <= 0)
+		return -1;
+	return (int)(made * 1000 / of);
+}
+
 int doc_pic_progress(long *page, long *made, long *of)
 {
 	if (!rpic || rpic->ahead)
@@ -1017,6 +1063,7 @@ void doc_close(void)
 	drawn = 0;
 	free(pdbl);
 	pdbl = NULL;
+	sharp = -1;
 	pdf_close(doc);
 	free(doc);
 	doc = NULL;

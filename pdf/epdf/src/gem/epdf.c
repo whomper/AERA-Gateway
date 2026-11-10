@@ -1396,6 +1396,7 @@ static void progress(void)
 		snprintf(w, sizeof w, "Reading page %ld of %ld", rp + 1, n);
 		win_progress(1, w, doc_read() * 1000L + pm, n * 1000L);
 	} else if (pic) {
+		win_band_tick();	/* (the sharper page's band, View > Pages and a zoom) */
 		if (doc_pic_drawing())
 			snprintf(w, sizeof w, "Drawing page %ld / %ld", pg + 1, n);
 		else
@@ -1520,6 +1521,7 @@ int main(void)
 		}
 	}
 	crash_install(start_dir, "EPDF", app_version);
+	pics_room();
 	crash_cleanup = crash_quit;
 	help_init();
 	twin_init("EPDF");		/* bgwork asks it; EPDF has no accessory */
@@ -1738,9 +1740,13 @@ int main(void)
 			}
 		}
 	}
+	/* each step of the way out into the log at once (the hub, 10 Nov 2026:
+	   bombs as EFTP and EMail quit, no CRASH.LOG; the next ones show where) */
 	log_event("quit", NULL, NULL);
 	window_place_save();
+	log_event("quit", "settings saved", NULL);
 	win_close();
+	log_event("quit", "the window closed", NULL);
 	if (has_menu)
 		menu_bar(menu.tree, 0);
 	mbar_free(&menu);
@@ -1755,8 +1761,12 @@ int main(void)
 	font_exit();
 	inf_free(&inf);
 	av_exit();
+	log_event("quit", "the document, pictures, fonts and the Gateway given back", NULL);
 	crash_remove();
+	log_event("quit", "crash catcher off; hooked over it:", crash_over());
 	v_clsvwk(vdi_h);
+	log_event("quit", "the VDI given back", NULL);
 	appl_exit();
+	log_event("quit", "out of the AES", NULL);
 	return 0;
 }

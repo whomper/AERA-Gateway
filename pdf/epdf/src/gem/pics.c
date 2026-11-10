@@ -22,9 +22,14 @@
 #include "pdfimg.h"
 #include "docview.h"
 
-#define NPICS 8
+/* pictures kept decoded: 8, or with room (a TT or Falcon with more than
+   the stock memory, Erez 10 Nov 2026: "hold both Pages and Text views in
+   memory so its faster to switch between them") 24: the text view's and
+   View > Pages' both stay (a refusal of memory still gives them back) */
+#define MAXPICS 24
+static int npics = 8;
 
-static PICE cache[NPICS];
+static PICE cache[MAXPICS];
 static PIC_PAL *pal;			/* taken at the first picture (not resident) */
 static int pal_planes = -1;
 static unsigned long tick;
@@ -701,25 +706,40 @@ static void let_go(PICE *e)
 }
 
 /* the picture obj at w x h: its slot (ready, wanted, decoding or failed) */
+void pics_room(void)
+{
+	npics = (long)Malloc(-1L) >= 6L * 1024 * 1024 ? MAXPICS : 8;
+}
+
 PICE *pics_get(long obj, int w, int h, int flip)
 {
 	int i, best = -1;
 
 	tick++;
-	for (i = 0; i < NPICS; i++)
+	for (i = 0; i < npics; i++)
 		if (cache[i].state && cache[i].obj == obj && cache[i].w == w && cache[i].h == h &&
 		    cache[i].flip == flip) {
 			cache[i].used = tick;
 			cache[i].ahead = 0;		/* (shown now) */
 			return &cache[i];
 		}
-	for (i = 0; i < NPICS; i++) {
-		if (!cache[i].state) {
-			best = i;
-			break;
+	{
+		int used = 0, empty = -1;
+
+		for (i = 0; i < npics; i++) {
+			if (!cache[i].state) {
+				if (empty < 0)
+					empty = i;
+				continue;
+			}
+			used++;
+			if (cache[i].state != PICS_DECODING && (best < 0 || cache[i].used < cache[best].used))
+				best = i;
 		}
-		if (cache[i].state != PICS_DECODING && (best < 0 || cache[i].used < cache[best].used))
-			best = i;
+		/* (past eight kept, a new one only while 2 MB stay free; else the
+		   one longest unseen makes room) */
+		if (empty >= 0 && (used < 8 || best < 0 || (long)Malloc(-1L) >= 2L * 1024 * 1024))
+			best = empty;
 	}
 	if (best < 0)
 		return NULL;
@@ -738,7 +758,7 @@ int pics_waiting(void)
 {
 	int i;
 
-	for (i = 0; i < NPICS; i++)
+	for (i = 0; i < npics; i++)
 		if (cache[i].state == PICS_WANTED)
 			return 1;
 	return 0;
@@ -753,14 +773,19 @@ PICE *pics_next(void)
 
 	/* the page in focus's first (Erez, 8 Nov 2026: "always prioritize the
 	   current page"), then the others the window shows, then one ahead */
-	for (i = 0; pics_focus >= 0 && i < NPICS; i++)
-		if (cache[i].state == PICS_WANTED && !cache[i].ahead && cache[i].page == pics_focus) {
-			cache[i].state = PICS_DECODING;
-			return &cache[i];
-		}
+	/* (and of those a stored page before the page drawn sharp over it: it
+	   is shown in a moment, the sharp one takes seconds) */
 	for (pass = 0; pass < 2; pass++)
-		for (i = 0; i < NPICS; i++)
-			if (cache[i].state == PICS_WANTED && cache[i].ahead == pass) {
+		for (i = 0; pics_focus >= 0 && i < npics; i++)
+			if (cache[i].state == PICS_WANTED && !cache[i].ahead && cache[i].page == pics_focus &&
+			    (pass || cache[i].obj < PICS_PAGE)) {
+				cache[i].state = PICS_DECODING;
+				return &cache[i];
+			}
+	for (pass = 0; pass < 3; pass++)
+		for (i = 0; i < npics; i++)
+			if (cache[i].state == PICS_WANTED && cache[i].ahead == (pass == 2) &&
+			    (pass || cache[i].obj < PICS_PAGE)) {
 				cache[i].state = PICS_DECODING;
 				return &cache[i];
 			}
@@ -771,7 +796,7 @@ int pics_focus_busy(void)
 {
 	int i;
 
-	for (i = 0; pics_focus >= 0 && i < NPICS; i++)
+	for (i = 0; pics_focus >= 0 && i < npics; i++)
 		if ((cache[i].state == PICS_WANTED || cache[i].state == PICS_DECODING) && !cache[i].ahead &&
 		    cache[i].page == pics_focus)
 			return 1;
@@ -782,7 +807,7 @@ int pics_shown_waiting(void)
 {
 	int i;
 
-	for (i = 0; i < NPICS; i++)
+	for (i = 0; i < npics; i++)
 		if (cache[i].state == PICS_WANTED && !cache[i].ahead)
 			return 1;
 	return 0;
@@ -809,7 +834,7 @@ int pics_ahead(long obj, int w, int h, int flip, long page)
 	int i, n = 0, slot = -1;
 	long bytes;
 
-	for (i = 0; i < NPICS; i++) {
+	for (i = 0; i < npics; i++) {
 		if (cache[i].state && cache[i].obj == obj && cache[i].w == w && cache[i].h == h && cache[i].flip == flip)
 			return 0;
 		if (cache[i].ahead && (cache[i].state == PICS_WANTED || cache[i].state == PICS_DECODING))
@@ -1152,7 +1177,7 @@ void pics_forget(void)
 {
 	int i;
 
-	for (i = 0; i < NPICS; i++)
+	for (i = 0; i < npics; i++)
 		if (cache[i].state != PICS_DECODING)
 			let_go(&cache[i]);
 }

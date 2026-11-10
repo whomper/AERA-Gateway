@@ -602,9 +602,8 @@ static int on_the_gateway(const char *in, const char *out, char *err, int errlen
 {
 	PGOPT po;
 	int pw, iw, r;
-	/* (colour only: the Gateway's pdfgate knows none, mono and colour so
-	   far, so colour, the mono pages with it) */
-	static const char *pages[] = { "none", "mono", "colour", "colour" };
+	/* (colouronly: AERA-Gateway 1.42 and later) */
+	static const char *pages[] = { "none", "mono", "colour", "colouronly" };
 
 	memset(&po, 0, sizeof po);
 	po.pages = pages[pages_set];
@@ -2228,16 +2227,28 @@ int main(void)
 			}
 		}
 	}
+	/* each step of the way out into the log at once (the hub, 10 Nov 2026:
+	   bombs as EFTP and EMail quit, no CRASH.LOG); the settings are saved
+	   as they change */
+	log_event("quit", NULL, NULL);
 	if (win >= 0) {
 		av_window(win, 0);
 		wind_close(win);
 		wind_delete(win);
 	}
+	log_event("quit", "the window closed", NULL);
 	if (has_menu)
 		menu_bar(menu.tree, 0);
 	av_exit();
 	pens_give();		/* (the two pens as they were) */
+	log_event("quit", "colours and menu bar given back", NULL);
+	/* the catcher off here, as EPDF's, with the VDI and the AES still
+	   there (it had been left to crash_term at Pterm) */
+	crash_remove();
+	log_event("quit", "crash catcher off; hooked over it:", crash_over());
 	v_clsvwk(vdi_h);
+	log_event("quit", "the VDI given back", NULL);
 	appl_exit();
+	log_event("quit", "out of the AES", NULL);
 	return 0;
 }
