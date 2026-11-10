@@ -35,6 +35,7 @@ of them.
 | `translate` | EMail, EWeb, EPDF | `translategate.py`        | 8480                                     |
 | `radio`  | EPlay               | `radiogate.py`             | 8580                                     |
 | `claude` | ClaudeST            | ClaudeST's bridge          | 2323 (or a serial cable)                 |
+| `dash`   | a browser at home   | `dashgate.py`              | 8888                                     |
 
 What each one speaks (requests, answers, refusals, limits) is in
 [docs/SERVICES.md](../docs/SERVICES.md).
@@ -67,6 +68,7 @@ sudo aera-gateway install pdf --allow ATARI_IP
 sudo aera-gateway install translate --allow ATARI_IP     (English and German; --languages en,de,he for more)
 sudo aera-gateway install radio --allow ATARI_IP
 sudo aera-gateway install claude --network --atari ATARI_IP
+sudo aera-gateway install dash                           (the dashboard, for the home network)
 ```
 
 `install pdf` builds EPDF's converter (a few minutes), `install translate`
@@ -459,6 +461,21 @@ Two stations play at once, and ffmpeg runs on one thread with 256 MB, at
 a low priority; a station on the home network needs `--allow-local`. The
 log says which Atari listened to which station's host, for how long and
 how much, never the station's path or the titles.
+
+## dash: the dashboard
+
+```
+sudo aera-gateway install dash
+```
+
+From a browser on your Mac or PC: `http://GATEWAY_IP:8888/`. One page,
+read-only: each service running or not, its connections today and since
+it started, the Ataris that came and where they went, the settings (never
+a password or a key) and the Pi's memory, disk, load and temperature. It
+refreshes itself. The gateways tell it who connected through aeragate;
+the counts start again when it starts. The home network may see it, or
+only the computers named with `--allow`. `install all` includes it, for
+the home network. Details: [docs/SERVICES.md](../docs/SERVICES.md#dash-the-dashboard).
 
 ## claude: ClaudeST's bridge
 
