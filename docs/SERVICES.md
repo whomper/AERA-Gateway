@@ -992,8 +992,11 @@ recent connections (time, Atari, service, the server it went to, connected
 or refused); the settings (who may connect, servers at home, the mail
 servers, the browser, translate's languages, ClaudeST's backend; never a
 password or a key); and the computer's memory, disk, processor load and
-temperature. It follows the computer's light or dark look, with a button to
-change it, and asks again every 4 s. It loads nothing from the internet.
+temperature. It follows the computer's light or dark look, and loads nothing
+from the internet. The page comes filled in, so it reads the same with a
+browser's scripts off (EWeb's default for a site not in its list; Erez,
+10 Nov 2026) and then refreshes itself every 30 s. With scripts it refreshes
+every 4 s, picks out one service's activity, and has a light/dark button.
 
 ### Install
 

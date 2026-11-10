@@ -4,7 +4,8 @@
 """dashgate - the Gateway's dashboard, for a browser on the home network
 (Erez, 10 Nov 2026).
 
-One page, read-only, at http://GATEWAY:8888/: each service running or not
+One page, read-only, at http://GATEWAY:8888/, sent filled in (it reads the
+same with a browser's scripts off: Erez, 10 Nov 2026): each service running or not
 and since when, its ports, the connections today and this run, the Ataris
 that came and where they went, the settings (never a password or a key)
 and the computer's memory, disk, load and temperature. It refreshes
@@ -31,6 +32,7 @@ Who may see it: the home network, or with --allow only those addresses
 
 import argparse
 import collections
+import html
 import http.server
 import ipaddress
 import json
@@ -51,7 +53,7 @@ import aeragate  # noqa: E402
 
 aeragate.DASH_SOCKET = ""           # (its own visitors aren't the Ataris')
 
-VERSION = "1.0"
+VERSION = "1.1"
 HERE = os.path.dirname(os.path.realpath(__file__))
 
 # key, its user (and unit), its script, the apps, what it speaks, its ports
@@ -500,6 +502,210 @@ def status(stats, host_header="", found=None, started=None, peers=None):
 
 
 # ---------------------------------------------------------------- the web page
+#
+# The page comes filled in (Erez, 10 Nov 2026: EWeb shows it with its
+# scripts off): dash.js only fetches it again every few seconds and puts
+# the new parts in place, and picks out one service's activity. Without
+# scripts it refreshes itself every 30 s (<noscript>).
+
+ACCENT = "#4cc3b5"          # (as attributes too: browsers whose SVG doesn't take CSS)
+SOFT = "#1f2730"
+STATE = {"running": ("ok", "Running"), "starting": ("warn", "Starting"), "stopping": ("warn", "Stopping"),
+         "stopped": ("bad", "Stopped"), "not installed": ("off", "Not installed")}
+
+
+def esc(x):
+    return html.escape("" if x is None else str(x), quote=True)
+
+
+def num(x):
+    return "{:,}".format(int(x or 0))
+
+
+def span(secs):
+    if not secs or secs < 0:
+        return "–"
+    d, h, m = int(secs // 86400), int(secs % 86400 // 3600), int(secs % 3600 // 60)
+    if d:
+        return "%d %s %d h" % (d, "day" if d == 1 else "days", h)
+    if h:
+        return "%d h %d min" % (h, m)
+    return "%d min" % m
+
+
+def when(t, now=None):
+    if not t:
+        return ""
+    lt, ln = time.localtime(t), time.localtime(now or time.time())
+    hm = time.strftime("%H:%M:%S", lt)
+    if lt[:3] == ln[:3]:
+        return hm
+    return "%d %s %s" % (lt.tm_mday, time.strftime("%b", lt), hm)
+
+
+def size(b):
+    b, units, i = float(b or 0), ["B", "KB", "MB", "GB", "TB"], 0
+    while b >= 1024 and i < len(units) - 1:
+        b /= 1024
+        i += 1
+    return ("%d" % round(b) if b >= 10 or i == 0 else "%.1f" % b) + " " + units[i]
+
+
+def spark(values):
+    top = max(values + [1])
+    pts = " ".join("%.1f,%.1f" % (i * 96 / max(1, len(values) - 1), 26 - v / top * 24) for i, v in enumerate(values))
+    return ('<svg class="spark-line" width="96" height="28" viewBox="0 0 96 28" aria-hidden="true">'
+            '<polyline points="%s" fill="none" stroke="%s" stroke-width="2" stroke-linejoin="round" '
+            'stroke-linecap="round"></polyline></svg>' % (pts, ACCENT))
+
+
+def bar(pct):
+    pct = max(0, min(100, round(pct or 0)))
+    return ('<svg class="bar" width="100%%" height="8" aria-hidden="true">'
+            '<rect class="track" width="100%%" height="8" rx="4" fill="%s"></rect>'
+            '<rect class="fill%s" width="%d%%" height="8" rx="4" fill="%s"></rect></svg>'
+            % (SOFT, " hot" if pct >= 85 else "", pct, ACCENT))
+
+
+def last_line(s, now):
+    if s["state"] == "not installed":
+        return "Not installed on this Gateway"
+    live = " · %d connected now" % s["live"] if s["live"] else ""
+    if not s["last"]:
+        return ("%d connected now" % s["live"]) if s["live"] else "Nothing yet this run"
+    e = s["last"]
+    return "%s%s%s, %s%s" % ("Last: " if e["ok"] else "Refused: ", e["client"],
+                              " → " + e["to"] if e["to"] else "", when(e["t"], now), live)
+
+
+def part_overall(d):
+    inst = [s for s in d["services"] if s["state"] != "not installed"]
+    run = sum(1 for s in inst if s["state"] == "running")
+    cls = "off" if not inst else "ok" if run == len(inst) else "warn" if run else "bad"
+    text = "%d of %d services running" % (run, len(inst)) if inst else "No service installed"
+    return '<span id="overall" class="pill %s">%s</span>' % (cls, esc(text))
+
+
+def part_tiles(d):
+    g = d["gateway"]
+    total = sum(s["total"] for s in d["services"])
+    today = sum(s["today"] for s in d["services"])
+    tiles = [("Running for", span(g["now"] - g["since"]) if g["since"] else "–", "",
+              "since " + when(g["since"], g["now"]) if g["since"] else ""),
+             ("Connections this run", num(total), "", "%s today" % num(today)),
+             ("Gateway address", g["address"] or "–", " mono",
+              "in a Docker container" if g["where"] == "container" else g["model"]),
+             ("Version", g["version"] or "–", "",
+              "the Docker image" if g["where"] == "container" else "installed with aera-gateway")]
+    return ('<section id="tiles" class="tiles" aria-label="This Gateway">' + "".join(
+        '<div class="card tile"><div class="label">%s</div><div class="big%s">%s</div>'
+        '<div class="small muted">%s</div></div>' % (esc(a), b2, esc(b), esc(c)) for a, b, b2, c in tiles) +
+        '</section>')
+
+
+def part_services(d):
+    now, out = d["gateway"]["now"], []
+    for s in d["services"]:
+        cls, word = STATE.get(s["state"], ("off", s["state"]))
+        title = ' title="since %s"' % esc(when(s["since"], now)) if s.get("since") and s["state"] == "running" else ""
+        out.append(
+            '<button type="button" class="svc%s" data-key="%s" aria-pressed="false">'
+            '<span class="row"><span><span class="name">%s</span><span class="small muted">%s</span></span>'
+            '<span class="chip %s"%s>%s</span></span>'
+            '<span class="tags"><span class="tag mono">%s</span><span class="tag muted">%s</span></span>'
+            '<span class="nums"><span class="num"><b>%s</b><span class="small muted">today</span></span>'
+            '<span class="num"><b>%s</b><span class="small muted">this run</span></span>'
+            '<span class="spark">%s</span></span>'
+            '<span class="lastline">%s</span></button>' % (
+                " absent" if s["state"] == "not installed" else "", esc(s["key"]), esc(s["key"]), esc(s["apps"]),
+                cls, title, esc(word), esc(" · ".join(str(p) for p in s["ports"])), esc(s["speaks"]),
+                num(s["today"]), num(s["total"]), spark(s.get("trend") or [0] * 8), esc(last_line(s, now))))
+    return '<div class="grid" id="services">%s</div>' % "".join(out)
+
+
+def part_events(d):
+    now = d["gateway"]["now"]
+    rows = ['<tr data-service="%s"><td class="mono muted">%s</td><td class="mono">%s</td><td class="strong">%s</td>'
+            '<td class="mono muted">%s</td><td class="%s">%s</td></tr>' % (
+                esc(e["service"]), esc(when(e["t"], now)), esc("" if e["client"] == "-" else e["client"]),
+                esc(e["service"]), esc(e["to"] or "–"), "" if e["ok"] else "refused",
+                "connected" if e["ok"] else "refused: not allowed") for e in d["events"]]
+    rows.append('<tr class="none"%s><td colspan="5" class="muted">Nothing yet this run</td></tr>' %
+                (" hidden" if rows else ""))
+    return '<tbody id="events">%s</tbody>' % "".join(rows)
+
+
+def part_ataris(d):
+    now = d["gateway"]["now"]
+    if not d["ataris"]:
+        return '<div id="ataris" class="list"><div class="empty">None yet this run</div></div>'
+    out = []
+    for a in d["ataris"]:
+        refused = a["refused"] and not a["services"]
+        st = ("st-live", "Connected") if a["live"] else ("st-bad", "Refused") if refused else \
+            ("st", "Seen " + when(a["last"], now))
+        count = ("%s %s" % (num(a["refused"]), "try" if a["refused"] == 1 else "tries")) if refused else \
+            "%s this run" % num(a["count"])
+        out.append('<div class="atari"><div><div class="mono">%s</div><div class="small muted">%s</div></div>'
+                   '<div class="r"><div class="%s">%s</div><div class="small muted">%s</div></div></div>' % (
+                       esc(a["ip"]), esc(", ".join(a["services"]) or "nothing allowed"), st[0], esc(st[1]),
+                       esc(count)))
+    return '<div id="ataris" class="list">%s</div>' % "".join(out)
+
+
+def part_settings(d):
+    s, out = d["settings"], []
+    have = {x["key"]: x["state"] != "not installed" for x in d["services"]}
+
+    def add(k, v, mono=False):
+        if v in (None, ""):
+            return
+        lines = isinstance(v, list)
+        v = "\n".join(v) if lines else v
+        out.append('<dt>%s</dt><dd class="%s%s">%s</dd>' % (esc(k), "mono" if mono else "",
+                                                             " lines" if "\n" in v else "", esc(v)))
+    if not any(have.values()):
+        add("Services", "none installed")
+    else:
+        add("Who may connect", s["allow"] if s["allow"] else "the home network", bool(s["allow"]))
+        add("Servers at home", "may be reached" if s["allow_local"] else "not reached")
+        if have.get("mail"):
+            add("Mail servers", s["mail"], True)
+        if s["browser"] is not None:
+            add("Browser", "on, for EWeb's snapshots" if s["browser"] else "off")
+        if have.get("translate"):
+            add("Translate", ", ".join(s["languages"]) or "no languages yet")
+        if s["claude"]:
+            add("ClaudeST", {"claudeai": "claude.ai", "api": "the Anthropic API"}.get(s["claude"], s["claude"]))
+        add("The log", "who connected where, never contents")
+    return '<dl id="settings">%s</dl>' % "".join(out)
+
+
+def part_meters(d):
+    c, out = d["computer"], []
+
+    def meter(label, value, pct):
+        out.append('<div><div class="meter-top"><span class="muted">%s</span><b>%s</b></div>%s</div>' % (
+            esc(label), esc(value), bar(pct)))
+    if c.get("mem_total"):
+        meter("Memory", "%s of %s" % (size(c["mem_used"]), size(c["mem_total"])), c["mem_used"] * 100 / c["mem_total"])
+    if c.get("disk_total"):
+        meter("Disk", "%s of %s" % (size(c["disk_used"]), size(c["disk_total"])),
+              c["disk_used"] * 100 / c["disk_total"])
+    if "load" in c:
+        meter("Processor", "%d%%" % c["load"] + ("  ·  %d °C" % c["temp"] if "temp" in c else ""), c["load"])
+    if c.get("up_since"):
+        out.append('<div class="small muted">The computer has been up for %s</div>' %
+                   esc(span(d["gateway"]["now"] - c["up_since"])))
+    return '<div id="meters" class="list">%s</div>' % "".join(out)
+
+
+def page(d):
+    return PAGE % {
+        "accent": ACCENT, "overall": part_overall(d), "updated": esc("updated " + when(d["gateway"]["now"])),
+        "tiles": part_tiles(d), "services": part_services(d), "events": part_events(d),
+        "ataris": part_ataris(d), "settings": part_settings(d), "meters": part_meters(d)}
+
 
 PAGE = """<!doctype html>
 <html lang="en">
@@ -507,6 +713,7 @@ PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AERA-Gateway</title>
+<noscript><meta http-equiv="refresh" content="30"></noscript>
 <link rel="stylesheet" href="/dash.css">
 <script src="/dash.js" defer></script>
 </head>
@@ -515,13 +722,15 @@ PAGE = """<!doctype html>
 <header class="top">
   <div class="brand">
     <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><rect x="1" y="1" width="38" height="38" rx="10"
-      class="logo"></rect><path d="M11 28 L20 11 L29 28 M14.5 22 H25.5" class="logo-a"></path></svg>
+      class="logo" fill="none" stroke="%(accent)s" stroke-width="2"></rect><path d="M11 28 L20 11 L29 28 M14.5 22 H25.5"
+      class="logo-a" fill="none" stroke="%(accent)s" stroke-width="2.4" stroke-linecap="round"
+      stroke-linejoin="round"></path></svg>
     <div><h1>AERA-Gateway</h1><div class="sub">The Atari's way to the modern internet</div></div>
   </div>
   <div class="tools">
-    <span id="overall" class="pill">&hellip;</span>
-    <span id="updated" class="mono small muted"></span>
-    <button type="button" id="theme" class="btn" aria-label="Switch between light and dark">
+    %(overall)s
+    <span id="updated" class="mono small muted">%(updated)s</span>
+    <button type="button" id="theme" class="btn js-only" aria-label="Switch between light and dark">
       <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
         stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"></circle><path
         d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
@@ -530,21 +739,13 @@ PAGE = """<!doctype html>
   </div>
 </header>
 <p id="lost" class="lost" hidden>The Gateway doesn't answer: showing what it said last.</p>
-<section class="tiles" aria-label="This Gateway">
-  <div class="card tile"><div class="label">Running for</div><div class="big" id="up">&ndash;</div>
-    <div class="small muted" id="up-since"></div></div>
-  <div class="card tile"><div class="label">Connections this run</div><div class="big" id="conns">&ndash;</div>
-    <div class="small muted" id="conns-today"></div></div>
-  <div class="card tile"><div class="label">Gateway address</div><div class="big mono" id="addr">&ndash;</div>
-    <div class="small muted" id="model"></div></div>
-  <div class="card tile"><div class="label">Version</div><div class="big" id="version">&ndash;</div>
-    <div class="small muted" id="where"></div></div>
-</section>
+%(tiles)s
 <div class="cols">
 <main class="main">
   <section aria-labelledby="svc-h">
-    <div class="head"><h2 id="svc-h">Services</h2><span class="small muted">Select one to see only its activity</span></div>
-    <div class="grid" id="services"></div>
+    <div class="head"><h2 id="svc-h">Services</h2><span class="small muted js-only">Select one to see only its
+      activity</span></div>
+    %(services)s
   </section>
   <section class="card table-card" aria-labelledby="act-h">
     <div class="table-head">
@@ -554,14 +755,14 @@ PAGE = """<!doctype html>
     <div class="scroll"><table>
       <thead><tr><th scope="col">Time</th><th scope="col">Atari</th><th scope="col">Service</th>
         <th scope="col">To</th><th scope="col">Result</th></tr></thead>
-      <tbody id="events"></tbody>
+      %(events)s
     </table></div>
   </section>
 </main>
 <aside class="side">
-  <section class="card pad" aria-labelledby="atari-h"><h2 id="atari-h">Ataris</h2><div id="ataris" class="list"></div></section>
-  <section class="card pad" aria-labelledby="cfg-h"><h2 id="cfg-h">Settings</h2><dl id="settings"></dl></section>
-  <section class="card pad" aria-labelledby="sys-h"><h2 id="sys-h">The computer</h2><div id="meters" class="list"></div></section>
+  <section class="card pad" aria-labelledby="atari-h"><h2 id="atari-h">Ataris</h2>%(ataris)s</section>
+  <section class="card pad" aria-labelledby="cfg-h"><h2 id="cfg-h">Settings</h2>%(settings)s</section>
+  <section class="card pad" aria-labelledby="sys-h"><h2 id="sys-h">The computer</h2>%(meters)s</section>
 </aside>
 </div>
 <footer class="foot small muted">
@@ -587,6 +788,7 @@ color-scheme:dark}
 --bad:#b3261e;--badbg:#fbe1de;--off:#5a6773;--offbg:#eef1f4;--accent:#127a6f;color-scheme:light}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
+html:not(.js) .js-only{display:none!important}
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",
 Roboto,"Helvetica Neue",Arial,sans-serif}
 a{color:var(--accent)}
@@ -637,7 +839,7 @@ font-weight:600;white-space:nowrap}
 .nums{display:flex;gap:20px;width:100%;align-items:flex-end}
 .num b{display:block;font-size:20px}
 .spark{flex:1;display:flex;justify-content:flex-end}
-.spark polyline{fill:none;stroke:var(--accent);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.spark polyline{stroke:var(--accent)}
 .lastline{color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:8px;width:100%;
 overflow-wrap:anywhere}
 .table-card{overflow:hidden}
@@ -660,9 +862,7 @@ background:var(--soft)}
 dl{margin:0;display:grid;grid-template-columns:auto 1fr;column-gap:14px;row-gap:10px;font-size:13px}
 dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
 .meter-top{display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px}
-.bar{height:8px;border-radius:4px;background:var(--soft);overflow:hidden}
-.bar>div{height:8px;border-radius:4px;background:var(--accent)}
-.bar>div.hot{background:var(--warn)}
+.bar{display:block}.bar .track{fill:var(--soft)}.bar .fill{fill:var(--accent)}.bar .fill.hot{fill:var(--warn)}
 .foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px}
 .empty{color:var(--muted);padding:6px 0}
 """
@@ -670,205 +870,50 @@ dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
 JS = r"""
 (function () {
   "use strict";
-  var pick = null, last = null, root = document.documentElement;
+  // the page comes filled in; this fetches it again every few seconds and
+  // puts the new parts in place (never as markup: DOMParser, then nodes),
+  // picks out one service's activity, and keeps the light or dark look
+  var pick = null, root = document.documentElement;
+  var PARTS = ["overall", "updated", "tiles", "services", "events", "ataris", "settings", "meters"];
+  root.className += " js";
   function $(id) { return document.getElementById(id); }
-  function el(tag, cls, text) {
-    var e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (text !== undefined && text !== null) e.textContent = String(text);
-    return e;
-  }
-  function clear(e) { while (e.firstChild) e.removeChild(e.firstChild); }
-  function n(x) { return Number(x || 0).toLocaleString(); }
-  function span(secs) {
-    if (!secs || secs < 0) return "–";
-    var d = Math.floor(secs / 86400), h = Math.floor(secs % 86400 / 3600), m = Math.floor(secs % 3600 / 60);
-    if (d) return d + (d === 1 ? " day " : " days ") + h + " h";
-    if (h) return h + " h " + m + " min";
-    return m + " min";
-  }
-  function when(t) {
-    if (!t) return "";
-    var d = new Date(t * 1000), now = new Date();
-    var hm = d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
-    return d.toDateString() === now.toDateString() ? hm : d.toLocaleDateString([], {day: "numeric", month: "short"}) + " " + hm;
-  }
-  function bytes(b) {
-    var u = ["B", "KB", "MB", "GB", "TB"], i = 0;
-    b = Number(b || 0);
-    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
-    return (b >= 10 || i === 0 ? Math.round(b) : b.toFixed(1)) + " " + u[i];
-  }
-  var STATE = {"running": ["ok", "Running"], "starting": ["warn", "Starting"], "stopping": ["warn", "Stopping"],
-               "stopped": ["bad", "Stopped"], "not installed": ["off", "Not installed"]};
 
-  // the theme: the computer's, or the one chosen here
   function theme() {
     var t = root.getAttribute("data-theme");
     if (!t) t = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
     return t;
   }
   try { var saved = localStorage.getItem("aera-dash-theme"); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
-  function themeWord() { $("theme-word").textContent = theme() === "dark" ? "Light" : "Dark"; }
 
-  function spark(values) {
-    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("width", "96"); svg.setAttribute("height", "28"); svg.setAttribute("viewBox", "0 0 96 28");
-    svg.setAttribute("aria-hidden", "true");
-    var max = Math.max.apply(null, values.concat([1])), pts = [];
-    for (var i = 0; i < values.length; i++)
-      pts.push((i * 96 / (values.length - 1)).toFixed(1) + "," + (26 - values[i] / max * 24).toFixed(1));
-    var line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-    line.setAttribute("points", pts.join(" "));
-    svg.appendChild(line);
-    return svg;
-  }
-
-  function lastLine(s) {
-    if (s.state === "not installed") return "Not installed on this Gateway";
-    if (!s.last) return s.live ? s.live + " connected now" : "Nothing yet this run";
-    var l = s.last, words = (l.ok ? "Last: " : "Refused: ") + l.client + (l.to ? " → " + l.to : "") + ", " + when(l.t);
-    return s.live ? words + " · " + s.live + " connected now" : words;
-  }
-
-  function services(d) {
-    var box = $("services");
-    clear(box);
-    d.services.forEach(function (s) {
-      var st = STATE[s.state] || ["off", s.state];
-      var b = el("button", "svc" + (s.state === "not installed" ? " absent" : ""));
-      b.type = "button";
-      b.setAttribute("aria-pressed", pick === s.key ? "true" : "false");
-      b.addEventListener("click", function () { pick = pick === s.key ? null : s.key; render(); });
-      var top = el("span", "row"), names = el("span");
-      names.appendChild(el("span", "name", s.key));
-      names.appendChild(el("span", "small muted", s.apps));
-      top.appendChild(names);
-      var chip = el("span", "chip " + st[0], st[1]);
-      if (s.since && s.state === "running") chip.title = "since " + when(s.since);
-      top.appendChild(chip);
-      b.appendChild(top);
-      var tags = el("span", "tags");
-      tags.appendChild(el("span", "tag mono", s.ports.join(" · ")));
-      tags.appendChild(el("span", "tag muted", s.speaks));
-      b.appendChild(tags);
-      var nums = el("span", "nums"), a = el("span", "num"), c = el("span", "num");
-      a.appendChild(el("b", null, n(s.today))); a.appendChild(el("span", "small muted", "today"));
-      c.appendChild(el("b", null, n(s.total))); c.appendChild(el("span", "small muted", "this run"));
-      nums.appendChild(a); nums.appendChild(c);
-      var sp = el("span", "spark"); sp.appendChild(spark(s.trend || [])); nums.appendChild(sp);
-      b.appendChild(nums);
-      b.appendChild(el("span", "lastline", lastLine(s)));
-      box.appendChild(b);
-    });
-  }
-
-  function events(d) {
-    var body = $("events"), rows = d.events.filter(function (e) { return !pick || e.service === pick; });
-    clear(body);
+  function filter() {
+    var cards = $("services").getElementsByTagName("button"), i, shown = 0, rows = $("events").rows;
+    for (i = 0; i < cards.length; i++)
+      cards[i].setAttribute("aria-pressed", cards[i].getAttribute("data-key") === pick ? "true" : "false");
+    for (i = 0; i < rows.length; i++) {
+      var key = rows[i].getAttribute("data-service");
+      if (key === null) continue;
+      rows[i].hidden = !!pick && key !== pick;
+      if (!rows[i].hidden) shown++;
+    }
+    for (i = 0; i < rows.length; i++)
+      if (rows[i].getAttribute("data-service") === null) rows[i].hidden = shown > 0;
     $("filter-word").textContent = "· " + (pick ? pick + " only" : "every service");
     $("clear").hidden = !pick;
-    if (!rows.length) {
-      var tr = el("tr"), td = el("td", "muted", "Nothing yet this run");
-      td.colSpan = 5; tr.appendChild(td); body.appendChild(tr);
-      return;
-    }
-    rows.forEach(function (e) {
-      var tr = el("tr");
-      tr.appendChild(el("td", "mono muted", when(e.t)));
-      tr.appendChild(el("td", "mono", e.client === "-" ? "" : e.client));
-      tr.appendChild(el("td", "strong", e.service));
-      tr.appendChild(el("td", "mono muted", e.to || "–"));
-      tr.appendChild(el("td", e.ok ? null : "refused", e.ok ? "connected" : "refused: not allowed"));
-      body.appendChild(tr);
-    });
-  }
-
-  function ataris(d) {
-    var box = $("ataris");
-    clear(box);
-    if (!d.ataris.length) { box.appendChild(el("div", "empty", "None yet this run")); return; }
-    d.ataris.forEach(function (a) {
-      var row = el("div", "atari"), l = el("div"), r = el("div", "r");
-      l.appendChild(el("div", "mono", a.ip));
-      l.appendChild(el("div", "small muted", a.services.length ? a.services.join(", ") : "nothing allowed"));
-      var refused = a.refused && !a.services.length;
-      r.appendChild(el("div", a.live ? "st-live" : refused ? "st-bad" : "st",
-                       a.live ? "Connected" : refused ? "Refused" : "Seen " + when(a.last)));
-      r.appendChild(el("div", "small muted", refused ? n(a.refused) + (a.refused === 1 ? " try" : " tries") : n(a.count) + " this run"));
-      row.appendChild(l); row.appendChild(r);
-      box.appendChild(row);
-    });
-  }
-
-  function settings(d) {
-    var s = d.settings, dl = $("settings"), any = d.services.some(function (x) { return x.state !== "not installed"; });
-    clear(dl);
-    function add(k, v, mono) {
-      if (v === null || v === undefined || v === "") return;
-      dl.appendChild(el("dt", null, k));
-      dl.appendChild(el("dd", (mono ? "mono" : "") + (String(v).indexOf("\n") >= 0 ? " lines" : ""), v));
-    }
-    if (!any) { add("Services", "none installed"); return; }
-    add("Who may connect", s.allow.length ? s.allow.join("\n") : "the home network", s.allow.length > 0);
-    add("Servers at home", s.allow_local ? "may be reached" : "not reached");
-    var mail = d.services.filter(function (x) { return x.key === "mail"; })[0];
-    if (mail && mail.state !== "not installed") add("Mail servers", s.mail.join("\n"), true);
-    if (s.browser !== null) add("Browser", s.browser ? "on, for EWeb's snapshots" : "off");
-    var tr = d.services.filter(function (x) { return x.key === "translate"; })[0];
-    if (tr && tr.state !== "not installed") add("Translate", s.languages.length ? s.languages.join(", ") : "no languages yet");
-    if (s.claude) add("ClaudeST", s.claude === "claudeai" ? "claude.ai" : s.claude === "api" ? "the Anthropic API" : s.claude);
-    add("The log", "who connected where, never contents");
-  }
-
-  function meters(d) {
-    var c = d.computer, box = $("meters");
-    clear(box);
-    function meter(label, value, pct) {
-      var w = el("div"), top = el("div", "meter-top"), bar = el("div", "bar"), fill = el("div", pct >= 85 ? "hot" : null);
-      top.appendChild(el("span", "muted", label)); top.appendChild(el("b", null, value));
-      fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
-      bar.appendChild(fill); w.appendChild(top); w.appendChild(bar);
-      box.appendChild(w);
-    }
-    if (c.mem_total) meter("Memory", bytes(c.mem_used) + " of " + bytes(c.mem_total), c.mem_used * 100 / c.mem_total);
-    if (c.disk_total) meter("Disk", bytes(c.disk_used) + " of " + bytes(c.disk_total), c.disk_used * 100 / c.disk_total);
-    if (c.load !== undefined) meter("Processor", c.load + "%" + (c.temp !== undefined ? "  ·  " + c.temp + " °C" : ""), c.load);
-    if (c.up_since) box.appendChild(el("div", "small muted", "The computer has been up for " + span(d.gateway.now - c.up_since)));
-  }
-
-  function render() {
-    var d = last;
-    if (!d) return;
-    var g = d.gateway;
-    var inst = d.services.filter(function (s) { return s.state !== "not installed"; });
-    var run = inst.filter(function (s) { return s.state === "running"; }).length;
-    var ov = $("overall");
-    ov.className = "pill " + (!inst.length ? "off" : run === inst.length ? "ok" : run ? "warn" : "bad");
-    ov.textContent = inst.length ? run + " of " + inst.length + " services running" : "No service installed";
-    $("up").textContent = g.since ? span(g.now - g.since) : "–";
-    $("up-since").textContent = g.since ? "since " + when(g.since) : "";
-    var total = 0, today = 0;
-    d.services.forEach(function (s) { total += s.total; today += s.today; });
-    $("conns").textContent = n(total);
-    $("conns-today").textContent = n(today) + " today";
-    $("addr").textContent = g.address || "–";
-    $("model").textContent = g.where === "container" ? "in a Docker container" : (g.model || "");
-    $("version").textContent = g.version || "–";
-    $("where").textContent = g.where === "container" ? "the Docker image" : "installed with aera-gateway";
-    services(d); events(d); ataris(d); settings(d); meters(d);
   }
 
   function refresh() {
     var x = new XMLHttpRequest();
-    x.open("GET", "/status.json");
+    x.open("GET", "/");
     x.timeout = 8000;
     x.onload = function () {
       if (x.status !== 200) return lost();
-      try { last = JSON.parse(x.responseText); } catch (e) { return lost(); }
+      var doc = new DOMParser().parseFromString(x.responseText, "text/html");
+      for (var i = 0; i < PARTS.length; i++) {
+        var now = $(PARTS[i]), next = doc.getElementById(PARTS[i]);
+        if (now && next) now.parentNode.replaceChild(document.importNode(next, true), now);
+      }
       $("lost").hidden = true;
-      $("updated").textContent = "updated " + new Date().toLocaleTimeString();
-      render();
+      filter();
     };
     x.onerror = x.ontimeout = lost;
     x.send();
@@ -876,22 +921,26 @@ JS = r"""
   function lost() { $("lost").hidden = false; }
 
   document.addEventListener("DOMContentLoaded", function () {
-    themeWord();
+    $("theme-word").textContent = theme() === "dark" ? "Light" : "Dark";
     $("theme").addEventListener("click", function () {
       var t = theme() === "dark" ? "light" : "dark";
       root.setAttribute("data-theme", t);
       try { localStorage.setItem("aera-dash-theme", t); } catch (e) {}
-      themeWord();
+      $("theme-word").textContent = t === "dark" ? "Light" : "Dark";
     });
-    $("clear").addEventListener("click", function () { pick = null; render(); });
-    refresh();
+    document.addEventListener("click", function (ev) {
+      var b = ev.target;
+      while (b && b !== document && !(b.getAttribute && b.getAttribute("data-key"))) b = b.parentNode;
+      if (b && b !== document) { pick = pick === b.getAttribute("data-key") ? null : b.getAttribute("data-key"); filter(); }
+    });
+    $("clear").addEventListener("click", function () { pick = null; filter(); });
+    filter();
     setInterval(refresh, 4000);
   });
 })();
 """
 
-FILES = {"/": ("text/html; charset=utf-8", PAGE), "/dash.css": ("text/css; charset=utf-8", CSS),
-         "/dash.js": ("text/javascript; charset=utf-8", JS)}
+FILES = {"/dash.css": ("text/css; charset=utf-8", CSS), "/dash.js": ("text/javascript; charset=utf-8", JS)}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -923,6 +972,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not aeragate.client_ok(self.client_address[0], Config.allow):
             return self.send(403, "text/plain; charset=utf-8", "dashgate: not from this computer\n")
         path = self.path.split("?", 1)[0]
+        if path == "/":
+            return self.send(200, "text/html; charset=utf-8", page(status(self.stats, self.headers.get("Host", ""))))
         if path in FILES:
             return self.send(200, *FILES[path])
         if path == "/status.json":
