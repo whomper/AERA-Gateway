@@ -217,6 +217,30 @@ class PageTest(unittest.TestCase):
         self.assertNotIn("innerHTML", dashgate.JS)
         self.assertNotIn("https://", dashgate.PAGE + dashgate.CSS + dashgate.JS)    # (nothing from the internet)
 
+    def test_filled_in(self):
+        """the page reads the same with scripts off: everything is in it"""
+        st = dashgate.Handler.stats
+        st.take("web", "webgate", "c 192.168.1.31 ok")
+        st.take("web", "webgate", "t 192.168.1.31 news.example.com")
+        st.take("web", "webgate", "c 192.168.1.45 no")
+        status, _, body = self.get("/")
+        page = body.decode()
+        for want in ('data-service="web"', "news.example.com", "192.168.1.31", "refused: not allowed",
+                     "Connections this run", "Not installed", "1 try", '<meta http-equiv="refresh" content="30">',
+                     'fill="none" stroke="#4cc3b5"'):
+            self.assertIn(want, page)
+        self.assertNotIn("%(", page)
+        d = {"gateway": {"now": 0, "since": None, "address": "", "where": "systemd", "model": "", "version": "1"},
+             "services": [{"key": "web", "apps": "<b>", "speaks": "&", "state": "running", "since": None,
+                           "ports": [1], "today": 0, "total": 0, "trend": [0] * 8, "live": 0, "last": None}],
+             "events": [], "ataris": [], "computer": {},
+             "settings": {"allow": [], "allow_local": False, "mail": [], "browser": None, "languages": [],
+                          "claude": None}}
+        out = dashgate.page(d)
+        self.assertIn("&lt;b&gt;", out)
+        self.assertNotIn("<b>&", out)
+        self.assertIn("Nothing yet this run", out)
+
     def test_json(self):
         status, r, body = self.get("/status.json")
         self.assertEqual(status, 200)
