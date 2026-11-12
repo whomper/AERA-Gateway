@@ -16,7 +16,7 @@ sets them up, keeps them up to date and says how they are.
 | `web`       | EWeb                | 8280                             | HTTP and HTTPS to any web site; pictures made smaller or as the Atari's pens, scripts compiled, pages translated, snapshots in the Gateway's browser |
 | `pdf`       | EConvert and EPDF   | 8380                             | PDFs converted (and translated) on the Gateway     |
 | `translate` | EMail, EWeb, EPDF   | 8480                             | text translated on the Gateway by a local engine   |
-| `radio`     | EPlay               | 8580                             | web radio from MP3, AAC, Ogg or HLS stations, sent to the Atari as MP3, with titles, covers and logos |
+| `radio`     | EPlay               | 8580                             | web radio (MP3, AAC, Ogg, HLS) sent to the Atari as MP3, with titles, covers, logos and a station search |
 | `claude`    | ClaudeST            | 2323 (or a serial cable)         | HTTPS to claude.ai or the Anthropic API            |
 | `dash`      | your Mac or PC      | 8888                             | a dashboard: services, connections, settings       |
 
@@ -30,9 +30,10 @@ Atari, here with your mail provider's servers:
 sudo apt install -y git && git clone https://github.com/whomper/AERA-Gateway ~/AERA-Gateway && ~/AERA-Gateway/update-pi.sh --allow ATARI_IP --mail imap.gmail.com smtp.gmail.com
 ```
 
-Or one service at a time (`sudo aera-gateway install web --allow ATARI_IP`).
+Or one service at a time (`sudo aera-gateway install web`).
 Then, now and then, `~/AERA-Gateway/update-pi.sh`: the latest release,
-every setting kept. `aera-gateway status` says what runs where.
+every setting kept. `aera-gateway status`, or the dashboard at
+`http://GATEWAY_IP:8888/`, says what runs where.
 
 Or in Docker, on 64-bit Linux, or on macOS and Windows with Docker Desktop:
 
