@@ -529,7 +529,7 @@ snap() {
   stat -c '%a' /etc/systemd/system/claude-st.service > "$1/unit.stat"
   (cd /opt/claude-st/bridge && for f in *; do echo "$f $(stat -c %a "$f") $(md5sum < "$f")"; done) > "$1/bridge"
   getent passwd claude-st | cut -d: -f6,7 > "$1/user"
-  id -nG claude-st | tr ' ' '\n' | sort > "$1/groups"
+  # (its groups no longer: pi/install.sh put it in dialout for the serial cable, gone with ClaudeST 2.3)
 }
 # pi/install.sh 1.34 stops quietly on a Pi without --allow in its settings
 # (a new one, serial, --atari any): grep finds nothing and pipefail ends it

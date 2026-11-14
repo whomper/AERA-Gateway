@@ -7,9 +7,8 @@
 #
 # Docker Desktop runs containers in a virtual machine: the ports are
 # published on the computer's own address, but every Atari reaches the
-# services as Docker's own address (the dashboard shows that one too). So AERA_ALLOW can't single out your
-# Atari (leave it empty: the home network), and ClaudeST is network only
-# (no serial cable).
+# services as Docker's own address (the dashboard shows that one too). So
+# AERA_ALLOW can't single out your Atari (leave it empty: the home network).
 services:
   aera-gateway:
     image: ghcr.io/whomper/aera-gateway:latest      # with the Gateway's browser: :latest-browser

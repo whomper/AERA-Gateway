@@ -48,7 +48,7 @@ RUN for u in emailgate ecalgate eftpgate webgate pdfgate translategate radiogate
 RUN python3 -m venv /opt/translategate/venv \
     && /opt/translategate/venv/bin/pip install -q --no-cache-dir "ctranslate2>=4,<5" "sentencepiece>=0.2,<0.3" \
     && python3 -m venv /opt/claude-st/venv \
-    && /opt/claude-st/venv/bin/pip install -q --no-cache-dir pyserial requests anthropic \
+    && /opt/claude-st/venv/bin/pip install -q --no-cache-dir requests anthropic \
     && (/opt/claude-st/venv/bin/pip install -q --no-cache-dir curl_cffi || true)
 
 COPY gateway /opt/aera-gateway

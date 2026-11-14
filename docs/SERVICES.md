@@ -38,7 +38,7 @@ In the examples, `GATEWAY_IP` is the Gateway's address on your home network,
 | `pdf`       | EConvert, EPDF            | 8380                             | nothing: converts on the Gateway                |
 | `translate` | EMail, EWeb, EPDF         | 8480; a local socket             | nothing: a local engine translates              |
 | `radio`     | EPlay                     | 8580                             | HTTP and HTTPS to radio stations; radio-browser.info for logos |
-| `claude`    | ClaudeST                  | 2323, or a serial cable          | HTTPS to claude.ai or the Anthropic API         |
+| `claude`    | ClaudeST                  | 2323                             | HTTPS to claude.ai or the Anthropic API         |
 | `dash`      | a browser on the home network | 8888; a local socket         | nothing: it shows the others                    |
 
 A port never moves without the owning app's OK: the Ataris have them in
@@ -933,32 +933,32 @@ released with AERA-Gateway; ClaudeST still owns its protocol (see ClaudeST's
   and `atari_text.py`; `gateway/claude-st/CLAUDEST` names the ClaudeST commit
   it came from), installed in `/opt/claude-st` and run as `claude-st.service`
   (`gateway/claude-st/claude-st.service`).
-- **Port:** 2323 on the network, or a serial cable (19200 baud).
+- **Port:** 2323. ClaudeST reaches it through STinG; the serial cable went with ClaudeST 2.3 (Erez, 9 Nov 2026).
 
 ### Install
 
 ```
 sudo aera-gateway install claude --network --atari ATARI_IP
-sudo aera-gateway install claude --serial /dev/ttyUSB0 --baud 9600
 sudo aera-gateway set-key        a new claude.ai session key
 ```
 
 | Option | What it does |
 |---|---|
-| `--network` | over STinG (Ethernet or WiFi), on port 2323 |
-| `--atari ATARI_IP[,IP2]` / `any` | the Atari's address (network mode) |
+| `--atari ATARI_IP[,IP2]` / `any` | the Atari's address (asked for when not given) |
 | `--listen-port N` | another port (2323 by default) |
-| `--serial DEVICE` | a serial cable instead (`auto`: a USB adapter) |
-| `--baud N` | the cable's speed (19200 by default) |
 | `--backend claudeai\|api\|demo` | claude.ai with a session key (the default), the Anthropic API with a key, or a demo |
 | `--from DIR` | the bridge from a ClaudeST copy (`bridge/` and `pi/`) instead |
 | `--set-key` | paste a new claude.ai session key |
 
-It installs python3 and python3-venv, and the bridge's packages (pyserial,
-requests, anthropic, and curl_cffi where there is one) in
-`/opt/claude-st/venv`: ClaudeST's own set, beside the Gateway's
-standard-Python rule. The user `claude-st` is in the `dialout` group for the
-cable.
+It installs python3 and python3-venv, and the bridge's packages (requests,
+anthropic, and curl_cffi where there is one) in `/opt/claude-st/venv`:
+ClaudeST's own set, beside the Gateway's standard-Python rule.
+
+A Gateway set up for the serial cable before ClaudeST 2.3 keeps its old
+bridge, on its cable, for the ClaudeST it has: `update` leaves it as it is
+and says so, and `install claude --network --atari ATARI_IP` moves it to the
+network (ClaudeST 2.3 or later on the Atari), its key and chats kept.
+`--serial` and `--baud` are refused with the same words.
 
 ### How the Atari talks to it
 
