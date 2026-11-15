@@ -24,6 +24,7 @@ typedef struct {
 	long sw, sh;			/* the picture's own pixels, once it is being made (0: not known) */
 } PICE;
 
+long pics_st_free(void);		/* the largest block of ST RAM free (the bitmaps'), Malloc(-1)'s where there is only ST RAM */
 void pics_room(void);			/* how many pictures are kept decoded, from the memory free (at the start) */
 PICE *pics_get(long obj, int w, int h, int flip);	/* NULL: every slot busy decoding */
 int pics_waiting(void);

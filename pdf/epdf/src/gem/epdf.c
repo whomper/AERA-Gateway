@@ -32,6 +32,7 @@
 #include "clip.h"
 #include "popup.h"
 #include "menu.h"
+#include "strip.h"
 #include "pics.h"
 #include "dspjpeg.h"
 #include "rdraw.h"
@@ -96,6 +97,8 @@ int settings_lines(void)
 static const char inf_head[] =
 	"; EPDF's settings. EPDF writes this file itself; a line it doesn't know is kept.\r\n\r\n";
 
+extern long nf_on;		/* common's nf.S: NatFeats looked for only when set */
+
 static void settings_read(void)
 {
 	long n;
@@ -109,8 +112,18 @@ static void settings_read(void)
 	} else {
 		inf_parse(&inf, inf_head, (long)strlen(inf_head));
 	}
+	/* NatFeats (the emulator's console, the rigs' log) only where the INF
+	   asks: NATFEATS=1, which only the test rigs write; not in Settings.
+	   Read before the first log_event: a probe made with nf_on 0 is
+	   never made again (Erez, 15 Nov 2026: "make it a .INF setting so
+	   that it can be added in our testing but have no bearing outside";
+	   a Vampire V4SA hung on the probe's illegal instruction) */
+	if ((v = inf_get(&inf, "NATFEATS")) != NULL && v[0] == '1')
+		nf_on = 1;
 	if ((v = inf_get(&inf, "LINES")) != NULL)
 		lines_mode = v[0] == '1';
+	if ((v = inf_get(&inf, "PAGESTRIP")) != NULL)
+		strip_set(v[0] == '1');
 	if ((v = inf_get(&inf, "FOLDER")) != NULL && strlen(v) < sizeof open_dir)
 		strcpy(open_dir, v);
 	if ((v = inf_get(&inf, "GATEWAY")) != NULL)
@@ -362,12 +375,12 @@ static long find_left;			/* pages it may still look at */
    every step of a selection dragged) */
 static void menu_states(void)
 {
-	static const short cmd[10] = { CMD_COPY, CMD_SELALL, CMD_FIND, CMD_FINDNEXT, CMD_FINDPREV, CMD_PAGES,
-				       CMD_SAVEOPT, CMD_ZOOMIN, CMD_ZOOMOUT, CMD_ZOOMACTUAL };
-	static signed char was[10] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
-	static signed char tick = -1;
+	static const short cmd[8] = { CMD_COPY, CMD_SELALL, CMD_FIND, CMD_FINDNEXT, CMD_FINDPREV, CMD_PAGES,
+				      CMD_SAVEOPT, CMD_ZOOMTOGGLE };
+	static signed char was[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+	static signed char tick = -1, ztick = -1;
 	DOCVIEW *v = doc_view();
-	signed char now[10];
+	signed char now[8], z;
 	int i;
 
 	menus_due = 0;
@@ -378,9 +391,9 @@ static void menu_states(void)
 	now[3] = now[4] = v && find_text[0];
 	now[5] = doc_has_pages() != 0;		/* (greyed for a file without its pages whole) */
 	now[6] = v && doc_prepared();		/* Save Optimised...: a converted PDF's */
-	now[7] = v && doc_pages_mode() && win_zoom_can(1);
-	now[8] = now[9] = v && doc_pages_mode() && win_zoom_can(-1);
-	for (i = 0; i < 10; i++)
+	z = (signed char)(v && doc_pages_mode() && win_zoom_can(-1));	/* (a page zoomed) */
+	now[7] = z || (v && doc_pages_mode() && win_zoom_can(1));
+	for (i = 0; i < 8; i++)
 		if (now[i] != was[i]) {
 			menu_ienable(menu.tree, mbar_object(&menu, cmd[i]), now[i]);
 			was[i] = now[i];
@@ -388,6 +401,10 @@ static void menu_states(void)
 	if (doc_pages_mode() != tick) {
 		tick = (signed char)doc_pages_mode();
 		menu_icheck(menu.tree, mbar_object(&menu, CMD_PAGES), tick);
+	}
+	if (z != ztick) {
+		ztick = z;
+		menu_icheck(menu.tree, mbar_object(&menu, CMD_ZOOMTOGGLE), ztick);
 	}
 }
 
@@ -657,6 +674,27 @@ static void click(short mx, short my, short kstate, int dbl)
 	static const GRECT anywhere = { 0, 0, 32767, 32767 };
 	int how;
 
+	{
+		/* the page strip: its page at the view's top (a zoom ended first) */
+		long sp;
+
+		if (strip_in(mx, my) && (sp = strip_press(mx, my, held_msg)) >= 0) {
+			if (win_zoomed()) {
+				win_zoom_end();
+				menu_states();
+			}
+			{
+				char a[16];
+
+				snprintf(a, sizeof a, "%ld", sp + 1);
+				log_event("strip-click", a, NULL);
+			}
+			win_goto_page(sp);
+			return;
+		}
+		if (strip_in(mx, my))
+			return;		/* (its bar, or a press let go elsewhere) */
+	}
 	if (win_zoomed()) {
 		/* held and moved: the page dragged under the mouse (Erez, 8 Nov
 		   2026); a click alone gives the text back */
@@ -897,7 +935,7 @@ static void command(int c)
 {
 	char n[8];
 
-	if (c != CMD_ABOUT && c != CMD_ZOOMIN && c != CMD_ZOOMOUT && c != CMD_ZOOMACTUAL)
+	if (c != CMD_ABOUT && c != CMD_ZOOMIN && c != CMD_ZOOMOUT && c != CMD_ZOOMACTUAL && c != CMD_ZOOMTOGGLE)
 		win_zoom_end();		/* (a picture shown whole: the text back first) */
 	switch (c) {
 	case CMD_ABOUT:
@@ -909,11 +947,18 @@ static void command(int c)
 	case CMD_SAVEOPT:
 		save_optimised();
 		break;
-	case CMD_ZOOMIN:
-	case CMD_ZOOMOUT:
-		win_zoom_step(c == CMD_ZOOMIN ? 1 : -1);
+	case CMD_ZOOMTOGGLE:			/* View > Zoom In: zoomed, or back */
+		if (win_zoom_can(-1))
+			win_zoom_actual();
+		else
+			win_zoom_in();
 		menu_states();
 		break;
+	case CMD_ZOOMIN:
+		win_zoom_in();
+		menu_states();
+		break;
+	case CMD_ZOOMOUT:
 	case CMD_ZOOMACTUAL:
 		win_zoom_actual();
 		menu_states();
@@ -1005,6 +1050,17 @@ static void command(int c)
 		if (has_menu)
 			menu_icheck(menu.tree, mbar_object(&menu, CMD_PAGES), doc_pages_mode());
 		log_event("pages", doc_pages_mode() ? "1" : "0", NULL);
+		win_layout();
+		win_draw_all();
+		strip_refresh();	/* (the cells' pages drawn, or their first lines again) */
+		break;
+	case CMD_STRIP:
+		/* the pages' column at the window's left (Erez, 15 Nov 2026) */
+		strip_set(!strip_on());
+		if (has_menu)
+			menu_icheck(menu.tree, mbar_object(&menu, CMD_STRIP), strip_on());
+		setting("PAGESTRIP", strip_on() ? "1" : "0", "1: the page strip, the pages' column at the window's left; 0: none");
+		log_event("pagestrip", strip_on() ? "1" : "0", NULL);
 		win_layout();
 		win_draw_all();
 		break;
@@ -1254,11 +1310,17 @@ static void key(short kstate, short k)
 	/* the AES makes these itself from Control with the arrows and
 	   Clr/Home, and gives them without Control in kstate; Shift may be gone
 	   too when EPDF was busy, so Shift+^Home and ^End both mean the last */
+	/* TOS 4.04 gives Shift+^Clr/Home with a character ('7': 0x7737,
+	   measured in Hatari, 13 Nov 2026), so it is taken by its scan code
+	   alone; it went nowhere before */
+	if (scan == 0x77) {
+		command(shift(kstate) ? CMD_LAST : CMD_FIRST);
+		return;
+	}
 	if (KEY_ASCII(k) == 0) {
 		switch (scan) {
 		case 0x73: command(CMD_PREV); return;		/* ^Left */
 		case 0x74: command(CMD_NEXT); return;		/* ^Right */
-		case 0x77: command(shift(kstate) ? CMD_LAST : CMD_FIRST); return;	/* ^Clr/Home */
 		case 0x75: command(CMD_LAST); return;		/* ^End, where a keyboard has it */
 		}
 	}
@@ -1510,8 +1572,10 @@ int main(void)
 	/* stage 2: render.ovl and the standard fonts beside the program */
 	path_join(rdraw_path, sizeof rdraw_path, start_dir, "render.ovl");
 	path_join(doc_font_dir, sizeof doc_font_dir, start_dir, "fonts");
-	{
-		/* (else EConvert's, as the release's zip carries them: econvert\fonts) */
+	if (rdraw_machine()) {
+		/* (else EConvert's, as the release's zip carries them:
+		   econvert\fonts; looked for only where render.ovl can use them,
+		   a 68020 or better: an ST touches no file it can't use, 6.5) */
 		char t[220];
 
 		path_join(t, sizeof t, doc_font_dir, "sans.ttf");
@@ -1564,6 +1628,8 @@ int main(void)
 		}
 		if (has_menu) {
 			menu_icheck(menu.tree, mbar_object(&menu, CMD_LINES), lines_mode);
+			if (strip_on())		/* (unticked as built: an AES call less, 15 ms of an ST's start) */
+				menu_icheck(menu.tree, mbar_object(&menu, CMD_STRIP), 1);
 			menu_icheck(menu.tree, mbar_object(&menu, CMD_GATEWAY), gw_on);
 			menu_icheck(menu.tree, mbar_object(&menu, CMD_TRANSLATE), tr_on());
 		}
@@ -1599,6 +1665,7 @@ int main(void)
 		short which, flags = MU_MESAG | MU_KEYBD | MU_BUTTON;
 		unsigned long t;
 		pics_focus = doc_view() ? dv_page_at_top(doc_view()) : -1;
+		int strip_now;
 		int pending = doc_pending() || find_dir || doc_pic_busy() || pics_waiting() || cp.on || gw_busy() ||
 			      tr_busy() || ljob_on;
 
@@ -1606,11 +1673,12 @@ int main(void)
 
 		/* the sliders after a scroll, once no key waits; the reading
 		   on while nothing else does */
+		strip_now = strip_turn_due() && !win_iconified();	/* the page strip's cells, a turn each */
 		if (win_sliders_due() || menus_due || pending || arrived >= 0 || arrived_pic >= 0 || rows_pic >= 0 ||
-		    win_progress_due() || win_ahead_due())
+		    win_progress_due() || win_ahead_due() || strip_now)
 			flags |= MU_TIMER;
 		t = win_sliders_due() || menus_due || arrived >= 0 || arrived_pic >= 0 || rows_pic >= 0 ||
-		    win_progress_due() ? 0 : bg_timer(pending || win_ahead_due(), 1000);
+		    win_progress_due() || strip_now ? 0 : bg_timer(pending || win_ahead_due(), 1000);
 		{
 			long pw = win_progress_wait();	/* the row to go once nothing has run for a while */
 
@@ -1653,6 +1721,8 @@ int main(void)
 				win_sliders();
 			} else if (menus_due) {
 				menu_states();
+			} else if (strip_now) {
+				strip_turn();
 			} else if (cp.on) {
 				/* a copy the user asked for: before the reading and the
 				   pictures; a step starts only if one as long as the last

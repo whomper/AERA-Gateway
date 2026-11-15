@@ -129,6 +129,8 @@ static void epdf_gateway(void)
 	}
 }
 
+extern long nf_on;		/* common's nf.S: NatFeats looked for only when set */
+
 static void settings_read(void)
 {
 	long n;
@@ -141,6 +143,10 @@ static void settings_read(void)
 		free(t);
 	} else
 		inf_parse(&inf, inf_head, (long)strlen(inf_head));
+	/* NatFeats only where the INF asks (NATFEATS=1: the test rigs; not in
+	   Settings), before the first log_event, as EPDF's (Erez, 15 Nov 2026) */
+	if ((v = inf_get(&inf, "NATFEATS")) != NULL && v[0] == '1')
+		nf_on = 1;
 	if ((v = inf_get(&inf, "PAGES")) != NULL)
 		pages_set = !strcmp(v, "none") ? CV_PAGES_NONE : !strcmp(v, "colour") ? CV_PAGES_COLOUR :
 			    !strcmp(v, "colouronly") ? CV_PAGES_COLOUR_ONLY : CV_PAGES_MONO;
@@ -510,8 +516,35 @@ static void build(void)
 #define CONV_STACK (64L * 1024)		/* FreeType's rasteriser and the reader's interpreter */
 static CORO main_co, work_co;
 static char *work_stack;
+
+/* padding in a branch only a refused allocation takes: the converter's
+   code, linked after this file, at the same places in a 68030's
+   instruction cache (addresses mod 256) as before stack_used came
+   (tools/rpad.py; render.c's RPAD) */
+#ifndef EPAD_A
+#define EPAD_A 200
+#endif
+#define EPAD_S2(n) #n
+#define EPAD_S(n) EPAD_S2(n)
+#if defined(__m68k__) || defined(__mc68000__)
+#define EPAD(n) __asm__ volatile("bra.w 1f\n\t.skip " EPAD_S(n) "\n1:")
+#else
+#define EPAD(n) ((void)0)
+#endif
+
+/* the job's stack used: coro_used's count, a long at a time (a byte at a
+   time it was some 30 ms of the job's last turn on a Falcon, twice) */
+static long stack_used(void)
+{
+	const unsigned long *m = (const unsigned long *)work_stack;
+	long k = 0, n = CONV_STACK / 4;
+
+	while (k < n && m[k] == 0xA5A5A5A5UL)
+		k++;
+	return coro_used(work_stack + k * 4, CONV_STACK - k * 4);
+}
 static int working;			/* the batch under way */
-static int fresh;			/* just begun: its first slice in the next turn */
+static int fresh;			/* just begun: its first slice in the next turn; 3, 4, 5 the end's steps */
 static int stop_now;			/* Stop: the next turn says stop */
 static int work_done;			/* the batch has finished (its stack is idle) */
 static unsigned long slice_end;
@@ -676,15 +709,15 @@ done_one:
 			}
 			{
 				char a[120];
+				long u = stack_used();
 
 				snprintf(a, sizeof a, "%d %ld ms %ld bytes stack %ld%s%s", r, st.ms, st.out_bytes,
-					 coro_used(work_stack, CONV_STACK), r == -1 ? " why " : "", r == -1 ? err : "");
+					 u, r == -1 ? " why " : "", r == -1 ? err : "");
 				log_event("converted", base_of(files[i].path), a);
 				{
 					/* the job's stack, deepest so far, in crash.log's "last
 					   status" (Erez's bombs left no record of it) */
 					static long most;
-					long u = coro_used(work_stack, CONV_STACK);
 
 					if (u > most) {
 						char q[64];
@@ -1166,8 +1199,9 @@ static void draw(const GRECT *clip, short start)
 			if (draw_only) {
 				short i;
 
-				for (i = 0; i < draw_only_n; i++)
-					objc_draw(tree, draw_only[i], 0, c.x, c.y, c.w, c.h);
+				/* (a count below 0: these objects with their children) */
+				for (i = 0; i < (draw_only_n < 0 ? -draw_only_n : draw_only_n); i++)
+					objc_draw(tree, draw_only[i], draw_only_n < 0 ? 8 : 0, c.x, c.y, c.w, c.h);
 			} else
 				objc_draw(tree, start, 8, c.x, c.y, c.w, c.h);
 			if (own_pens) {
@@ -1226,6 +1260,40 @@ static void redraw_obj(short o)
 	wind_update(BEG_UPDATE);
 	draw(&g, BOX);
 	wind_update(END_UPDATE);
+}
+
+/* a button whose words or state changed: the object alone (draw_steady,
+   off the screen and one copy), not the window's tree under it (the whole
+   tree within its clip was 40-45 ms of a Falcon's turn for one button) */
+static void draw_steady(const GRECT *g, const short *objs, short n);
+
+static void redraw_alone(short o)
+{
+	GRECT g;
+
+	if (iconified)
+		return;
+	objc_offset(tree, o, &g.x, &g.y);
+	g.w = (short)(tree[o].ob_width + 3);
+	g.h = (short)(tree[o].ob_height + 3);
+	draw_steady(&g, &o, 1);
+}
+
+/* the list (a white box: it paints its whole rectangle) and its rows
+   alone, the progress's strips noted as draw() notes them: 45 ms where the
+   window's tree within the list was 55, in the turn a new file takes */
+static void redraw_list_alone(void)
+{
+	GRECT g;
+	short o = LIST;
+
+	if (iconified)
+		return;
+	objc_offset(tree, o, &g.x, &g.y);
+	g.w = (short)(tree[o].ob_width + 3);
+	g.h = (short)(tree[o].ob_height + 3);
+	draw_steady(&g, &o, -1);
+	note_drawn(&g);
 }
 
 /* the file's line and bar to the batch's, one rectangle drawn once
@@ -1549,11 +1617,12 @@ static void begin(void)
 	if (there && alert(2, "[2][%d of the files are in the folder|already. Replace them?][ Replace |Cancel]", there) != 1)
 		return;
 	if (!work_stack && !(work_stack = malloc(CONV_STACK))) {
+		EPAD(EPAD_A);
 		alert(1, "[3][Not enough memory to start.][ OK ]");
 		return;
 	}
 	screen_sizes_measure();
-	coro_start(&work_co, work_stack, CONV_STACK, worker);
+	coro_start_long(&work_co, work_stack, CONV_STACK, worker);
 	batch_bytes = bytes_done = 0;
 	for (i = 0; i < nfiles; i++)
 		if (files[i].state != 1)
@@ -1566,7 +1635,7 @@ static void begin(void)
 	t_batch = tos_ms();
 	log_event("batch", NULL, NULL);
 	texts();
-	redraw_obj(B_GO);		/* (Stop; the bars come in the turns after: the key's turn short) */
+	redraw_alone(B_GO);		/* (Stop; the bars come in the turns after: the key's turn short) */
 	fresh = 2;
 }
 
@@ -1574,7 +1643,7 @@ static void begin(void)
 static void finish_button(void)
 {
 	tree[B_GO].ob_spec = (long)"Convert";
-	redraw_obj(B_GO);
+	redraw_alone(B_GO);
 }
 
 /* its second: the progress lines and bars cleared (only what changed:
@@ -1608,7 +1677,14 @@ static void finish_progress(void)
 		snprintf(s_result, sizeof s_result, "%d converted in %s", n_ok, took);
 	log_event("result", s_result, NULL);
 	texts();
-	redraw_progress();
+	if (iconified)
+		redraw_progress();
+	else {
+		/* the two lines and bars; the list's rows are the next step's
+		   (finished: it draws them in their end state) */
+		strip(0);
+		strip(1);
+	}
 	log_event("batch-done", stop_now ? "stopped" : "done", NULL);
 #ifdef TURN_DEBUG
 	{
@@ -1645,7 +1721,7 @@ static void finished(void)
 				g.h = tree[o[0]].ob_height;
 				draw_steady(&g, o, 3);
 			}
-		redraw_obj(B_REMOVE);
+		redraw_alone(B_REMOVE);
 	}
 	if (gate_off)
 		alert(1, "[1][The Gateway at %.24s doesn't answer. Check that it is on and that the PDF converter is installed on it.][ OK ]", gate_host);
@@ -2043,8 +2119,10 @@ static void message(const short *msg)
 		{
 			char v[32];
 
-			snprintf(v, sizeof v, "%d,%d", msg[4], msg[5]);
-			setting("WINDOW", v, "the window's place: x,y in pixels");
+			/* x,y,w,h as every AERA program writes it (6.1); the size is
+			   the window's own, read back but not changed by it */
+			snprintf(v, sizeof v, "%d,%d,%d,%d", msg[4], msg[5], msg[6], msg[7]);
+			setting("WINDOW", v, "the window's place and size: x,y,width,height in pixels");
 		}
 		break;
 	case WM_CLOSED:
@@ -2100,8 +2178,10 @@ int main(void)
 	wind_get(0, WF_WORKXYWH, &desk_x, &desk_y, &desk_w, &desk_h);
 	graf_mouse(ARROW, 0);
 	/* _CPU: a 68030 converts here; an ST only through the Gateway (its
-	   converter is built for the 68030: Makefile, build/m68030cv) */
-	has_030 = get_cookie(0x5F435055L) >= 20;
+	   converter is built for the 68030: Makefile, build/m68030cv), and so
+	   does a FireBee (_CF_: FireTOS says _CPU 60 for a ColdFire, which
+	   runs no 68030 code; as EPDF's rdraw_machine, 15 Nov 2026) */
+	has_030 = get_cookie(0x5F435055L) >= 20 && !get_cookie(0x5F43465FL);
 	if (!screen_check("EConvert", scr_w)) {
 		v_clsvwk(vdi_h);
 		appl_exit();
@@ -2173,7 +2253,7 @@ int main(void)
 		/* (a still pointer costs nothing: woken when it leaves its pixel; the
 		   timer a tip's wait when idle, at once while a batch runs) */
 		evnt_set_m1(1, hx, hy, 1, 1);
-		which = evnt_multi_(flags, 1, 1, 1, working ? 0 : tip_wait(1000), msg, &ev);
+		which = evnt_multi_(flags, 1, 1, 1, working || fresh >= 4 ? 0 : tip_wait(1000), msg, &ev);
 		if (which & MU_M1)
 			graf_mkstate(&hx, &hy, &kd, &kd);
 		tip_tick(which, iconified ? -1 : hx, hy, win_tip);
@@ -2183,6 +2263,17 @@ int main(void)
 			click(ev.mx, ev.my);
 		if (which & MU_MESAG)
 			message(msg);
+		if (fresh == 4) {
+			fresh = 5;
+			finish_progress();	/* (the batch over: working 0) */
+			last1 = last2 = -1;
+			continue;
+		}
+		if (fresh == 5) {
+			fresh = 0;
+			finished();
+			continue;
+		}
 		if (working) {
 			/* a slice of the batch, then its bars where they moved (at
 			   most four times a second, each the part that grew) */
@@ -2193,14 +2284,11 @@ int main(void)
 				continue;
 			}
 			if (fresh == 3) {
-				/* the batch's end drawn in one piece: the button, the
-				   progress, the alert and the list (drawing is not sliced:
-				   Erez, 4 Nov 2026; to 1.1 three turns) */
-				fresh = 0;
+				/* the batch's end in three steps, a turn each: the button,
+				   the progress, then the list (Erez, 14 Nov 2026: in place
+				   of one piece, 170 ms on a Falcon, each under 50) */
+				fresh = 4;
 				finish_button();
-				finish_progress();
-				last1 = last2 = -1;
-				finished();
 				continue;
 			}
 			if (tos_ms() - last_bar >= 250 || fresh) {
@@ -2209,9 +2297,17 @@ int main(void)
 				last_bar = tos_ms();
 				if (a != last1 || b != last2 || fresh) {
 					progress_texts();
-					redraw_progress();
-					last1 = a;
-					last2 = b;
+					if (!iconified && list_follow()) {
+						/* a new file: the list that follows it in a
+						   turn of its own, the lines and bars in the
+						   next (the two in one turn: 75 ms on a Falcon) */
+						redraw_list_alone();
+						last1 = -1;
+					} else {
+						redraw_progress();
+						last1 = a;
+						last2 = b;
+					}
 					drawn = 1;
 				}
 				fresh = 0;

@@ -61,6 +61,12 @@ typedef struct {
 } DOCVIEW;
 
 int dv_init(DOCVIEW *v, TSTORE *ts, long npages, int cols, int lines_mode);
+/* the same with the pictures' size already known (dv_set_pics): each
+   page counted at its height in the pass dv_init makes, none left stale.
+   View > Pages and Translate switched: with dv_init a page's picture was a
+   row till it came into view, then grew, and what was below it jumped as
+   a held key scrolled (Erez's Falcon, 14 Nov 2026) */
+int dv_init_pics(DOCVIEW *v, TSTORE *ts, long npages, int cols, int lines_mode, int pic_w, int pic_ch, int pic_aspect);
 void dv_free(DOCVIEW *v);
 /* page n's text came (ts_put): its rows counted again */
 void dv_page_ready(DOCVIEW *v, long n);

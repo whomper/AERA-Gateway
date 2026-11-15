@@ -43,12 +43,16 @@ typedef struct {
 	int pkind;			/* 1 Type 1, 2 TrueType, 3 CFF / OpenType, 4 none */
 	char base[40];		/* BaseFont */
 	long mem;
+	long serial;			/* this font's number, never reused (show_simple's table) */
 } PFONT;
 
 #define FC_MAX 24
 typedef struct {
 	struct { long obj; PFONT *f; long age; } e[FC_MAX];
 	long clock;
+	int32_t adv[256];		/* show_simple's advances (IX.adv): here, with the
+					   document, not taken and given back a page at a time
+					   (a 1 MB ST's heap, big.py: 13 Nov 2026) */
 } FCACHE;
 
 static void font_free(PDOC *d, PFONT *f)
@@ -1083,6 +1087,11 @@ static PFONT *font_load_in(PDOC *d, POBJ *fd, long objnum, PTEXT *t)
 		return NULL;
 	memset(f, 0, sizeof *f);
 	d->st.fonts++;
+	{
+		static long serials;
+
+		f->serial = ++serials;
+	}
 	f->objnum = objnum;
 	if (base)
 		strncpy(f->base, base, sizeof f->base - 1);
@@ -1353,6 +1362,13 @@ typedef struct {
 	fx run0;			/* the advance before the string being shown (a TJ's earlier items) */
 	fx page_area;			/* the page's width x height / 65536 (points squared, 16.16) */
 	int glyphwise;			/* the page set a glyph at a time with its spaces as characters (emit_line) */
+	/* show_simple's advances: a code's advance in text space for the font
+	   and the state they were made for, each made the first time the code
+	   is shown (13 Nov 2026, the speed phase) */
+	fx *adv;			/* 256: the font cache's (FCACHE.adv; the reader's stack is small) */
+	unsigned char adv_has[32];	/* the codes made */
+	long adv_font;			/* the font's serial; 0: none yet */
+	fx adv_fs, adv_tc, adv_tw, adv_th;
 } IX;
 
 static const fx IDENT[6] = { FX_ONE, 0, 0, FX_ONE, 0, 0 };
@@ -1462,6 +1478,76 @@ static void pause_point(PDOC *d)
 		d->stopping = 1;
 }
 
+/* show_run for the common case: a simple font of one byte a code, no
+   glyphs recorded and no renderer. The same work as show_run's, in the same
+   order and with the same arithmetic (each code's advance made by
+   show_run's formula once, then looked up), so the same text and advance;
+   a letter of one ASCII character goes straight into the text.
+   tools/textgold.py checks the corpus against the code before it. */
+static fx show_simple(IX *x, const unsigned char *s, long n, long *glyphs)
+{
+	GS *g = &x->gs;
+	PFONT *f = g->font;
+	SBUF *b = &x->txt;
+	fx adv = 0, *tab = x->adv;
+	long i;
+
+	if (x->adv_font != f->serial || x->adv_fs != g->fs || x->adv_tc != g->tc || x->adv_tw != g->tw ||
+	    x->adv_th != g->th) {
+		memset(x->adv_has, 0, sizeof x->adv_has);
+		x->adv_font = f->serial;
+		x->adv_fs = g->fs;
+		x->adv_tc = g->tc;
+		x->adv_tw = g->tw;
+		x->adv_th = g->th;
+	}
+	for (i = 0; i < n; i++) {
+		unsigned code = s[i];
+		unsigned bit = 1u << (code & 7);
+
+		if ((++x->d->pause_tick & 31) == 0)
+			pause_point(x->d);
+		(*glyphs)++;
+		if (f->mpos[code]) {
+			const uint16_t *src = f->pool + f->mpos[code] - 1;
+			uint16_t u[8];
+			int m = src[0] > 8 ? 8 : src[0];
+
+			memcpy(u, src + 1, (size_t)m * 2);
+			if (m)
+				put_units(b, u, m);
+			else
+				x->t->unmapped++;
+		} else {
+			unsigned c = f->uni[code];
+
+			if (!c)
+				x->t->unmapped++;
+			else if (c < 0x80 && b->len + 2 <= b->cap)
+				b->s[b->len++] = (char)c;	/* (the 0 after it: once, below) */
+			else {
+				uint16_t u = (uint16_t)c;
+
+				put_units(b, &u, 1);
+			}
+		}
+		if (!(x->adv_has[code >> 3] & bit)) {
+			fx a = fxmul(f->wfx[code], g->fs) + g->tc;
+
+			if (code == 32)
+				a += g->tw;
+			if (g->th != FX_ONE)
+				a = fxmul(a, g->th);
+			tab[code] = a;
+			x->adv_has[code >> 3] |= (unsigned char)bit;
+		}
+		adv += tab[code];
+	}
+	if (b->s)
+		b->s[b->len] = 0;
+	return adv;
+}
+
 static fx show_run(IX *x, const unsigned char *s, long n, long *glyphs)
 {
 	GS *g = &x->gs;
@@ -1469,6 +1555,17 @@ static fx show_run(IX *x, const unsigned char *s, long n, long *glyphs)
 	fx adv = 0;
 	long i = 0;
 	uint16_t u[8];
+
+	if (f && !f->composite && f->nbytes == 1 && !x->t->rec
+#ifdef PDF_DRAW
+	    && !(x->t->draw && x->t->draw->glyph)
+#endif
+	    ) {
+		if (!x->adv && x->d->fc)
+			x->adv = ((FCACHE *)x->d->fc)->adv;
+		if (x->adv)
+			return show_simple(x, s, n, glyphs);
+	}
 
 	while (i < n) {
 		if ((++x->d->pause_tick & 31) == 0)
@@ -1702,10 +1799,20 @@ moved:
 
 static void tm_translate(IX *x, fx tx, fx ty)
 {
-	fx t[6] = { FX_ONE, 0, 0, FX_ONE, tx, ty };
+	fx *l = x->tlm;
 
-	mat_mul(t, x->tlm, x->tlm);
-	mat_copy(x->tm, x->tlm);
+	if (l[1] == 0 && l[2] == 0) {
+		/* [1 0 0 1 tx ty] x tlm with tlm unturned, a page's text nearly
+		   always (Td a word): mat_mul's own sums for it, the rest of tlm as
+		   it is (13 Nov 2026, the hub's item 2) */
+		l[4] = fxmul(tx, l[0]) + l[4];
+		l[5] = fxmul(ty, l[3]) + l[5];
+	} else {
+		fx t[6] = { FX_ONE, 0, 0, FX_ONE, tx, ty };
+
+		mat_mul(t, l, l);
+	}
+	mat_copy(x->tm, l);
 }
 
 static int op_grow(IX *x);

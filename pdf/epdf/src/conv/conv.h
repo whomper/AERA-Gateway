@@ -13,6 +13,7 @@
    mono?": a page with colour then has no mono one, a page without colour
    its mono one) */
 enum { CV_PAGES_NONE, CV_PAGES_MONO, CV_PAGES_COLOUR, CV_PAGES_COLOUR_ONLY };
+#define CV_THUMB_W 96			/* a page's /Thumb, its pixels across */
 enum { CV_PHOTOS_INDEXED, CV_PHOTOS_JPEG };
 /* a picture's stored size: its size on the page (a point a pixel), or its
    own pixels (a drawing: the page drawn's) up to pic_w, for EPDF to show
@@ -29,6 +30,9 @@ typedef struct {
 	/* the mono page at twice page_w where there is memory to draw it in
 	   one piece (EPDF shows it at page_w, and whole when clicked); 1 */
 	int page_double;
+	/* 1: no /Thumb (each page's preview, CV_THUMB_W wide, 16 colours: EPDF's
+	   page strip); 0, the default, writes one for every page */
+	int no_thumbs;
 	long canvas_max;		/* the page canvas's most bytes, 0 any: a page drawn in
 				   bands under it (slower) */
 	/* the memory free now (EConvert: GEMDOS's), or NULL: a page refused

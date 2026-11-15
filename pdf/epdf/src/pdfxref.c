@@ -124,6 +124,127 @@ static POBJ *obj_at(PDOC *d, long off, const char *kw, long *after, long *numout
 	}
 }
 
+/* ---- a table's subsections read lazily ----
+ * Reading every entry of a big table at the open was most of it on an ST
+ * (RFC 9110's 12,576 entries, 2,600 cycles each: 5.1 s; 13 Nov 2026). A
+ * subsection whose entries are the standard 20 bytes (its first and last
+ * checked) is only recorded; an entry is read when its object is first
+ * asked for (xe_kind, xe_get). The newest section's entry wins as before:
+ * the subsections are kept newest first, the first that holds a number
+ * answers for it, and a cross-reference stream (which sets its entries at
+ * once) has every recorded entry read first (xe_lazy_all). */
+#define LZ_MIN 32			/* (a smaller subsection is read at once) */
+
+/* one entry's 20 bytes: its kind and place set (xe_put), 0 when it isn't
+   one */
+static int lz_entry(PDOC *d, long num, const unsigned char *p)
+{
+	uint32_t o2 = 0, g2 = 0;
+	int z;
+
+	if (p[10] != ' ' || p[16] != ' ' || (p[17] != 'n' && p[17] != 'f'))
+		return 0;
+	for (z = 0; z < 10; z++) {
+		unsigned dg = (unsigned)(p[z] - '0');
+
+		if (dg > 9)
+			return 0;
+		o2 = o2 * 10 + dg;
+	}
+	for (z = 11; z < 16; z++) {
+		unsigned dg = (unsigned)(p[z] - '0');
+
+		if (dg > 9)
+			return 0;
+		g2 = g2 * 10 + dg;
+	}
+	xe_put(d, num, p[17] == 'n' ? 1 : 3, o2, (uint16_t)g2);
+	return 1;
+}
+
+uint32_t xe_lazy(PDOC *d, long num)
+{
+	int k;
+
+	for (k = 0; k < d->nlz; k++) {
+		const struct pdflz *z = &d->lz[k];
+		unsigned char e[20];
+
+		if (num < z->start || num >= z->start + z->count)
+			continue;
+		if (pdf_rd(d, z->off + (num - z->start) * 20, e, 20) != 20)
+			return 0;
+		if (!lz_entry(d, num, e)) {
+			/* not the standard layout: as the table's reader takes an
+			   odd one, numbers and white space, then n or f */
+			uint32_t o2 = 0, g2 = 0;
+			int i = 0, n = 0;
+
+			while (i < 20 && is_white_c(e[i]))
+				i++;
+			while (i < 20 && e[i] >= '0' && e[i] <= '9' && n < 11)
+				o2 = o2 * 10 + (uint32_t)(e[i++] - '0'), n++;
+			if (!n)
+				return 0;
+			while (i < 20 && is_white_c(e[i]))
+				i++;
+			n = 0;
+			while (i < 20 && e[i] >= '0' && e[i] <= '9' && n < 6)
+				g2 = g2 * 10 + (uint32_t)(e[i++] - '0'), n++;
+			while (i < 20 && is_white_c(e[i]))
+				i++;
+			if (i >= 20 || (e[i] != 'n' && e[i] != 'f'))
+				return 0;	/* (damaged: as a number the table hasn't) */
+			xe_put(d, num, e[i] == 'n' ? 1 : 3, o2, (uint16_t)g2);
+		}
+		return d->xe[num];
+	}
+	return 0;
+}
+
+void xe_lazy_all(PDOC *d)
+{
+	int k;
+	long n;
+
+	for (k = 0; k < d->nlz; k++)
+		for (n = d->lz[k].start; n < d->lz[k].start + d->lz[k].count; n++)
+			if (!d->xe[n])
+				xe_lazy(d, n);
+	d->nlz = 0;
+}
+
+/* a subsection of count entries from pos (its first entry's place, white
+   space passed): recorded when its first and last entries are where 20
+   bytes each put them; 1 recorded */
+static int lz_record(PDOC *d, long start, long count, long pos)
+{
+	unsigned char a[21], b[21];
+	long last = pos + (count - 1) * 20;
+
+	if (count < LZ_MIN || last + 20 > d->size)
+		return 0;
+	if (pdf_rd(d, pos, a, 20) != 20 || pdf_rd(d, last, b, 21) < 20)
+		return 0;
+	if (a[10] != ' ' || a[16] != ' ' || (a[17] != 'n' && a[17] != 'f') || !is_white_c(a[18]) || !is_white_c(a[19]) ||
+	    b[10] != ' ' || b[16] != ' ' || (b[17] != 'n' && b[17] != 'f') || !is_white_c(b[18]) || !is_white_c(b[19]))
+		return 0;
+	if (d->nlz == d->caplz) {
+		int cap = d->caplz ? d->caplz * 2 : 8;
+		struct pdflz *q = pdf_realloc(d, d->lz, d->caplz * (long)sizeof *q, cap * (long)sizeof *q);
+
+		if (!q)
+			return 0;
+		d->lz = q;
+		d->caplz = cap;
+	}
+	d->lz[d->nlz].start = start;
+	d->lz[d->nlz].count = count;
+	d->lz[d->nlz].off = pos;
+	d->nlz++;
+	return 1;
+}
+
 static int xref_table(PDOC *d, long off, long *next_pos_after)
 {
 	/* off points at "xref" */
@@ -174,6 +295,18 @@ static int xref_table(PDOC *d, long off, long *next_pos_after)
 		if (!xe_room(d, start + count))	/* once, for the whole subsection */
 			goto bad;
 		pos += p - buf;
+		{
+			/* the standard layout: recorded, read when wanted */
+			unsigned char w[64];
+			long g = pdf_rd(d, pos, w, sizeof w), j = 0;
+
+			while (j < g && is_white_c(w[j]))
+				j++;
+			if (j < g && lz_record(d, start, count, pos + j)) {
+				pos += j + count * 20;
+				continue;
+			}
+		}
 		for (i = 0; i < count;) {
 			long k;
 
@@ -366,8 +499,10 @@ static int xref_section(PDOC *d, long off, int first, long *prev_seen, int depth
 				long xo = xs->a, n2 = 0, d2 = -1;
 				POBJ *so = obj_at(d, xo, NULL, &d2, &n2);
 
-				if (so && so->t == PO_DICT && d2 >= 0)
+				if (so && so->t == PO_DICT && d2 >= 0) {
+					xe_lazy_all(d);		/* (the table's entries first: they win) */
 					xref_stream(d, so, d2, n2);	/* a damaged one: the table stands */
+				}
 			}
 		}
 	} else {
@@ -375,6 +510,7 @@ static int xref_section(PDOC *d, long off, int first, long *prev_seen, int depth
 
 		if (!so || so->t != PO_DICT || data < 0 || !pdf_is_name(pd_getraw(so, "Type"), "XRef"))
 			return -1;
+		xe_lazy_all(d);			/* (the newer sections' entries first: they win) */
 		if (xref_stream(d, so, data, onum) != 0)
 			return -1;
 		trailer = so;

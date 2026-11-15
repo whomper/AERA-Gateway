@@ -71,6 +71,9 @@ int doc_pic_progress(long *page, long *made, long *of);
 const char *doc_status(void);
 void epdf_net_line(char *out, int n);	/* the About box's connection line, or "" */		/* the About box's line */
 const char *doc_page_text(long n, long *len);	/* NULL when not read yet */
+long doc_page_thumb(long n);		/* the page's /Thumb picture, -1 none (or not read yet) */
+int doc_thumb_size(long n, long *w, long *h);	/* its own pixels: 1, else 0 (none) */
+const char *doc_page_first(long n);	/* its first line of text, "" none or not read yet */
 long doc_page_len(long n);		/* -1 when not read yet; nothing read */
 #include "docview.h"
 DOCVIEW *doc_view(void);		/* NULL without a document */
@@ -135,8 +138,8 @@ int win_zoom_key(short scan);
 /* View > Zoom in (dir 1) and Zoom out (-1) on View > Pages' page in view
    (100 to 400 %): can it, and do it */
 int win_zoom_can(int dir);
-void win_zoom_step(int dir);
-void win_zoom_actual(void);		/* View > Actual size */
+void win_zoom_actual(void);		/* back to the page as View > Pages shows it */
+void win_zoom_in(void);			/* the page zoomed (200 %, else the most there is room for) */
 /* the zoomed picture dragged by (dx, dy): 1 when it moved */
 int win_zoom_pan(long dx, long dy);
 extern void (*has_menu_states)(void);

@@ -23,6 +23,7 @@
 #include "crash.h"
 #include "docview.h"
 #include "epdf.h"
+#include "strip.h"
 #include "coro.h"
 #include "pdfimg.h"
 #include "pics.h"
@@ -73,6 +74,29 @@ static long onpages;
 static unsigned long slice_end;		/* tos_ms() when the slice is up */
 static PTEXT *rt;			/* the page read (taken with the document) */
 static PPREP rprep;			/* a converted PDF's page read: its whole pictures */
+static long rthumb = -1, rthumb_w, rthumb_h;	/* the page read: its /Thumb (page_thumb), -1 none, and its pixels */
+
+/* page n's own preview, its /Thumb (ISO 32000 12.3.4: an image XObject; a
+   converted PDF's from EConvert or the Gateway, 96 pixels wide): its
+   object, -1 none (here, not in pdfdoc.c, so the reader's code keeps its
+   places in a Falcon's instruction cache) */
+static long page_thumb(long n)
+{
+	POBJ *res, *box, *pg, *t;
+	long rot;
+
+	if (!(pg = pdf_page(doc, n, &res, &box, &rot)) || !(t = pd_getraw(pg, "Thumb")))
+		return -1;
+	return t->t == PO_REF ? t->a : -1;
+}
+/* the page strip's (strip.c): each page's /Thumb + 1 (0 none or not read)
+   and its first line, noted as the page comes in */
+#define FIRST_LINE 48
+static struct thumb {
+	long obj;			/* + 1: 0 none */
+	short w, h;
+} *thumbs;
+static char (*firsts)[FIRST_LINE];
 static SBUF rtrans;			/* and its /Translation, when it has one (rprep.trans) */
 static int rtrans_ok;
 
@@ -132,6 +156,91 @@ static int sharp_pages(void)
 	return sharp;
 }
 
+/* page n's first line of text into the strip's notes (a picture's line
+   and blank ones passed over; a soft break or a tab a space) */
+static void first_of(long n, const char *a, long len)
+{
+	long i = 0, k = 0;
+
+	if (!firsts)
+		firsts = calloc((size_t)onpages, sizeof *firsts);
+	if (!firsts || !a)
+		return;
+	while (i < len) {
+		long e = i;
+
+		while (e < len && a[e] != '\n')
+			e++;
+		if (a[i] != 0x7F) {
+			for (k = 0; i < e && k < FIRST_LINE - 1; i++) {
+				unsigned char c = (unsigned char)a[i];
+
+				if (c == '\r' || c == '\t')
+					c = ' ';
+				if (c == ' ' && (k == 0 || firsts[n][k - 1] == ' '))
+					continue;
+				if (c >= ' ')
+					firsts[n][k++] = (char)c;
+			}
+			while (k > 0 && firsts[n][k - 1] == ' ')
+				k--;
+			if (k > 0)
+				break;
+		}
+		i = e + 1;
+	}
+	firsts[n][k] = '\0';
+}
+
+/* the page strip's notes for page n, as it comes in: its /Thumb (read on
+   the reader's stack), and with the strip on its first line (the memory
+   for them only then: 48 bytes a page, a big book on a 1 MB ST) */
+static void note_strip(long n, const char *a, long len)
+{
+	if (n < 0 || n >= onpages)
+		return;
+	if (!thumbs)
+		thumbs = calloc((size_t)onpages, sizeof *thumbs);
+	if (thumbs) {
+		thumbs[n].obj = rthumb >= 0 && rthumb_w > 0 && rthumb_h > 0 ? rthumb + 1 : 0;
+		thumbs[n].w = (short)rthumb_w;
+		thumbs[n].h = (short)rthumb_h;
+	}
+	rthumb = -1;
+	if (strip_on())
+		first_of(n, a, len);
+}
+
+long doc_page_thumb(long n)
+{
+	return thumbs && n >= 0 && n < onpages ? thumbs[n].obj - 1 : -1;
+}
+
+int doc_thumb_size(long n, long *w, long *h)
+{
+	if (doc_page_thumb(n) < 0)
+		return 0;
+	*w = thumbs[n].w;
+	*h = thumbs[n].h;
+	return 1;
+}
+
+const char *doc_page_first(long n)
+{
+	long len;
+	const char *t;
+
+	if (n < 0 || n >= onpages)
+		return "";
+	if (firsts && firsts[n][0])
+		return firsts[n];
+	/* (a page read before the strip was turned on: from the store, once) */
+	if (!doc || !ts_have(&store, n) || !(t = ts_get(&store, n, &len)))
+		return "";
+	first_of(n, t, len);
+	return firsts ? firsts[n] : "";
+}
+
 static void pages_note(long n, const PPREP *pp)
 {
 	char b[48];
@@ -152,7 +261,10 @@ static void pages_note(long n, const PPREP *pp)
 	   canvas whole: on a 4 MB Falcon it didn't, its canvas went to bands,
 	   33 s, and the sharp page failed) */
 	if (obj >= 0 && sharp_pages() &&
-	    (long)Malloc(-1L) >= 2 * ((w + 15) / 16 * 2 * planes * h) + w * h * 2 + 768 * 1024L) {
+	    (pics_st_free() == (long)Malloc(-1L) ?	/* (only ST RAM: the bitmaps and the canvas from it) */
+	     (long)Malloc(-1L) >= 2 * ((w + 15) / 16 * 2 * planes * h) + w * h * 2 + 768 * 1024L :
+	     pics_st_free() >= 2 * ((w + 15) / 16 * 2 * planes * h) + 256 * 1024L &&
+	     (long)Malloc(-1L) >= w * h * 2 + 768 * 1024L)) {
 		stand = obj;		/* (shown till render.ovl's is drawn) */
 		obj = PICS_PAGE + n;
 	}
@@ -195,6 +307,23 @@ static void pages_drawn_note(long n)
 	k = snprintf(b, sizeof b, "\x7F%ld 640x%ld\n", PICS_PAGE + n, h);
 	pages_have = 1;
 	ts_put(&pstore, n, b, k);
+	if (drawn == 1) {
+		/* the first page read: every page not read yet at its size too,
+		   so a page reached by the reader keeps its height (most do) and
+		   what is below it stays where it was. Before, an unread page was
+		   its head alone and grew when read: a held key scrolling the
+		   pages saw them jump (Erez's EDOS_01.PDF, 14 Nov 2026) */
+		long m;
+
+		drawn = 2;
+		for (m = 0; m < onpages; m++)
+			if (m != n && !ts_have(&store, m)) {
+				k = snprintf(b, sizeof b, "\x7F%ld 640x%ld\n", PICS_PAGE + m, h);
+				ts_put(&pstore, m, b, k);
+				if (pages_mode)
+					dv_page_ready(&view, m);
+			}
+	}
 }
 
 /* the page read's size, on the reader's stack */
@@ -280,7 +409,7 @@ static TSTORE *text_store(void);
 void doc_set_pages(int on)
 {
 	long top;
-	int cols, lm;
+	int cols, lm, pw, pc, pa;
 
 	if (!doc || !pstore_open || !on == !pages_mode)
 		return;
@@ -289,9 +418,12 @@ void doc_set_pages(int on)
 	top = dv_page_at_top(&view);
 	cols = view.cols;
 	lm = view.lines_mode;
+	pw = view.pic_w;
+	pc = view.pic_ch;
+	pa = view.pic_aspect;
 	dv_free(&view);
 	pages_mode = on;
-	if (dv_init(&view, on ? &pstore : text_store(), npages, cols, lm) != 0) {
+	if (dv_init_pics(&view, on ? &pstore : text_store(), npages, cols, lm, pw, pc, pa) != 0) {
 		pages_mode = 0;
 		dv_init(&view, &store, npages, cols, lm);
 	}
@@ -364,7 +496,7 @@ void doc_tr_forget(void)
 void doc_set_translate(int on)
 {
 	long top;
-	int cols, lm;
+	int cols, lm, pw, pc, pa;
 
 	if (!doc || (on && !tr_open) || !on == !tr_mode)
 		return;
@@ -374,8 +506,11 @@ void doc_set_translate(int on)
 	top = dv_page_at_top(&view);
 	cols = view.cols;
 	lm = view.lines_mode;
+	pw = view.pic_w;
+	pc = view.pic_ch;
+	pa = view.pic_aspect;
 	dv_free(&view);
-	if (dv_init(&view, text_store(), npages, cols, lm) != 0) {
+	if (dv_init_pics(&view, text_store(), npages, cols, lm, pw, pc, pa) != 0) {
 		tr_mode = 0;
 		dv_init(&view, &store, npages, cols, lm);
 	}
@@ -497,6 +632,13 @@ static void reader(void)
 			}
 		} else
 			pdf_page_text(doc, rpage, rt);
+		rthumb = page_thumb(rpage);	/* (the page strip's, before the stack hands back) */
+		if (rthumb >= 0) {
+			POBJ *o = pdf_get(doc, rthumb);
+
+			rthumb_w = o && o->t == PO_DICT ? pd_int(doc, o, "Width", 0) : 0;
+			rthumb_h = o && o->t == PO_DICT ? pd_int(doc, o, "Height", 0) : 0;
+		}
 		rdone = 1;
 		coro_switch(&read_co, &main_co);
 	}
@@ -588,6 +730,7 @@ static int page_rows(long n, int w, int h, void (*row)(void *u, long y, const un
 	int rc, y0 = 0, i;
 
 	*why = PIC_DAMAGED;
+	rdraw_crisp(planes <= 4);
 	if (!rdraw_load(draw_turn, err, sizeof err)) {
 		log_event("render-ovl", err, NULL);
 		*why = PIC_UNSUPPORTED;
@@ -1044,6 +1187,7 @@ int doc_opening(void)
 void doc_close(void)
 {
 	stop_opening();
+	strip_forget();			/* (the next document's strip from its first page) */
 	if (!doc)
 		return;
 	stop_reading();
@@ -1063,6 +1207,10 @@ void doc_close(void)
 	drawn = 0;
 	free(pdbl);
 	pdbl = NULL;
+	free(thumbs);
+	thumbs = NULL;
+	free(firsts);
+	firsts = NULL;
 	sharp = -1;
 	pdf_close(doc);
 	free(doc);
@@ -1249,6 +1397,7 @@ long doc_slice(unsigned long ms)
 		log_event("page-lost", NULL, NULL);
 	} else
 		ts_set_pics(&store, n, doc->prepared ? a && tv_find(a, len, 0x7F) >= 0 : rt->piclines > 0);
+	note_strip(n, a, len);
 	free(a);
 	if (tr_from_file()) {
 		/* a page the Gateway translated with the conversion: kept as it came */

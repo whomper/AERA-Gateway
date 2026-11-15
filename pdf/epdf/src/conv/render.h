@@ -35,11 +35,30 @@ typedef struct {
 	RFONTS *fonts;
 	const char *fontdir;		/* the standard fonts' files (Liberation*.ttf), or NULL */
 	long glyphs, glyphs_missed, images, images_missed;
-	int mono_glyphs;		/* glyphs hinted, a bit a pixel (the mono page's: grey edges
-					   dithered broke 10-pixel text into dots, Erez, 4 Nov 2026) */
+	int mono_glyphs;		/* 1: glyphs a bit a pixel (the mono page's: grey edges
+					   dithered broke 10-pixel text into dots, Erez, 4 Nov 2026);
+					   2: those under 20 pixels, a screen's of 16 colours or fewer
+					   (render.ovl's, ROVL_HOST's crisp) */
 	long image_ms;			/* the page's pictures' decode, in render_clock's ms */
 	long canvas_max;		/* set by the caller: the canvas's most bytes (0 any): a page
 				   taller is drawn a band at a time (render_page_from) */
+	int whole_only;			/* set by the caller: a page whose content met a memory
+					   refusal (its text or drawing cut short) is a failure, -1,
+					   not a page with parts missing (render.ovl: EPDF keeps its
+					   stored page, 13 Nov 2026); 0: drawn as far as it went */
+	/* how far through the page (render_progress): its content streams'
+	   and its pictures' stored bytes, as the page starts, and the
+	   pictures' read so far (a page that is a scan sat at its content's
+	   end, 40 %, while the picture took most of the time: Erez, 13 Nov
+	   2026) */
+	long p_ctot, p_itot, p_idone, p_icur, p_polls, p_ih;
+	int p_inimg;
+	/* a page drawn in bands (item 3, 13 Nov 2026): the picture the last
+	   band decoded, kept for the next (one picture spanning several
+	   bands was decoded in each: page 3 of the showcase 18 times) */
+	void *ic_pic;			/* (a PIC: pic.h) */
+	long ic_obj;
+	int ic_w, ic_h;
 } RPAGE;
 
 /* the fonts are kept from page to page: render_init once, render_done at
@@ -64,5 +83,11 @@ typedef struct {
 	RCLIP px;			/* the same in the canvas's pixels */
 } RDRAWING;
 int render_drawings(const RPAGE *r, RDRAWING *out, int max);
+/* the page being drawn: how far, 0 to 1000, its content and its pictures
+   by their stored bytes (render.ovl's progress) */
+int render_progress(const RPAGE *r);
+/* pic.h's pic_poll for a renderer that turns (render.ovl's): the picture
+   being decoded counted for render_progress, then cv_turn's turn */
+int render_pic_poll(void);
 
 #endif

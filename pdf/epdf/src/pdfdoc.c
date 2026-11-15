@@ -210,6 +210,7 @@ void pdf_close(PDOC *d)
 	pdf_free(d, d->os_buf, d->os_len);
 	pdf_free(d, d->os_off, d->os_n * 2 * (long)sizeof(long));
 	pdf_free(d, d->xe, d->nxe * (long)sizeof(PXE));
+	pdf_free(d, d->lz, d->caplz * (long)sizeof *d->lz);
 	pdf_free(d, d->xx, d->capxx * (long)sizeof(PXX));
 	pdf_free(d, d->win, d->wcap);
 	pdf_free(d, d->owin, POWIN);

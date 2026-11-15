@@ -34,6 +34,25 @@ static inline void coro_start(CORO *c, void *mem, long size, void (*fn)(void))
 	c->sp = sp;
 }
 
+/* coro_start with the stack filled a long at a time (mem long-aligned,
+   size a multiple of 4: a malloc'd block): a byte at a time 64 KB was some
+   30 ms of the turn that starts EConvert's batch on a Falcon */
+static inline void coro_start_long(CORO *c, void *mem, long size, void (*fn)(void))
+{
+	unsigned long *sp = (unsigned long *)(((unsigned long)mem + (unsigned long)size) & ~3UL);
+	unsigned long *m = (unsigned long *)mem;
+	long k;
+	int i;
+
+	for (k = 0; k < size / 4; k++)
+		m[k] = 0xA5A5A5A5UL;
+	*--sp = 0;
+	*--sp = (unsigned long)fn;
+	for (i = 0; i < 11; i++)
+		*--sp = 0;
+	c->sp = sp;
+}
+
 /* the bytes of a stack that were used: those past the 0xA5 still left
    at its bottom */
 static inline long coro_used(const void *mem, long size)

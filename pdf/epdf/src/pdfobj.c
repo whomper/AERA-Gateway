@@ -1096,7 +1096,11 @@ void xe_put(PDOC *d, long num, int t, uint32_t a, uint16_t b)
 int xe_get(PDOC *d, long num, uint32_t *a, uint16_t *b)
 {
 	uint32_t v = d->xe[num];
-	int t = (int)(v >> 30);
+	int t;
+
+	if (!v && d->nlz)
+		v = xe_lazy(d, num);
+	t = (int)(v >> 30);
 
 	if ((v & XE_BIG) == XE_BIG && (t == 1 || t == 2)) {
 		PXX *f;
@@ -1129,6 +1133,7 @@ int xe_get(PDOC *d, long num, uint32_t *a, uint16_t *b)
 
 void xe_clear(PDOC *d)
 {
+	d->nlz = 0;			/* (the table rebuilt: nothing left to read) */
 	if (d->xe)
 		memset(d->xe, 0, (size_t)d->nxe * sizeof(PXE));
 	d->nxx = 0;

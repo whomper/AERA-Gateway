@@ -20,9 +20,23 @@ static void *image;
 static long taken;
 static ROVL_HOST host;
 
+/* a 68020 or better that runs 68030 code: render.ovl is built for the 68030.
+   Not a FireBee (_CF_), whose FireTOS says _CPU 60 for a ColdFire that has
+   no 68030 code's 64-bit multiplies or cache instructions: there EPDF keeps
+   to the text view and a converted copy's stored pages, as on an ST (the
+   hub's FireBee stand-in, 15 Nov 2026: render.ovl ended EmuTOS on its first
+   page) */
 int rdraw_machine(void)
 {
-	return get_cookie(0x5F435055L) >= 20;	/* _CPU: 0, 10, 20, 30, 40, 60 */
+	return get_cookie(0x5F435055L) >= 20	/* _CPU: 0, 10, 20, 30, 40, 60 */
+	       && !get_cookie(0x5F43465FL);	/* _CF_ */
+}
+
+/* a screen of 16 colours or fewer: render.ovl's small glyphs a bit a
+   pixel (ROVL_HOST's crisp), from the next page drawn */
+void rdraw_crisp(int on)
+{
+	host.crisp = on;
 }
 
 int rdraw_load(int (*turn)(void), char *err, int errlen)

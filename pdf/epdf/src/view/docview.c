@@ -150,6 +150,11 @@ static long count(DOCVIEW *v, long n)
 
 int dv_init(DOCVIEW *v, TSTORE *ts, long npages, int cols, int lines_mode)
 {
+	return dv_init_pics(v, ts, npages, cols, lines_mode, 0, 0, 0);
+}
+
+int dv_init_pics(DOCVIEW *v, TSTORE *ts, long npages, int cols, int lines_mode, int pic_w, int pic_ch, int pic_aspect)
+{
 	long i;
 
 	memset(v, 0, sizeof *v);
@@ -157,6 +162,9 @@ int dv_init(DOCVIEW *v, TSTORE *ts, long npages, int cols, int lines_mode)
 	v->npages = npages;
 	v->cols = cols < 1 ? 1 : cols;
 	v->lines_mode = lines_mode;
+	v->pic_w = pic_w;
+	v->pic_ch = pic_ch;
+	v->pic_aspect = pic_aspect;
 	for (i = 0; i < DV_LAID; i++)
 		v->lay[i].page = -1;
 	v->sel_p0 = -1;

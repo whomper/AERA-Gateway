@@ -14,7 +14,18 @@ long pdf_rd_seq(PDOC *d, long off, void *buf, long n);
    1 in use, 2 compressed, 3 free), and a, b as PXX's; xe_put sets one
    (as it is: whatever was there goes), xe_clear empties the table */
 int xe_get(PDOC *d, long num, uint32_t *a, uint16_t *b);
-#define xe_kind(d, num) ((int)((d)->xe[num] >> 30))
+/* an entry not set yet that a table subsection holds, read now (its
+   PXE, 0 none); every recorded one read and the list emptied */
+uint32_t xe_lazy(PDOC *d, long num);
+void xe_lazy_all(PDOC *d);
+static inline int xe_kind(PDOC *d, long num)
+{
+	uint32_t v = d->xe[num];
+
+	if (!v && d->nlz)
+		v = xe_lazy(d, num);
+	return (int)(v >> 30);
+}
 void xe_put(PDOC *d, long num, int t, uint32_t a, uint16_t b);
 void xe_clear(PDOC *d);
 

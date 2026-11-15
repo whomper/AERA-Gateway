@@ -83,6 +83,26 @@ void rc_clear(RCANVAS *c, uint16_t px)
 	}
 }
 
+/* padding in a branch only a refused allocation takes: the code after it
+   at the same places in a 68030's instruction cache (addresses mod 256)
+   as before rc_image turned (tools/rpad.py; render.c's RPAD) */
+#ifndef APAD_A
+#define APAD_A 64
+#endif
+#ifndef APAD_B
+#define APAD_B 118
+#endif
+#ifndef APAD_F
+#define APAD_F 116
+#endif
+#define APAD_S2(n) #n
+#define APAD_S(n) APAD_S2(n)
+#if defined(__m68k__) || defined(__mc68000__)
+#define APAD(n) __asm__ volatile("bra.w 1f\n\t.skip " APAD_S(n) "\n1:")
+#else
+#define APAD(n) ((void)0)		/* (the host's build: no 68030 cache) */
+#endif
+
 /* ------------------------------------------------------------------ paths */
 void rp_init(RPATH *p)
 {
@@ -342,6 +362,15 @@ static void clip_to(const RCANVAS *c, const RCLIP *in, RCLIP *out)
 	}
 }
 
+/* the fills' work since the last turn (pixels across a row and its
+   crossings, the edges made and sorted), shared by every fill: a turn when
+   about 8 rows of a page-wide fill are done. Counted rows (a turn every 8)
+   held a Falcon 55 ms in 8 rows of a fill with many crossings, and a long
+   outline's edges and sort 75 ms before its first row (the showcase's
+   pages 2 and 5) */
+static long fill_work;
+#define FILL_TURN 5000L
+
 void rc_fill(RCANVAS *c, const RPATH *p, int evenodd, uint16_t col, const RCLIP *clip)
 {
 	RCLIP k, b;
@@ -369,7 +398,15 @@ void rc_fill(RCANVAS *c, const RPATH *p, int evenodd, uint16_t col, const RCLIP 
 	}
 	if (!c->ne)
 		return;
+	if ((fill_work += c->ne * 8) >= FILL_TURN && cv_turn) {
+		fill_work = 0;
+		cv_turn();	/* (the edges made: a division each) */
+	}
 	qsort(c->e, (size_t)c->ne, sizeof *c->e, edge_cmp);
+	if ((fill_work += c->ne * 8) >= FILL_TURN && cv_turn) {
+		fill_work = 0;
+		cv_turn();
+	}
 	if (c->capx < c->ne * 2) {
 		int32_t *q = realloc(c->xs, (size_t)c->ne * 2 * sizeof *q);
 
@@ -381,11 +418,14 @@ void rc_fill(RCANVAS *c, const RPATH *p, int evenodd, uint16_t col, const RCLIP 
 	act = malloc((size_t)c->ne * sizeof *act);
 	if (!act)
 		return;
+	APAD(APAD_F);		/* (jumped once a fill: the row loop at its place) */
 	for (y = k.y0; y < k.y1; y++) {
 		int sub, any = 0;
 
-		if ((y & 7) == 7 && cv_turn)
+		if ((fill_work += (k.x1 - k.x0) + 32 * nact) >= FILL_TURN && cv_turn) {
+			fill_work = 0;
 			cv_turn();
+		}
 		int32_t lo = k.x0 << 16, hi = k.x1 << 16;
 
 		for (sub = 0; sub < SUB; sub++) {
@@ -574,14 +614,26 @@ void rc_stroke(RCANVAS *c, const RPATH *p, int32_t width, const int32_t *dash, i
 	       uint16_t col, const RCLIP *clip)
 {
 	RPATH o;
-	long s, i;
+	long s, i, made = 0;
 	int32_t hw;
 
-	if (p->n < 2)
+	if (p->n < 2) {
+		APAD(APAD_B);		/* (the turns below: 52 bytes) */
 		return;
+	}
 	if (width < 65536)
 		width = 65536;
 	hw = width / 2;
+	{
+		/* none of it in the rows held or the clip (a page in bands: each
+		   band's): no outline, its dashes made once a page, not once a band */
+		RCLIP b, k;
+		int32_t m = (hw >> 16) + 2;
+
+		clip_to(c, clip, &k);
+		if (!rp_bounds(p, &b) || b.y1 + m <= k.y0 || b.y0 - m >= k.y1 || b.x1 + m <= k.x0 || b.x0 - m >= k.x1)
+			return;
+	}
 	rp_init(&o);
 	for (s = 0; s < p->ns && !o.bad; s++) {
 		long a = p->start[s], z = s + 1 < p->ns ? p->start[s + 1] : p->n, cnt = z - a;
@@ -596,6 +648,11 @@ void rc_stroke(RCANVAS *c, const RPATH *p, int32_t width, const int32_t *dash, i
 			RPT pa = p->pt[a + i], pb = p->pt[a + (i + 1) % cnt];
 			int joint = i < cnt - 2 + closed;
 
+			/* a turn every 32 pieces: a dash costs some 0.8 ms of a Falcon
+			   (its divisions and root), the showcase's trend line of 129
+			   dashes held one 110 ms */
+			if ((++made & 31) == 0 && cv_turn)
+				cv_turn();
 			if (!ds.n) {
 				seg(&o, &pa, &pb, hw, joint);
 				continue;
@@ -613,8 +670,11 @@ void rc_stroke(RCANVAS *c, const RPATH *p, int32_t width, const int32_t *dash, i
 					q0.y = pa.y + (int32_t)(dy * at / len);
 					q1.x = pa.x + (int32_t)(dx * (at + step) / len);
 					q1.y = pa.y + (int32_t)(dy * (at + step) / len);
-					if (ds.on)
+					if (ds.on) {
 						seg(&o, &q0, &q1, hw, 0);
+						if ((++made & 31) == 0 && cv_turn)
+							cv_turn();
+					}
 					at += step;
 					ds.left -= step;
 					if (ds.left <= 0) {
@@ -626,6 +686,8 @@ void rc_stroke(RCANVAS *c, const RPATH *p, int32_t width, const int32_t *dash, i
 			}
 		}
 	}
+	if (made >= 32 && cv_turn)
+		cv_turn();	/* (and between a long outline and its fill: not each line's, a page in bands draws each 18 times) */
 	rc_fill(c, &o, 0, col, clip);
 	rp_free(&o);
 }
@@ -668,12 +730,54 @@ static int along(int32_t pos, int32_t org, int32_t ext, int n)
 	return (int)t;
 }
 
+#define IMG_ROWS 16		/* rc_image's rows between turns */
+
+/* rc_image's rows Ya .. Yb - 1 of the clip k, the picture's columns by cmap */
+void img_rows(RCANVAS *c, const uint16_t *px, const unsigned char *alpha, int pw, int ph, const int32_t *m, int stencil,
+	      uint16_t col, const RCLIP *k, const int *cmap, int swap, int Ya, int Yb);
+__attribute__((noinline)) void img_rows(RCANVAS *c, const uint16_t *px, const unsigned char *alpha, int pw,
+					       int ph, const int32_t *m, int stencil, uint16_t col, const RCLIP *k,
+					       const int *cmap, int swap, int Ya, int Yb)
+{
+	int X, Y;
+
+	for (Y = Ya; Y < Yb; Y++) {
+		uint16_t *row = c->px + (long)(Y - c->y0) * c->w;
+		int r = swap ? along(Y, m[5], m[1], pw) : along(Y, m[5], m[3], ph);
+
+		if (r < 0)
+			continue;
+		for (X = k->x0; X < k->x1; X++) {
+			int q = cmap[X - k->x0], ix, iy;
+			long at;
+
+			if (q < 0)
+				continue;
+			if (swap) {
+				ix = r;
+				iy = ph - 1 - q;
+			} else {
+				ix = q;
+				iy = ph - 1 - r;
+			}
+			at = (long)iy * pw + ix;
+			if (stencil) {
+				if (alpha[at])
+					row[X] = mix(row[X], col, alpha[at] + (alpha[at] >> 7));
+			} else if (!alpha)
+				row[X] = px[at];
+			else if (alpha[at])
+				row[X] = mix(row[X], px[at], alpha[at] + (alpha[at] >> 7));
+		}
+	}
+}
+
 void rc_image(RCANVAS *c, const uint16_t *px, const unsigned char *alpha, int pw, int ph, const int32_t *m,
 	      int stencil, uint16_t col, const RCLIP *clip)
 {
 	RCLIP k;
 	int32_t xs[4], ys[4], x0, x1, y0, y1;
-	int i, X, Y, swap;
+	int i, X, Y, Yb, swap;
 	int *cmap;
 
 	/* the square's corners on the device */
@@ -700,39 +804,21 @@ void rc_image(RCANVAS *c, const uint16_t *px, const unsigned char *alpha, int pw
 	   down the device. A slant is drawn as the nearer of the two */
 	swap = iabs32(m[0]) + iabs32(m[3]) < iabs32(m[1]) + iabs32(m[2]);
 	cmap = malloc((size_t)(k.x1 - k.x0) * sizeof *cmap);
-	if (!cmap)
+	if (!cmap) {
+		APAD(APAD_A);
 		return;
+	}
 	/* u from the device x (no turn: u along a; turned: v along b) */
 	for (X = k.x0; X < k.x1; X++)
 		cmap[X - k.x0] = swap ? along(X, m[4], m[2], ph) : along(X, m[4], m[0], pw);
-	for (Y = k.y0; Y < k.y1; Y++) {
-		uint16_t *row = c->px + (long)(Y - c->y0) * c->w;
-		int r = swap ? along(Y, m[5], m[1], pw) : along(Y, m[5], m[3], ph);
-
-		if (r < 0)
-			continue;
-		for (X = k.x0; X < k.x1; X++) {
-			int q = cmap[X - k.x0], ix, iy;
-			long at;
-
-			if (q < 0)
-				continue;
-			if (swap) {
-				ix = r;
-				iy = ph - 1 - q;
-			} else {
-				ix = q;
-				iy = ph - 1 - r;
-			}
-			at = (long)iy * pw + ix;
-			if (stencil) {
-				if (alpha[at])
-					row[X] = mix(row[X], col, alpha[at] + (alpha[at] >> 7));
-			} else if (!alpha)
-				row[X] = px[at];
-			else if (alpha[at])
-				row[X] = mix(row[X], px[at], alpha[at] + (alpha[at] >> 7));
-		}
+	/* in blocks of IMG_ROWS rows, a turn between them (a photo laid whole
+	   held a Falcon 440 ms, 14 Nov 2026): the rows are laid by a function
+	   that calls none, so its loop keeps its registers */
+	for (Y = k.y0; Y < k.y1; Y = Yb) {
+		Yb = k.y1 - Y > IMG_ROWS ? Y + IMG_ROWS : k.y1;
+		img_rows(c, px, alpha, pw, ph, m, stencil, col, &k, cmap, swap, Y, Yb);
+		if (Yb < k.y1 && cv_turn)
+			cv_turn();
 	}
 	free(cmap);
 }

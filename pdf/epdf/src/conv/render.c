@@ -988,6 +988,19 @@ static FT_UInt glyph_index(FT_Face face, int comp, uint32_t code, uint32_t uni)
 	return gid;
 }
 
+/* padding in a branch only a refused allocation takes: what follows the
+   glyphs' code at its places in a 68030's caches (addresses mod 256,
+   tools/rpad.py) after the screen's crisp glyphs (14 Nov 2026) */
+#ifndef GPAD_A
+#define GPAD_A 20
+#endif
+#define GPAD_S2(n) #n
+#define GPAD_S(n) GPAD_S2(n)
+#if defined(__m68k__) || defined(__mc68000__)
+#define GPAD(n) __asm__ volatile("bra.w 1f\n\t.skip " GPAD_S(n) "\n1:")
+#else
+#define GPAD(n) ((void)0)
+#endif
 #define MONO_INK 64		/* of 255: a mono glyph's pixel inked from a quarter */
 static void glyph_hook(void *u, long prog, int kind, const char *base, int comp, uint32_t code, uint32_t uni,
 		       const fx *gm, int mode)
@@ -1037,7 +1050,10 @@ static void glyph_hook(void *u, long prog, int kind, const char *base, int comp,
 		k[1] = t.xy >> 6;
 		k[2] = t.yx >> 6;
 		k[3] = t.yy >> 6;
-		k[4] = (sz >> 10) * 2 + (r->mono_glyphs != 0);	/* (a mono glyph isn't a grey one) */
+		/* (2: a screen's of 16 colours or fewer, the glyphs under 20 pixels) */
+		int mono = r->mono_glyphs == 1 || (r->mono_glyphs == 2 && (sz >> 16) < 20);
+
+		k[4] = (sz >> 10) * 2 + mono;	/* (a mono glyph isn't a grey one) */
 		hv = ((unsigned long)(uintptr_t)face >> 4) ^ code * 31u ^ uni * 131u ^ (unsigned long)k[4] * 7u ^
 		     (unsigned long)k[0] * 3u;
 		for (e = f->gh[hv % GC_HASH]; e; e = e->next)
@@ -1073,8 +1089,10 @@ static void glyph_hook(void *u, long prog, int kind, const char *base, int comp,
 				cv_turn();	/* (a glyph made: some ms of FreeType on a Falcon) */
 			if (bm->pixel_mode != FT_PIXEL_MODE_GRAY)
 				return;
-			if (!f->pool && !(f->pool = malloc(GC_MAX * sizeof *f->pool)))
+			if (!f->pool && !(f->pool = malloc(GC_MAX * sizeof *f->pool))) {
+				GPAD(GPAD_A);
 				return;
+			}
 			if (f->npool == GC_MAX || f->gbytes > GC_BYTES)
 				gc_flush(f);
 			e = &f->pool[f->npool];
@@ -1089,7 +1107,25 @@ static void glyph_hook(void *u, long prog, int kind, const char *base, int comp,
 			e->bm = e->w * e->h > 0 ? malloc((size_t)e->w * e->h) : NULL;
 			if (e->w * e->h > 0 && !e->bm)
 				return;
-			if (r->mono_glyphs) {
+			if (mono == 1 && r->mono_glyphs == 2) {
+				/* a screen's: inked from a quarter too, and a stroke
+				   that falls between two pixels, each under a quarter,
+				   inked at the stronger of them (a light face's 1 at
+				   8 pixels was lost: EDOS_01.PDF's Montserrat Light) */
+				int x;
+
+				for (y = 0; y < e->h; y++)
+					for (x = 0; x < e->w; x++) {
+						const unsigned char *p = bm->buffer + (long)y * bm->pitch + x;
+						int a = *p, l = x > 0 ? p[-1] : 0, rt = x + 1 < e->w ? p[1] : 0;
+						int u = y > 0 ? p[-bm->pitch] : 0, d = y + 1 < e->h ? p[bm->pitch] : 0;
+						int ink = a > MONO_INK ||
+							  (a >= MONO_INK / 3 && ((a >= l && a > rt && a + (l > rt ? l : rt) > MONO_INK * 3 / 2) ||
+										 (a >= u && a > d && a + (u > d ? u : d) > MONO_INK * 3 / 2)));
+
+						e->bm[(long)y * e->w + x] = ink ? 255 : 0;
+					}
+			} else if (mono) {
 				int x;
 
 				for (y = 0; y < e->h; y++)
@@ -1114,6 +1150,34 @@ static void glyph_hook(void *u, long prog, int kind, const char *base, int comp,
 }
 
 /* ------------------------------------------------------------------ pictures */
+/* padding in a branch the whole page never takes: the code after it at the
+   same place in a 68030's instruction cache (256 bytes, by its address mod
+   256) as before the banded page's code came (item 3, 13 Nov 2026: whole
+   pages on Falcon-4:256 2-4 % slower from the shift alone); see
+   tools/rpad.py */
+#ifndef RPAD_A
+#define RPAD_A 248
+#define RPAD_B 14
+#define RPAD_C 178
+#define RPAD_D 42
+#endif
+#define RPAD_S2(n) #n
+#define RPAD_S(n) RPAD_S2(n)
+#if defined(__m68k__) || defined(__mc68000__)
+#define RPAD(n) __asm__ volatile("bra.w 1f\n\t.skip " RPAD_S(n) "\n1:")
+#else
+#define RPAD(n) ((void)0)		/* (the host's build: no 68030 cache) */
+#endif
+
+static RPAGE *poll_page;		/* the page whose picture is being decoded */
+
+int render_pic_poll(void)
+{
+	if (poll_page)
+		poll_page->p_polls++;
+	return cv_turn ? !cv_turn() : 1;	/* (cv_turn: 1 when it says stop) */
+}
+
 static void image_hook(void *u, long obj, const fx *ctm)
 {
 	RS *s = u;
@@ -1154,18 +1218,64 @@ static void image_hook(void *u, long obj, const fx *ctm)
 	if (h < 1) h = 1;
 	if (w > 2048) w = 2048;
 	if (h > 2048) h = 2048;
+	if (r->c.rows < r->c.h) {
+		RPAD(RPAD_A);
+		/* in bands: a picture this band doesn't reach isn't decoded (its
+		   rows on the device as rc_image takes them, a row's margin) */
+		int32_t y0 = m[5], y1 = m[5], ys[3] = { m[5] + m[1], m[5] + m[3], m[5] + m[1] + m[3] };
+		int k;
+
+		for (k = 0; k < 3; k++) {
+			if (ys[k] < y0) y0 = ys[k];
+			if (ys[k] > y1) y1 = ys[k];
+		}
+		if ((y1 >> 16) + 2 <= r->c.y0 || (y0 >> 16) - 1 >= r->c.y0 + r->c.rows) {
+			r->p_idone += pd_int(r->d, o, "Length", 0);	/* (counted as done: render_progress) */
+			return;
+		}
+		if (r->ic_pic && r->ic_obj == obj && r->ic_w == (int)w && r->ic_h == (int)h) {
+			p = (PIC *)r->ic_pic;	/* (the band before's: decoded once) */
+			r->p_idone += pd_int(r->d, o, "Length", 0);
+			goto draw;
+		}
+	}
 	if (cv_turn)
 		cv_turn();
 	t0 = render_clock ? render_clock() : 0;
+	/* (how far it is: its rows by render_pic_poll's calls, render_progress) */
+	r->p_icur = pd_int(r->d, o, "Length", 0);
+	r->p_polls = 0;
+	r->p_ih = h;		/* (the rows it is made at: the reader's calls count those) */
+	r->p_inimg = 1;
+	poll_page = r;
 	p = cv_image(r->d, obj, (int)w, (int)h, &why);
+	poll_page = NULL;
+	r->p_inimg = 0;
+	r->p_idone += r->p_icur > 0 ? r->p_icur : 0;
 	if (render_clock)
 		r->image_ms += (long)(render_clock() - t0);
 	if (cv_turn)
 		cv_turn();
+	if (!p && r->ic_pic) {
+		/* (the kept one given back for the memory, and tried again) */
+		pic_free((PIC *)r->ic_pic);
+		r->ic_pic = NULL;
+		p = cv_image(r->d, obj, (int)w, (int)h, &why);
+	}
 	if (!p) {
 		r->images_missed++;
 		return;
 	}
+	if (r->c.rows < r->c.h) {
+		/* kept for the next band, the one before let go */
+		if (r->ic_pic)
+			pic_free((PIC *)r->ic_pic);
+		r->ic_pic = p;
+		r->ic_obj = obj;
+		r->ic_w = (int)w;
+		r->ic_h = (int)h;
+	}
+draw:
 #ifdef RENDER_TRACE
 	fprintf(stderr, "image %ld %ldx%ld -> %dx%d px[mid] %04x m %d %d %d %d %d %d\n", obj, sw, sh, p->w, p->h,
 		p->px[(long)p->w * p->h / 2], m[0] >> 16, m[1] >> 16, m[2] >> 16, m[3] >> 16, m[4] >> 16, m[5] >> 16);
@@ -1185,10 +1295,71 @@ static void image_hook(void *u, long obj, const fx *ctm)
 		}
 	} else
 		rc_image(&r->c, p->px, NULL, p->w, p->h, m, 0, 0, &g->clip);
-	pic_free(p);
+	if ((void *)p != r->ic_pic)
+		pic_free(p);
 }
 
 /* ------------------------------------------------------------------ the page */
+/* a page's content streams' and pictures' stored bytes (render_progress's
+   whole): Contents, a stream or an array of them; the image XObjects its
+   resources name (forms' own not counted) */
+static void prog_totals(RPAGE *r, POBJ *pg, POBJ *res)
+{
+	POBJ *c = pd_get(r->d, pg, "Contents"), *xo = res ? pd_get(r->d, res, "XObject") : NULL;
+	long i;
+
+	r->p_ctot = r->p_itot = r->p_idone = 0;
+	r->p_inimg = 0;
+	if (c && c->t == PO_DICT)
+		r->p_ctot = pd_int(r->d, c, "Length", 0);
+	else if (c && c->t == PO_ARR)
+		for (i = 0; i < c->a; i++) {
+			POBJ *e = pa_at(c, i), *s = e && e->t == PO_REF ? pdf_get(r->d, e->a) : e;
+
+			if (s && s->t == PO_DICT)
+				r->p_ctot += pd_int(r->d, s, "Length", 0);
+		}
+	if (xo && xo->t == PO_DICT)
+		for (i = 0; i < xo->a; i++) {
+			POBJ *x = pd_get(r->d, xo, xo->u.e[i].key);
+			const char *st = x && x->t == PO_DICT ? pd_name(r->d, x, "Subtype") : NULL;
+
+			if (st && !strcmp(st, "Image"))
+				r->p_itot += pd_int(r->d, x, "Length", 0);
+		}
+	if (r->p_ctot < 0)
+		r->p_ctot = 0;
+	if (r->p_itot < 0)
+		r->p_itot = 0;
+}
+
+int render_progress(const RPAGE *r)
+{
+	long tot = r->p_ctot + r->p_itot, done, img;
+	int pp = r->d ? r->d->page_prog : 0;
+
+	if (tot <= 0 || r->p_itot <= 0)
+		return pp;			/* (no pictures: the content alone, as before) */
+	img = r->p_idone;
+	if (r->p_inimg && r->p_icur > 0 && r->p_ih > 0) {
+		/* its rows so far: a call every 16 rows (64 in some of the
+		   reader's), at most 95 % of it until it is done */
+		long rows = r->p_polls * 16, f;
+
+		if (rows > r->p_ih)
+			rows = r->p_ih;
+		f = rows * 950L / r->p_ih;		/* (thousandths) */
+		img += r->p_icur / 1000 * f + r->p_icur % 1000 * f / 1000;
+	}
+	if (img > r->p_itot)
+		img = r->p_itot;	/* (a picture drawn twice: counted once) */
+	done = r->p_ctot / 1000 * pp + r->p_ctot % 1000 * pp / 1000 + img;
+	while (tot > (1L << 20))	/* (x 1000 in a long) */
+		tot >>= 1, done >>= 1;
+	done = tot > 0 ? done * 1000 / tot : 0;
+	return done > 1000 ? 1000 : (int)done;
+}
+
 int render_init(RPAGE *r, PDOC *d, const char *fontdir)
 {
 	memset(r, 0, sizeof *r);
@@ -1222,6 +1393,10 @@ void render_done(RPAGE *r)
 	}
 	rc_free(&r->c);
 	free(r->area);
+	if (r->ic_pic) {
+		RPAD(RPAD_B);
+		pic_free((PIC *)r->ic_pic);
+	}
 	memset(r, 0, sizeof *r);
 }
 
@@ -1229,6 +1404,9 @@ int render_page(RPAGE *r, long n, int width)
 {
 	return render_page_from(r, n, width, 0);
 }
+
+static void band_glyph_hook(void *u, long prog, int kind, const char *base, int comp, uint32_t code, uint32_t uni,
+			    const fx *gm, int mode);
 
 int render_page_from(RPAGE *r, long n, int width, int y0)
 {
@@ -1240,6 +1418,11 @@ int render_page_from(RPAGE *r, long n, int width, int y0)
 	PTEXT t;
 	PDRAW dr;
 
+	if (y0 == 0 && r->ic_pic) {
+		RPAD(RPAD_C);
+		pic_free((PIC *)r->ic_pic);	/* (a new page: the kept picture let go) */
+		r->ic_pic = NULL;
+	}
 	pdf_page_reset(r->d);
 	pg = pdf_page(r->d, n, &res, &box, &rot);
 	if (!pg)
@@ -1260,6 +1443,7 @@ int render_page_from(RPAGE *r, long n, int width, int y0)
 	}
 	if (pw < FX_ONE || ph < FX_ONE)
 		return -1;
+	prog_totals(r, pg, res);
 	s = (fx)(((int64_t)width << 32) / pw);	/* pixels a point (16.16) */
 	h = (int)(((int64_t)ph * s) >> 32);
 	if (h < 1)
@@ -1308,16 +1492,47 @@ int render_page_from(RPAGE *r, long n, int width, int y0)
 	rp_init(&st->path);
 	dr.u = st;
 	dr.op = op_hook;
-	dr.glyph = glyph_hook;
+	dr.glyph = r->c.rows < r->c.h ? band_glyph_hook : glyph_hook;
 	dr.image = image_hook;
 	ptext_init(&t);
 	t.draw = &dr;
-	k = pdf_page_text(r->d, n, &t);
+	{
+		long oom = r->d->st.oom;
+
+		k = pdf_page_text(r->d, n, &t);
+		if (r->whole_only && r->d->st.oom != oom)
+			k = -1;			/* (cut short: memory refused on the way) */
+	}
 	ptext_free(&t);
 	rp_free(&st->path);
 	free(st);
 	areas_merge(r);
 	return k < 0 ? -1 : 0;
+}
+
+/* a page in bands: a glyph whose origin is more than four ems from the
+   band, in the device's y, can't reach it (no glyph is drawn that far from
+   its origin): counted, not made or laid (item 3, 13 Nov 2026). Its own
+   hook, so the whole page's glyph_hook is as it was */
+static void band_glyph_hook(void *u, long prog, int kind, const char *base, int comp, uint32_t code, uint32_t uni,
+			    const fx *gm, int mode)
+{
+	RS *s = u;
+	RPAGE *r = s->r;
+	fx m[6];
+	int32_t gy, reach;
+
+	if ((mode & 3) != 3) {
+		mat_mul6(gm, r->base, m);
+		gy = m[5] >> 16;
+		reach = ((fxa(m[1]) + fxa(m[3])) >> 14) + 4;
+		if (gy + reach < r->c.y0 || gy - reach >= r->c.y0 + r->c.rows) {
+			r->glyphs++;
+			return;
+		}
+		RPAD(RPAD_D);
+	}
+	glyph_hook(u, prog, kind, base, comp, code, uni, gm, mode);
 }
 
 int render_drawings(const RPAGE *r, RDRAWING *out, int max)

@@ -96,11 +96,11 @@ static void job(void)
 		int pw, iw;
 
 		memset(&o, 0, sizeof o);
-		/* the pages in colour where the screen has 16 colours or more
-		   ("colour" keeps the mono page too: the copy still reads on an
-		   ST); mono had been asked for on every screen, so a Falcon
-		   showed the Gateway's pages in black and white (Erez, 7 Nov 2026) */
-		o.pages = planes >= 4 ? "colour" : "mono";
+		/* on a screen of 16 colours or more only the pages in colour
+		   ("colouronly": a page with colour gets its /Colour, one without
+		   its /Mono; nothing made twice, AERA-Gateway 1.42 on; Erez, 13
+		   Nov 2026); a mono screen asks for the mono pages (7 Nov 2026) */
+		o.pages = planes >= 4 ? "colouronly" : "mono";
 		o.photos = "indexed";
 		o.pictures = "screen";
 		sizes(&pw, &iw);
@@ -124,6 +124,7 @@ static void job(void)
 
 static char temp_dir[160];
 static int temp_k;
+static char temp_made[2];	/* a copy written there this session: only those are deleted (files.py, 6.5) */
 
 void gw_set_temp_dir(const char *dir)
 {
@@ -155,9 +156,13 @@ void gw_forget(const char *open_now)
 	int k;
 
 	for (k = 0; k < 2; k++) {
+		if (!temp_made[k])
+			continue;	/* (none written: nothing to look for on the disk) */
 		temp_name(k, p, sizeof p);
-		if (!open_now || strcasecmp(p, open_now))
+		if (!open_now || strcasecmp(p, open_now)) {
 			Fdelete(p);
+			temp_made[k] = 0;
+		}
 	}
 }
 
@@ -188,6 +193,7 @@ int gw_start(const char *pdf, const char *open_now, const char *h, unsigned shor
 		temp_k ^= 1;
 		temp_name(temp_k, out_path, sizeof out_path);
 	}
+	temp_made[temp_k] = 1;		/* (written from now on: deleted when let go) */
 	strncpy(host, h, sizeof host - 1);
 	port = p;
 	busy = 1;

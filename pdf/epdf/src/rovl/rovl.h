@@ -32,6 +32,11 @@ typedef struct {
 	/* asked often while a page is drawn (every few operators, glyphs,
 	   rows): it may hand the machine back for a while; 1 stops the page */
 	int (*turn)(void);
+	/* 1: a screen of 16 colours or fewer, whose pens make a small glyph's
+	   grey edges a faint dither (Erez's Falcon in 16 colours, 14 Nov
+	   2026): its glyphs under 20 pixels a bit a pixel (render.c's
+	   mono_glyphs 2). An older program's ROVL_HOST ends before it */
+	int crisp;
 } ROVL_HOST;
 
 /* a page drawn: rows y0 .. y0 + rows - 1 of a w x h page, 5-6-5, w a row;

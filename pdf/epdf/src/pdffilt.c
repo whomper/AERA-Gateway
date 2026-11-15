@@ -76,10 +76,16 @@ static int stream_span(PDOC *d, POBJ *o, long *offp, long *lenp)
 	return 0;
 }
 
-/* the stored bytes of a stream, read whole */
+static int src_pause(PDOC *d);
+
+/* a stream's stored bytes, read RAW_PIECE at a time with the reader's stop
+   hook between (a photo's 300 KB read whole, and copied whole after, was
+   one stretch: the showcase's page 2 on a Falcon) */
+#define RAW_PIECE 32768L
+
 static unsigned char *stream_raw(PDOC *d, POBJ *o, long *lenp)
 {
-	long off, len;
+	long off, len, at;
 	unsigned char *buf;
 
 	if (stream_span(d, o, &off, &len))
@@ -87,9 +93,13 @@ static unsigned char *stream_raw(PDOC *d, POBJ *o, long *lenp)
 	buf = pdf_malloc(d, len + 1);
 	if (!buf)
 		return NULL;
-	if (pdf_rd(d, off, buf, len) != len) {
-		pdf_free(d, buf, len + 1);
-		return NULL;
+	for (at = 0; at < len; at += RAW_PIECE) {
+		long n = len - at < RAW_PIECE ? len - at : RAW_PIECE;
+
+		if ((at && src_pause(d)) || pdf_rd(d, off + at, buf + at, n) != n) {
+			pdf_free(d, buf, len + 1);
+			return NULL;
+		}
 	}
 	d->st.raw_in += len;
 	*lenp = len;
@@ -496,11 +506,23 @@ static int crypt_identity(PDOC *d, POBJ *filter, POBJ *parms)
 
 static int pdf_stream_in(PDOC *d, POBJ *o, long onum, SBUF *out, const char **terminal, long max);
 
+/* (the renderer's builds: STREAM_PAD bytes jumped once a stream, so the
+   code after this file keeps its places in a 68030's instruction cache,
+   addresses mod 256, tools/rpad.py) */
+#if defined(STREAM_PAD) && STREAM_PAD > 0
+#define SPAD_S2(n) #n
+#define SPAD_S(n) SPAD_S2(n)
+#define SPAD() __asm__ volatile("bra.w 1f\n\t.skip " SPAD_S(STREAM_PAD) "\n1:")
+#else
+#define SPAD() ((void)0)
+#endif
+
 int pdf_stream(PDOC *d, POBJ *o, long onum, SBUF *out, const char **terminal, long max)
 {
 	long t0 = d->clock ? d->clock() : 0;
 	int r = pdf_stream_in(d, o, onum, out, terminal, max);
 
+	SPAD();
 	if (d->clock)
 		d->st.t_stream += d->clock() - t0;
 	return r;
@@ -571,9 +593,23 @@ static int pdf_stream_in(PDOC *d, POBJ *o, long onum, SBUF *out, const char **te
 	/* b's buffer came from pdf_malloc'd raw, or from util.c's: hand it over as an SBUF */
 	if (!replaced) {
 		/* untouched: copy into an SBUF the caller can sb_free (raw is ours) */
+		long at;
+
 		*out = (SBUF){0};
 		sb_init(out);
-		sb_add(out, b.s, b.len);
+		if (!sb_reserve(out, b.len)) {	/* (exactly: no doubling as the pieces come) */
+			pdf_free(d, raw, len + 1);
+			return -1;
+		}
+		for (at = 0; at < b.len; at += RAW_PIECE) {
+			long n = b.len - at < RAW_PIECE ? b.len - at : RAW_PIECE;
+
+			if ((at && src_pause(d)) || (n && !sb_add(out, b.s + at, n))) {
+				sb_free(out);
+				pdf_free(d, raw, len + 1);
+				return -1;
+			}
+		}
 		pdf_free(d, raw, len + 1);
 	} else {
 		*out = b;

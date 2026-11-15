@@ -86,15 +86,35 @@ static void lengths(const unsigned long *f, int n, int lim, unsigned char *len)
 				len[sym[i]] = (unsigned char)lim;
 			goto done;
 		}
-		/* the leaves sorted by weight (insertion: alphabets are small) */
-		for (i = 1; i < nl; i++) {
-			int s = sym[i], j = i;
+		/* the leaves sorted by weight, equal ones in their order (a
+		   merge, bottom up, through par before it is used: an insertion
+		   sort of the 286 literals was 40 ms of a Falcon's turn) */
+		{
+			int run, *from = sym, *to = par;
 
-			while (j > 0 && f[sym[j - 1]] > f[s]) {
-				sym[j] = sym[j - 1];
-				j--;
+			for (run = 1; run < nl; run *= 2) {
+				int lo;
+
+				for (lo = 0; lo < nl; lo += 2 * run) {
+					int mid = lo + run < nl ? lo + run : nl, hi = lo + 2 * run < nl ? lo + 2 * run : nl;
+					int a = lo, b = mid, o = lo;
+
+					while (a < mid && b < hi)
+						to[o++] = f[from[b]] < f[from[a]] ? from[b++] : from[a++];
+					while (a < mid)
+						to[o++] = from[a++];
+					while (b < hi)
+						to[o++] = from[b++];
+				}
+				{
+					int *t = from;
+
+					from = to;
+					to = t;
+				}
 			}
-			sym[j] = s;
+			if (from != sym)
+				memcpy(sym, from, (size_t)nl * sizeof *sym);
 		}
 		for (i = 0; i < nl; i++) {
 			w[i] = f[sym[i]];
@@ -248,7 +268,7 @@ static void block(BW *w, const SYM *s, long n, int last)
 	long k;
 
 	for (k = 0; k < n; k++) {
-		if ((k & 2047) == 2047 && cv_turn)
+		if ((k & 255) == 255 && cv_turn)
 			cv_turn();
 		if (!s[k].len)
 			lf[s[k].dist]++;
@@ -262,6 +282,8 @@ static void block(BW *w, const SYM *s, long n, int last)
 	if (cv_turn)
 		cv_turn();
 	lengths(lf, 286, 15, ll);
+	if (cv_turn)
+		cv_turn();	/* (the two lengths() in one turn: 40 ms on a Falcon) */
 	lengths(df, 30, 15, dl);
 	if (cv_turn)
 		cv_turn();
@@ -323,6 +345,8 @@ static void block(BW *w, const SYM *s, long n, int last)
 	lengths(cf, 19, 7, cl);
 	while (nc > 4 && !cl[clorder[nc - 1]])
 		nc--;
+	if (cv_turn)
+		cv_turn();
 	codes(ll, 286, lc);
 	codes(dl, 30, dc);
 	codes(cl, 19, cc);
@@ -382,6 +406,20 @@ static unsigned long adler(const unsigned char *d, long n)
 	return b << 16 | a;
 }
 
+/* padding in a branch only refused memory takes: the code after this file
+   at the same places in a 68030's instruction cache (addresses mod 256) as
+   before the turns in block() and lengths()'s merge (tools/rpad.py) */
+#ifndef DPAD_A
+#define DPAD_A 80
+#endif
+#define DPAD_S2(n) #n
+#define DPAD_S(n) DPAD_S2(n)
+#if defined(__m68k__) || defined(__mc68000__)
+#define DPAD(n) __asm__ volatile("bra.w 1f\n\t.skip " DPAD_S(n) "\n1:")
+#else
+#define DPAD(n) ((void)0)
+#endif
+
 int zdeflate(const unsigned char *d, long n, SBUF *out)
 {
 	BW w;
@@ -398,6 +436,7 @@ int zdeflate(const unsigned char *d, long n, SBUF *out)
 	head = malloc(HSIZE * sizeof *head);
 	prev = malloc(WSIZE * sizeof *prev);
 	if (!sy || !head || !prev) {
+		DPAD(DPAD_A);
 		free(sy);
 		free(head);
 		free(prev);
@@ -469,7 +508,7 @@ int zdeflate(const unsigned char *d, long n, SBUF *out)
 			ns++;
 			i++;
 		}
-		if ((ns & 127) == 127 && cv_turn)
+		if ((ns & 15) == 15 && cv_turn)
 			cv_turn();
 		if (ns == BLOCK) {
 			block(&w, sy, ns, 0);

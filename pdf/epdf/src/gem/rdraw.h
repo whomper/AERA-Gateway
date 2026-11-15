@@ -17,6 +17,7 @@ extern char rdraw_path[200];
 int rdraw_machine(void);
 /* render.ovl loaded (once), its table checked and started with the
    program's memory and turn; 1, or 0 and why */
+void rdraw_crisp(int on);
 int rdraw_load(int (*turn)(void), char *err, int errlen);
 const ROVL *rdraw_ovl(void);		/* NULL until loaded */
 long rdraw_taken(void);			/* its bytes in memory */

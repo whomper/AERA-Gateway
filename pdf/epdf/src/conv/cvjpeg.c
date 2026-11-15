@@ -19,6 +19,7 @@
 typedef struct {
 	struct jpeg_error_mgr pub;
 	void *jmp[5];
+	int stopped;			/* pic_poll said stop (cv_progress) */
 } ERR;
 
 static void err_exit(j_common_ptr c)
@@ -26,6 +27,36 @@ static void err_exit(j_common_ptr c)
 	ERR *e = (ERR *)c->err;
 
 	__builtin_longjmp(e->jmp, 1);
+}
+
+/* padding in the branches only a stop takes: the code after them at the
+   same places in a 68030's instruction cache (addresses mod 256) as before
+   cv_progress came (tools/rpad.py; render.c's RPAD) */
+#ifndef CPAD_A
+#define CPAD_A 192
+#define CPAD_B 224
+#endif
+#define CPAD_S2(n) #n
+#define CPAD_S(n) CPAD_S2(n)
+#if defined(__m68k__) || defined(__mc68000__)
+#define CPAD(n) __asm__ volatile("bra.w 1f\n\t.skip " CPAD_S(n) "\n1:")
+#else
+#define CPAD(n) ((void)0)		/* (the host's build: no 68030 cache) */
+#endif
+
+/* libjpeg's progress, each row it reads and each pass of a progressive
+   JPEG: a turn (pic_poll), as pic.c's lj_progress gives its own; 0 stops
+   it. A CMYK photo on a Falcon-4 held the machine 2.9 s without one
+   (rovl.py's page 6, 14 Nov 2026) */
+static void cv_progress(j_common_ptr c)
+{
+	ERR *e = (ERR *)c->err;
+
+	if (pic_poll && !pic_poll()) {
+		e->stopped = 1;
+		CPAD(CPAD_A);
+		__builtin_longjmp(e->jmp, 1);
+	}
 }
 
 static void err_out(j_common_ptr c)
@@ -75,6 +106,7 @@ PIC *cv_jpeg(const unsigned char *d, long n, int w, int h, int inverted, int *wh
 {
 	struct jpeg_decompress_struct ci;
 	struct jpeg_source_mgr src;
+	struct jpeg_progress_mgr prog;
 	ERR err;
 	PIC *volatile p = NULL;
 	unsigned char *volatile row = NULL;
@@ -99,6 +131,12 @@ PIC *cv_jpeg(const unsigned char *d, long n, int w, int h, int inverted, int *wh
 		jpeg_destroy_decompress(&ci);
 		free(row);
 		free(ys);
+		if (err.stopped) {
+			CPAD(CPAD_B);
+			*why = PIC_STOPPED;
+			pic_free(p);
+			return NULL;
+		}
 		if (p && p->px) {
 			/* what was made up to the damage is kept */
 			*why = PIC_OK;
@@ -108,6 +146,8 @@ PIC *cv_jpeg(const unsigned char *d, long n, int w, int h, int inverted, int *wh
 		return NULL;
 	}
 	jpeg_create_decompress(&ci);
+	prog.progress_monitor = cv_progress;	/* (after the create: it clears all but err) */
+	ci.progress = &prog;
 	src.init_source = src_init;
 	src.fill_input_buffer = src_fill;
 	src.skip_input_data = src_skip;

@@ -113,6 +113,11 @@ typedef struct pdoc {
 	PXX *xx;			/* the entries that don't fit in 4 bytes */
 	long nxx, capxx;
 	int xx_sorted;
+	/* table subsections not parsed yet (pdfxref.c's xe_lazy): an entry is
+	   read from its 20 bytes the first time it is asked for, newest
+	   section first */
+	struct pdflz { long start, count, off; } *lz;
+	int nlz, caplz;
 	POBJ *trailer;
 	POBJ *root;
 	int repaired;			/* the table was rebuilt by scanning the file */

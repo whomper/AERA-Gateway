@@ -39,13 +39,13 @@ static const MBAR_ITEM edit_items[] = {
 static const MBAR_ITEM view_items[] = {
 	{ "The page's lines", NULL, CMD_LINES },
 	{ "Pages", NULL, CMD_PAGES },
+	{ "Page strip", NULL, CMD_STRIP },	/* a tick: the pages' column at the left (Erez, 15 Nov 2026) */
 	{ "Translate", NULL, CMD_TRANSLATE },	/* a tick: the text view translated (Erez, 8 Nov 2026) */
-	/* EWeb's words and keys (Erez, 9 Nov 2026: "Change EPDF to align with
-	   EWeb"; the keypad's + and - too): View > Pages' page bigger, smaller,
-	   and as it was */
-	{ "Larger text", "^+", CMD_ZOOMIN },
-	{ "Smaller text", "^-", CMD_ZOOMOUT },
-	{ "Actual size", "^0", CMD_ZOOMACTUAL },
+	/* a tick while View > Pages' page is zoomed: two sizes, Normal and
+	   Zoom (Erez, 14 Nov 2026: "just one menu option called Zoom In with a
+	   check mark"); ^+ and the keypad's + zoom in, ^-, the keypad's - and
+	   ^0 back (EWeb's keys, 9 Nov 2026) */
+	{ "Zoom In", "^+", CMD_ZOOMTOGGLE },
 	{ NULL, NULL, CMD_NONE }
 };
 
