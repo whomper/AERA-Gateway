@@ -647,6 +647,7 @@ Every option is optional, and each may be given once:
 | Option | Values |
 |---|---|
 | `pages` | `none`, `mono`, `colour`, `colouronly` (colour only on the pages that have colour; EPDF 2.8) |
+| `thumbs` | `1`: each page carries a preview (`/Thumb`); without it, none (EPDF 2.33) |
 | `photos` | `indexed`, `jpeg` |
 | `pictures` | `page`, `screen` |
 | `page_width` | 160-4096 |

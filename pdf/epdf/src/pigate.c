@@ -56,6 +56,8 @@ int pg_query(const PGOPT *o, const char *name, char *q, int qlen)
 		ADD("&picture_width=%d", o->pic_w);
 	if (o && o->page_double >= 0)
 		ADD("&double=%d", o->page_double ? 1 : 0);
+	if (o && o->thumbs)
+		ADD("&thumbs=1");
 	if (o && o->translate && o->translate[0]) {
 		const char *t;
 

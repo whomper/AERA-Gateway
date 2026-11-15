@@ -226,6 +226,7 @@ static void gateway_begin(void)
 	if (!gw_on || !doc_is_open() || doc_prepared() || gw_busy() || gw_is_temp(doc_path()))
 		return;
 	gw_set_translate(tr_on() ? tr_to() : "");	/* (Translate on: the Gateway translates with the conversion) */
+	gw_set_thumbs(strip_on());	/* (the page strip on: the pages' previews come with it) */
 	r = gw_start(doc_path(), doc_path(), gate_host, gate_port);
 	if (r == GW_NO_ADDRESS && settings_dialog())
 		r = gw_start(doc_path(), doc_path(), gate_host, gate_port);

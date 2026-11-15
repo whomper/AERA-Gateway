@@ -8,6 +8,8 @@
  *            button that opens the Gateway's installed languages over
  *            itself, the one chosen ticked (5.7); Languages...: the
  *            family's dialog (common's langs.c)
+ *   General  (EConvert) Page previews: each converted page carries a
+ *            small picture of itself, for EPDF's page strip
  *   Secure   the Gateway's address and port, in EWeb's words (6.1, 7.4)
  *
  * The address holds more than it shows (5.4). Cancel, Esc and Undo put
@@ -75,6 +77,21 @@ static void page_general(SETTINGS *s, short x, short y, void *user)
 	set_text(s, x, (short)(n + 2), "Translations are kept in memory only.");
 }
 
+/* EConvert's General: the pages' previews (off by default: Erez, 15 Nov 2026) */
+static short previews_edit;
+
+static void page_conv(SETTINGS *s, short x, short y, void *user)
+{
+	short n = set_y(s, 2);
+
+	(void)user;
+	set_tick(s, x, y, "Page previews", &previews_edit);
+	set_text(s, x, n, "Each converted page carries a small");
+	set_text(s, x, (short)(n + 1), "picture of itself, for EPDF's page");
+	set_text(s, x, (short)(n + 2), "strip (View > Page strip). Converted");
+	set_text(s, x, (short)(n + 3), "on a Falcon, 2 seconds more a page.");
+}
+
 static void page_secure(SETTINGS *s, short x, short y, void *user)
 {
 	short n = set_y(s, 2);
@@ -113,6 +130,7 @@ static void drawn(OBJECT *tree, short band)
 static int run(int with_tr, char *host, int hostcap, unsigned short *port)
 {
 	static const SET_PAGE both[] = { { "General", page_general }, { "Secure", page_secure } };
+	static const SET_PAGE conv[] = { { "General", page_conv }, { "Secure", page_secure } };
 	static const SET_PAGE secure[] = { { "Secure", page_secure } };
 	long p;
 	int ok;
@@ -124,8 +142,9 @@ static int run(int with_tr, char *host, int hostcap, unsigned short *port)
 	snprintf(port_s, sizeof port_s, "%u", (unsigned)*port);
 	placed = 0;
 	settings_drawn = drawn;
-	ok = with_tr ? settings_run("Settings", both, 2, 0, 17, (void *)1) :
-		       settings_run("Settings", secure, 1, 0, 16, NULL);
+	ok = with_tr == 1 ? settings_run("Settings", both, 2, 0, 17, (void *)1) :
+	     with_tr == 2 ? settings_run("Settings", conv, 2, 0, 16, NULL) :
+			    settings_run("Settings", secure, 1, 0, 16, NULL);
 	settings_drawn = NULL;
 	log_event("dialog-closed", "settings", ok ? "ok" : "cancel");
 	if (!ok)
@@ -145,11 +164,17 @@ const char *gate_dialog_host(void)
 	return edit;
 }
 
-int gate_dialog(char *host, int hostcap, unsigned short *port)
+int gate_dialog_conv(char *host, int hostcap, unsigned short *port, short *previews)
 {
+	int ok;
+
 	tr_pick = NULL;
 	tr_languages = NULL;
-	return run(0, host, hostcap, port);
+	previews_edit = *previews ? 1 : 0;
+	ok = run(2, host, hostcap, port);
+	if (ok)
+		*previews = previews_edit;
+	return ok;
 }
 
 int gate_dialog_tr(char *host, int hostcap, unsigned short *port, char *to, int tocap, const char *to_name,

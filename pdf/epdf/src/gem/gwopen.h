@@ -32,5 +32,7 @@ const char *gw_host(void);
 /* the language the next conversions are translated into ("" or NULL: none;
    View > Translate) */
 void gw_set_translate(const char *to);
+/* the pages' previews asked of the Gateway too (thumbs=1: View > Page strip on) */
+void gw_set_thumbs(int on);
 
 #endif

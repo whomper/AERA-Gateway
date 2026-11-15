@@ -23,6 +23,8 @@ typedef struct {
 	int page_double;		/* 1, 0; -1: the Pi's default */
 	const char *translate;		/* a language (ISO 639-1): each page's text translated too
 					   (docs/PI-GATEWAY.md, "translate"); NULL: not asked */
+	int thumbs;			/* 1: each page's /Thumb (thumbs=1; AERA-Gateway with it only:
+					   an older one refuses the option); 0: not asked */
 } PGOPT;
 
 /* where the job is, for the progress bar */

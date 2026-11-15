@@ -1060,7 +1060,7 @@ static int convert_page(CV *c, long n)
 	   the page as drawn: the canvas whole here, else as the whole page's
 	   loops below walk its bands (a page in bands with no whole page asked
 	   has none) */
-	if (!c->o->no_thumbs && drawn && tb_start(&tb, r->c.w, r->c.h, CV_THUMB_W) == 0) {
+	if (c->o->thumbs && drawn && tb_start(&tb, r->c.w, r->c.h, CV_THUMB_W) == 0) {
 		cv_phase = "thumb";
 		if (r->c.y0 == 0 && r->c.rows >= r->c.h)
 			tb_rows(&tb, r->c.px, 0, r->c.h);

@@ -228,7 +228,7 @@ PIC_PAD ?= 134
 build/m68030/cspad.o: FT_PAD = -DFT_PAD_NAME=cs_cv_pad -DFT_PAD_TEXT=$(CS_PAD) -DFT_PAD_RO=0 -DFT_PAD_STR=0 -DFT_PAD_DATA=0
 CS_PAD ?= 178
 build/m68030/ecpad.o: FT_PAD = -DFT_PAD_NAME=ec_cv_pad -DFT_PAD_TEXT=$(EC_PAD) -DFT_PAD_RO=$(EC_PAD_RO) -DFT_PAD_STR=0 -DFT_PAD_DATA=0
-EC_PAD ?= 24
+EC_PAD ?= 188
 EC_PAD_RO ?= 214
 # CONVTEST.PRG's own, after common's nf.o: its converter code where 2.30 had it
 build/m68030/ctpad.o: FT_PAD = -DFT_PAD_NAME=ct_cv_pad -DFT_PAD_TEXT=$(CT_PAD) -DFT_PAD_RO=0 -DFT_PAD_STR=0 -DFT_PAD_DATA=0
@@ -489,10 +489,10 @@ build/m68000/eppad_b.o: FT_PAD = -DFT_PAD_NAME=ep_pad_b -DFT_PAD_TEXT=$(EP_PAD_B
 build/m68000/eppad_c.o: FT_PAD = -DFT_PAD_NAME=ep_pad_c -DFT_PAD_TEXT=$(EP_PAD_C) -DFT_PAD_RO=0 -DFT_PAD_STR=0 -DFT_PAD_DATA=0
 build/m68000/eppad_d.o: FT_PAD = -DFT_PAD_NAME=ep_pad_d -DFT_PAD_TEXT=$(EP_PAD_D) -DFT_PAD_RO=0 -DFT_PAD_STR=0 -DFT_PAD_DATA=0
 EP_PAD_A ?= 172
-EP_PAD_A_RO ?= 146
+EP_PAD_A_RO ?= 302
 EP_PAD_B ?= 208
-EP_PAD_C ?= 448
-EP_PAD_D ?= 536
+EP_PAD_C ?= 372
+EP_PAD_D ?= 508
 build/m68000/eppad_a.o build/m68000/eppad_b.o build/m68000/eppad_c.o build/m68000/eppad_d.o: src/conv/ftpad.S Makefile | build/m68000
 	@mkdir -p $(dir $@)
 	$(XCC) -m68000 $(FT_PAD) -c -o $@ $<
@@ -639,6 +639,10 @@ build/aprof/ECONVERT.PRG: binary/ECONVERT.PRG build/aprof/gem00ec.o build/aprof/
 econv-speed-test: build/aprof/ECONVERT.PRG binary/LAUNCH.PRG
 	python3 tests/hatari/econv_speed.py build/econv-speed
 .PHONY: econv-speed-test
+# EConvert's Settings, General: Page previews ticked, OK, Esc (Falcon:16, ST:mono)
+econv-settings-test: binary/ECONVERT.PRG binary/LAUNCH.PRG
+	python3 tests/hatari/econv_settings.py build/econv-settings
+.PHONY: econv-settings-test
 
 # the stacks' use (EPDF.PRG with doc.c built -DEPDF_STACKS): "EPDF stacks ..."
 # every 25 pages and at the end, for sizing READ_STACK and PIC_STACK

@@ -30,9 +30,10 @@ typedef struct {
 	/* the mono page at twice page_w where there is memory to draw it in
 	   one piece (EPDF shows it at page_w, and whole when clicked); 1 */
 	int page_double;
-	/* 1: no /Thumb (each page's preview, CV_THUMB_W wide, 16 colours: EPDF's
-	   page strip); 0, the default, writes one for every page */
-	int no_thumbs;
+	/* 1: each page carries a /Thumb (its preview, CV_THUMB_W wide, 16
+	   colours: EPDF's page strip); 0, the default, none (Erez, 15 Nov 2026:
+	   "a setting flag, off by default": 1.9 s a page on a 4 MB Falcon) */
+	int thumbs;
 	long canvas_max;		/* the page canvas's most bytes, 0 any: a page drawn in
 				   bands under it (slower) */
 	/* the memory free now (EConvert: GEMDOS's), or NULL: a page refused

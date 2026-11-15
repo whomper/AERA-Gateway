@@ -81,6 +81,10 @@ void font_sys_pop(void)
 static const char inf_head[] =
 	"; EConvert's settings. EConvert writes this file itself; a line it doesn't know is kept.\r\n\r\n";
 static int pages_set = CV_PAGES_MONO, photos_set = CV_PHOTOS_INDEXED;
+/* each page's preview (/Thumb, EPDF's page strip): Settings' "Page previews",
+   PREVIEWS= in the INF; off by default (Erez, 15 Nov 2026: 1.9 s a page on a
+   4 MB Falcon, "a setting flag, off by default") */
+static short previews_set;
 static char out_dir[160], in_dir[160];
 /* Gateway mode (Erez, 7 Nov 2026): the PDFs converted by the Gateway
    (AERA-Gateway's pdfgate) instead of here. A Falcon or a TT converts here
@@ -152,6 +156,8 @@ static void settings_read(void)
 			    !strcmp(v, "colouronly") ? CV_PAGES_COLOUR_ONLY : CV_PAGES_MONO;
 	if ((v = inf_get(&inf, "PHOTOS")) != NULL)
 		photos_set = !strcmp(v, "jpeg") ? CV_PHOTOS_JPEG : CV_PHOTOS_INDEXED;
+	if ((v = inf_get(&inf, "PREVIEWS")) != NULL)
+		previews_set = v[0] == '1';
 	if ((v = inf_get(&inf, "WRITETO")) != NULL && strlen(v) < sizeof out_dir)
 		strcpy(out_dir, v);
 	if ((v = inf_get(&inf, "FOLDER")) != NULL && strlen(v) < sizeof in_dir)
@@ -646,6 +652,7 @@ static int on_the_gateway(const char *in, const char *out, char *err, int errlen
 	po.page_w = pw;
 	po.pic_w = iw;
 	po.page_double = -1;
+	po.thumbs = previews_set;		/* (thumbs=1: AERA-Gateway 1.48 on) */
 	{
 		char q[40];
 
@@ -691,6 +698,7 @@ static void worker(void)
 			cv_defaults(&o);	/* (a 68030's: the window allows This Atari only there) */
 			o.pages = pages_set;
 			o.photos = photos_set;
+			o.thumbs = previews_set;
 			o.mem_free = mem_free;	/* (a page refused memory: made again in bands) */
 			screen_sizes(&o.page_w, &o.pic_w);
 			o.fontdir = font_dir;
@@ -1780,8 +1788,9 @@ static int settings_dialog(void)
 
 	if (working)
 		return 0;
-	if (!gate_dialog(gate_host, (int)sizeof gate_host, &gate_port))
+	if (!gate_dialog_conv(gate_host, (int)sizeof gate_host, &gate_port, &previews_set))
 		return 0;
+	setting("PREVIEWS", previews_set ? "1" : "0", "1: each page carries a small picture of itself, for EPDF's page strip");
 	setting("GATE", gate_host, "the Gateway's address (Through the Gateway)");
 	snprintf(port, sizeof port, "%u", (unsigned)gate_port);
 	setting("GATEPORT", port, "the Gateway's port for PDFs (8380)");

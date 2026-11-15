@@ -6,9 +6,10 @@
 
 #define GATE_PORT 8380			/* pdfgate's (Erez's OK, 7 Nov 2026) */
 
-/* the Gateway's address (host, hostcap bytes) and port, as they are shown
-   and as the user leaves them; 1 when OK was chosen */
-int gate_dialog(char *host, int hostcap, unsigned short *port);
+/* EConvert's: the Gateway's address (host, hostcap bytes) and port, as they
+   are shown and as the user leaves them, and its General page's "Page
+   previews" (*previews, 0 or 1); all the caller's only on OK, then 1 */
+int gate_dialog_conv(char *host, int hostcap, unsigned short *port, short *previews);
 /* EPDF's: the same with "Translate into" (to, a language code; its button
    shows to_name and calls pick with its place, x and y: the popup over
    it; pick may change to and the name) and

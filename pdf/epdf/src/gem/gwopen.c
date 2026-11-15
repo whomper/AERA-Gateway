@@ -42,6 +42,13 @@ void gw_set_translate(const char *to)
 {
 	snprintf(translate_to, sizeof translate_to, "%s", to ? to : "");
 }
+
+static int gw_thumbs;
+
+void gw_set_thumbs(int on)
+{
+	gw_thumbs = on;
+}
 static unsigned short port;
 
 static void idle(void)
@@ -108,6 +115,7 @@ static void job(void)
 		o.pic_w = iw;
 		o.page_double = -1;
 		o.translate = translate_to[0] ? translate_to : NULL;	/* (View > Translate on) */
+		o.thumbs = gw_thumbs;		/* (View > Page strip on: the pages' previews) */
 		{
 			char q[24];
 
