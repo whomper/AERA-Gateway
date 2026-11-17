@@ -47,6 +47,7 @@ import subprocess
 import sys
 import threading
 import time
+from urllib.parse import urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import aeragate  # noqa: E402
@@ -952,8 +953,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
     stats = None
 
     def log_message(self, fmt, *args):
+        """-v: who asked for which of its own pages; never another path or a
+        query, nor a malformed request's line (7.3: never a path)"""
         if Config.verbose:
-            say("%s %s" % (self.client_address[0], fmt % args))
+            path = urlsplit(getattr(self, "path", "") or "").path
+            say("%s %s %s" % (self.client_address[0], getattr(self, "command", None) or "-",
+                              path if path in FILES or path in ("/", "/status.json") else "(another page)"))
 
     def send(self, status, ctype, body):
         body = body.encode("utf-8") if isinstance(body, str) else body

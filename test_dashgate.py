@@ -254,6 +254,27 @@ class PageTest(unittest.TestCase):
         status, _, body = self.get("/status.json")
         self.assertEqual((status, body), (403, b"dashgate: not from this computer\n"))
 
+    def test_log_never_a_path(self):
+        """-v names its own pages only: no other path, no query (7.3)"""
+        import io
+        import contextlib
+        dashgate.Config.verbose = True
+        self.addCleanup(setattr, dashgate.Config, "verbose", False)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.get("/status.json?x=Wilhelmina")
+            self.get("/home/Wilhelmina/secret")
+            c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+            c.sock = __import__("socket").create_connection(("127.0.0.1", self.port))
+            c.sock.sendall(b"GARBAGE /Wilhelmina\r\n\r\n")
+            c.sock.recv(1000)
+            c.close()
+            time.sleep(0.2)
+        log = err.getvalue()
+        self.assertNotIn("Wilhelmina", log)
+        self.assertIn("GET /status.json", log)
+        self.assertIn("(another page)", log)
+
     def test_no_such_page(self):
         self.assertEqual(self.get("/etc/passwd")[0], 404)
 
