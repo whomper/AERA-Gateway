@@ -1101,8 +1101,15 @@ class Handler(BaseHTTPRequestHandler):
     for_browser = False     # ExtHandler: the Pi's own browser, not an Atari
 
     def log_message(self, fmt, *args):
+        # only http.server's own errors come here (log_request is quiet), and
+        # their text can hold the request line, with what a form sent in it: the
+        # status alone (7.3: never a path)
         if Config.verbose:
-            aeragate.say("%s %s" % (self.address_string(), fmt % args))
+            if fmt.startswith("Request timed out"):
+                aeragate.say("%s timed out" % self.address_string())
+            else:
+                code = args[0] if args and isinstance(args[0], int) else "-"
+                aeragate.say("%s refused: %s" % (self.address_string(), code))
 
     def log_request(self, code="-", size="-"):
         # the request line has the whole address, with what a form sent
