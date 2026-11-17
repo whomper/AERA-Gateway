@@ -11,7 +11,9 @@
  *   no image filter DeviceGray, DeviceRGB, Indexed (and CalGray, CalRGB,
  *                   ICCBased taken by their number of colours), 1 or 8
  *                   bits a component
- * JPXDecode and JBIG2Decode can't be shown (PIC_UNSUPPORTED).
+ *   JBIG2Decode     src/jbig2.c, a row at a time, then as CCITT
+ *   JPXDecode       src/jpx.c, reduced (a half, a quarter...) while it
+ *                   stays at least as big as shown, then sampled
  *
  * pic_poll (pic.h) is called every few rows here too: the caller's turn
  * for the machine, and its way to stop.
@@ -21,6 +23,8 @@
 #include "pdf.h"
 #include "pic.h"
 #include "ccitt.h"
+#include "jbig2.h"
+#include "jpx.h"
 #include "rscale.h"
 #include "pdfimg.h"
 
@@ -215,58 +219,76 @@ static PIC *from_samples(const unsigned char *s, long n, long sw, long sh, int b
 	return p;
 }
 
-/* a CCITT scan: decoded a row at a time, shrunk to grey (rscale), then
-   sampled to w x h */
-static PIC *from_ccitt(PDOC *d, POBJ *o, const unsigned char *s, long n, long sw, long sh, int w, int h, int *why)
+/* ------------------------------------------------------------------ a bit a pixel: CCITT and JBIG2 */
+/*
+ * Which bits are ink: a coder's 1 bits are its black (a G4 black run, a
+ * JBIG2 1); the filter makes them the samples 0 (CCITT with BlackIs1
+ * false, and JBIG2) or 1 (BlackIs1 true); DeviceGray's 0 is black, an
+ * ImageMask paints where 0; /Decode [1 0] turns either round. So the ink
+ * is the coder's 1 bits, turned for BlackIs1 and again for /Decode (the
+ * same as poppler and mupdf draw them: tests/onebit.py).
+ */
+typedef struct {
+	int (*row)(void *u, unsigned char *row);	/* the next row, 1 the coder's black; 0 at the end */
+	void *u;
+	long cols;
+	int flip;			/* the coder's 1 bits are paper */
+} BITS;
+
+/* /Decode [1 0]: the first pair turned round */
+static int decode_inverted(PDOC *d, POBJ *o)
+{
+	POBJ *dec = pd_get(d, o, "Decode"), *a, *b;
+	long va, vb;
+
+	if (!dec || dec->t != PO_ARR || dec->a < 2)
+		return 0;
+	a = pdf_res(d, pa_at(dec, 0));
+	b = pdf_res(d, pa_at(dec, 1));
+	if (!a || !b || (a->t != PO_INT && a->t != PO_REAL) || (b->t != PO_INT && b->t != PO_REAL))
+		return 0;
+	va = a->t == PO_INT ? (long)a->a * 65536 : a->a;
+	vb = b->t == PO_INT ? (long)b->a * 65536 : b->a;
+	return va > vb;
+}
+
+static POBJ *decode_parms(PDOC *d, POBJ *o)
 {
 	POBJ *dp = pd_get(d, o, "DecodeParms");
-	long k = 0, cols = sw;
-	int black1 = 0, f = 1, align = 0;
-	CCITT c;
-	RSCALE rs;
-	unsigned char *row, *g = NULL, *grey;
-	long gw, gh = 0, y;
-	PIC *p = NULL;
 
 	if (dp && dp->t == PO_ARR && dp->a)
 		dp = pdf_res(d, pa_at(dp, dp->a - 1));
-	if (dp && dp->t == PO_DICT) {
-		POBJ *b;
+	return dp && dp->t == PO_DICT ? dp : NULL;
+}
 
-		k = pd_int(d, dp, "K", 0);
-		cols = pd_int(d, dp, "Columns", sw);
-		b = pd_get(d, dp, "BlackIs1");
-		black1 = b && b->t == PO_BOOL && b->a;
-		b = pd_get(d, dp, "EncodedByteAlign");
-		align = b && b->t == PO_BOOL && b->a;
-	}
-	if (k > 0) {
-		*why = PIC_UNSUPPORTED;		/* group 3, two-dimensional */
-		return NULL;
-	}
+/* the source's rows (sh of them) to a picture of w x h: shrunk to grey
+   (rscale) by 2, 4 or 8 while it stays at least w wide, then sampled */
+static PIC *from_bits(BITS *bs, long sh, int w, int h, int *why)
+{
+	long cols = bs->cols, gw, gh = 0, y, nb = (cols + 7) / 8;
+	int f = 1;
+	RSCALE rs;
+	unsigned char *row, *grey;
+	PIC *p = NULL;
+
 	while (f < 8 && cols / (f * 2) >= w)
 		f *= 2;
-	if (ccitt_open(&c, s, n, (int)cols, (int)k, align)) {
-		*why = PIC_MEMORY;
-		return NULL;
-	}
 	gw = f > 1 ? cols / f : cols;
-	row = malloc((size_t)(cols + 7) / 8);
+	row = malloc((size_t)nb);
 	grey = malloc((size_t)gw * (size_t)(sh / f + 1));
 	if (!row || !grey || (f > 1 && rs_init(&rs, (int)cols, f))) {
 		free(row);
 		free(grey);
-		ccitt_close(&c);
 		*why = PIC_MEMORY;
 		return NULL;
 	}
-	for (y = 0; y < sh && ccitt_row(&c, row); y++) {
+	for (y = 0; y < sh && bs->row(bs->u, row); y++) {
 		long i;
 
-		if (!black1)
-			for (i = 0; i < (cols + 7) / 8; i++)
+		if (bs->flip)
+			for (i = 0; i < nb; i++)
 				row[i] = (unsigned char)~row[i];
-		/* the rows come as 1 for black: to rscale's ink */
+		/* (1 is ink from here: rscale's) */
 		if (f > 1) {
 			if (rs_row(&rs, row, grey + gh * gw))
 				gh++;
@@ -284,18 +306,146 @@ static PIC *from_ccitt(PDOC *d, POBJ *o, const unsigned char *s, long n, long sw
 		*why = PIC_DAMAGED;
 		goto out;
 	}
-	g = grey;
-	p = from_samples(g, gw * gh, gw, gh, 8, 1, NULL, 0, w, h, why);
+	p = from_samples(grey, gw * gh, gw, gh, 8, 1, NULL, 0, w, h, why);
 out:
 	if (f > 1)
 		rs_close(&rs);
-	ccitt_close(&c);
 	free(row);
 	free(grey);
 	return p;
 }
 
-PIC *pdf_image(PDOC *d, long obj, int w, int h, long max_bytes, int *why)
+static long scan_fill(void *u, unsigned char *buf, long n);
+
+static int ccitt_src(void *u, unsigned char *row)
+{
+	return ccitt_row(u, row);
+}
+
+/* a CCITT scan's source, opened from s, n (or pulled from src): 0, or -1
+   and *why */
+static int ccitt_bits(PDOC *d, POBJ *o, PCSRC *src, const unsigned char *s, long n, long sw, CCITT *c, BITS *bs, int *why)
+{
+	POBJ *dp = decode_parms(d, o);
+	long k = 0, cols = sw;
+	int black1 = 0, align = 0;
+
+	if (dp) {
+		POBJ *b;
+
+		k = pd_int(d, dp, "K", 0);
+		cols = pd_int(d, dp, "Columns", sw);
+		b = pd_get(d, dp, "BlackIs1");
+		black1 = b && b->t == PO_BOOL && b->a;
+		b = pd_get(d, dp, "EncodedByteAlign");
+		align = b && b->t == PO_BOOL && b->a;
+	}
+	if (k > 0 || cols <= 0) {
+		*why = k > 0 ? PIC_UNSUPPORTED : PIC_DAMAGED;	/* group 3, two-dimensional */
+		return -1;
+	}
+	if (src ? ccitt_open_pull(c, scan_fill, src, (int)cols, (int)k, align) : ccitt_open(c, s, n, (int)cols, (int)k, align)) {
+		*why = PIC_MEMORY;
+		return -1;
+	}
+	bs->row = ccitt_src;
+	bs->u = c;
+	bs->cols = cols;
+	bs->flip = black1 ^ decode_inverted(d, o);
+	return 0;
+}
+
+static PIC *from_ccitt(PDOC *d, POBJ *o, const unsigned char *s, long n, long sw, long sh, int w, int h, int *why)
+{
+	CCITT c;
+	BITS bs;
+	PIC *p;
+
+	if (ccitt_bits(d, o, NULL, s, n, sw, &c, &bs, why))
+		return NULL;
+	p = from_bits(&bs, sh, w, h, why);
+	ccitt_close(&c);
+	return p;
+}
+
+/* a JBIG2 picture: its page a row at a time (jbig2.c: a generic region's
+   three rows, a text region's symbols; never the page whole where it can
+   help it) */
+typedef struct {
+	JB2 *j;
+	long h;
+} JB2ROWS;
+
+static int jb2_src(void *u, unsigned char *row)
+{
+	return jb2_row(((JB2ROWS *)u)->j, row);
+}
+
+static int jb2_why(int r)
+{
+	return r == JB2_MEMORY ? PIC_MEMORY : r == JB2_UNSUPPORTED ? PIC_UNSUPPORTED : r == JB2_STOPPED ? PIC_STOPPED : PIC_DAMAGED;
+}
+
+/* data, n: the stream's bytes for the JBIG2 filter, the globals' into gb
+   (the decoder copies neither: both stay till jbig2_done) */
+static int jbig2_bits(PDOC *d, POBJ *o, const unsigned char *data, long n, long max_bytes, JB2ROWS *j, BITS *bs, SBUF *gb,
+		      int *why)
+{
+	POBJ *dp = decode_parms(d, o), *gr = dp ? pd_get(d, dp, "JBIG2Globals") : NULL, *g;
+	int r, w, h;
+
+	sb_init(gb);
+	memset(j, 0, sizeof *j);
+	if (gr && gr->t == PO_REF && (g = pdf_get(d, gr->a)) && g->t == PO_DICT && pdf_stream(d, g, gr->a, gb, NULL, max_bytes) != 0) {
+		sb_free(gb);
+		*why = PIC_DAMAGED;
+		return -1;
+	}
+	j->j = jb2_open((const uint8_t *)gb->s, gb->len, data, n, poll_ok, &r);
+	if (!j->j) {
+		sb_free(gb);
+		*why = jb2_why(r);
+		return -1;
+	}
+	jb2_size(j->j, &w, &h);
+	j->h = h;
+	bs->row = jb2_src;
+	bs->u = j;
+	bs->cols = w;
+	bs->flip = decode_inverted(d, o);
+	return 0;
+}
+
+/* the decoder done with: the reason its rows stopped short, if they did */
+static void jbig2_done(JB2ROWS *j, SBUF *gb, int *why)
+{
+	if (j->j && jb2_error(j->j))
+		*why = jb2_why(jb2_error(j->j));
+	jb2_close(j->j);
+	j->j = NULL;
+	sb_free(gb);
+}
+
+static PIC *from_jbig2(PDOC *d, POBJ *o, const unsigned char *s, long n, long sh, int w, int h, long max_bytes, int *why)
+{
+	JB2ROWS j;
+	BITS bs;
+	SBUF gb;
+	PIC *p;
+
+	if (jbig2_bits(d, o, s, n, max_bytes, &j, &bs, &gb, why))
+		return NULL;
+	p = from_bits(&bs, sh < j.h ? sh : j.h, w, h, why);
+	if (!p)
+		jbig2_done(&j, &gb, why);
+	else
+		jbig2_done(&j, &gb, &(int){ 0 });
+	return p;
+}
+
+static PIC *from_jpx(PDOC *d, POBJ *o, const unsigned char *s, long n, int w, int h, int *why);
+
+static PIC *image_whole(PDOC *d, long obj, int w, int h, long max_bytes, int *why)
 {
 	POBJ *o = pdf_get(d, obj), *cs;
 	const char *term = NULL;
@@ -311,8 +461,11 @@ PIC *pdf_image(PDOC *d, long obj, int w, int h, long max_bytes, int *why)
 	sw = pd_int(d, o, "Width", 0);
 	sh = pd_int(d, o, "Height", 0);
 	bpc = (int)pd_int(d, o, "BitsPerComponent", 8);
+	/* a stencil paints where 0, shown black there as DeviceGray's 0 is:
+	   either turned round by /Decode [1 0] */
+	invert = decode_inverted(d, o);
 	if (pdf_is_name(pd_get(d, o, "ImageMask"), "true") || ((cs = pd_get(d, o, "ImageMask")) && cs->t == PO_BOOL && cs->a))
-		bpc = 1, cs = NULL, nc = 1, invert = 1;	/* a stencil: painted where 0 */
+		bpc = 1, cs = NULL, nc = 1;
 	else
 		nc = colours(d, pd_get(d, o, "ColorSpace"), pal, &hival);
 	if (sw <= 0 || sh <= 0) {
@@ -330,8 +483,12 @@ PIC *pdf_image(PDOC *d, long obj, int w, int h, long max_bytes, int *why)
 		p = pic_decode((const unsigned char *)b.s, b.len, w, h, 8L << 20, why);
 	else if (term && !strcmp(term, "CCITT"))
 		p = from_ccitt(d, o, (const unsigned char *)b.s, b.len, sw, sh, w, h, why);
+	else if (term && !strcmp(term, "JBIG2"))
+		p = from_jbig2(d, o, (const unsigned char *)b.s, b.len, sh, w, h, max_bytes, why);
+	else if (term && !strcmp(term, "JPX"))
+		p = from_jpx(d, o, (const unsigned char *)b.s, b.len, w, h, why);
 	else if (term)
-		*why = PIC_UNSUPPORTED;		/* JPX, JBIG2 */
+		*why = PIC_UNSUPPORTED;
 	else if (nc == 0)
 		*why = PIC_UNSUPPORTED;
 	else
@@ -498,49 +655,27 @@ static long scan_fill(void *u, unsigned char *buf, long n)
 	return k > 0 ? k : 0;
 }
 
-/* src: the coded bytes pulled a piece at a time; else s, n whole */
-static int rows_ccitt(PDOC *d, POBJ *o, PCSRC *src, const unsigned char *s, long n, long sw, long sh, ROWS *out, int *why)
+/* the source's rows (sh of them) a shown row at a time to out: shrunk to
+   grey as from_bits, each shown row made from the grey row at its place */
+static int rows_bits(BITS *bs, long sh, ROWS *out, int *why)
 {
-	POBJ *dp = pd_get(d, o, "DecodeParms");
-	long k = 0, cols = sw, gw, gh, gi = 0, y, x, *xs = NULL;
-	int black1 = 0, f = 1, align = 0, ok = 1;
-	CCITT c;
+	long cols = bs->cols, gw, gh, gi = 0, y, x, *xs = NULL, nb = (cols + 7) / 8;
+	int f = 1, ok = 1;
 	RSCALE rs;
 	unsigned char *row, *grey;
 	GMK m;
 
-	if (dp && dp->t == PO_ARR && dp->a)
-		dp = pdf_res(d, pa_at(dp, dp->a - 1));
-	if (dp && dp->t == PO_DICT) {
-		POBJ *b;
-
-		k = pd_int(d, dp, "K", 0);
-		cols = pd_int(d, dp, "Columns", sw);
-		b = pd_get(d, dp, "BlackIs1");
-		black1 = b && b->t == PO_BOOL && b->a;
-		b = pd_get(d, dp, "EncodedByteAlign");
-		align = b && b->t == PO_BOOL && b->a;
-	}
-	if (k > 0) {
-		*why = PIC_UNSUPPORTED;		/* group 3, two-dimensional */
-		return 0;
-	}
 	while (f < 8 && cols / (f * 2) >= out->w)
 		f *= 2;
-	if (src ? ccitt_open_pull(&c, scan_fill, src, (int)cols, (int)k, align) : ccitt_open(&c, s, n, (int)cols, (int)k, align)) {
-		*why = PIC_MEMORY;
-		return 0;
-	}
 	gw = f > 1 ? cols / f : cols;
 	gh = f > 1 ? sh / f : sh;		/* the grey rows there will be: pdf_image's gh */
-	row = malloc((size_t)(cols + 7) / 8);
+	row = malloc((size_t)nb);
 	grey = malloc((size_t)(f > 1 ? (cols + f - 1) / f : cols));	/* (rs_row's row: its width rounded up) */
 	xs = malloc((size_t)out->w * sizeof *xs);
 	if (!row || !grey || !xs || (f > 1 && rs_init(&rs, (int)cols, f))) {
 		free(row);
 		free(grey);
 		free(xs);
-		ccitt_close(&c);
 		*why = PIC_MEMORY;
 		return 0;
 	}
@@ -549,14 +684,13 @@ static int rows_ccitt(PDOC *d, POBJ *o, PCSRC *src, const unsigned char *s, long
 	m.g = grey;
 	m.xs = xs;
 	m.w = out->w;
-	for (y = 0; y < sh && out->ny < out->h && ccitt_row(&c, row); y++) {
+	for (y = 0; y < sh && out->ny < out->h && bs->row(bs->u, row); y++) {
 		long i;
 		int full = 1;
 
-		if (!black1)
-			for (i = 0; i < (cols + 7) / 8; i++)
+		if (bs->flip)
+			for (i = 0; i < nb; i++)
 				row[i] = (unsigned char)~row[i];
-		/* the rows come as 1 for black: to rscale's ink */
 		if (f > 1)
 			full = rs_row(&rs, row, grey);
 		else
@@ -587,11 +721,24 @@ static int rows_ccitt(PDOC *d, POBJ *o, PCSRC *src, const unsigned char *s, long
 	}
 	if (f > 1)
 		rs_close(&rs);
-	ccitt_close(&c);
 	free(row);
 	free(grey);
 	free(xs);
 	return ok;
+}
+
+/* src: the coded bytes pulled a piece at a time; else s, n whole */
+static int rows_ccitt(PDOC *d, POBJ *o, PCSRC *src, const unsigned char *s, long n, long sw, long sh, ROWS *out, int *why)
+{
+	CCITT c;
+	BITS bs;
+	int r;
+
+	if (ccitt_bits(d, o, src, s, n, sw, &c, &bs, why))
+		return 0;
+	r = rows_bits(&bs, sh, out, why);
+	ccitt_close(&c);
+	return r;
 }
 
 /* a JPEG: its bytes read a piece at a time, its rows made one at a time
@@ -625,6 +772,115 @@ static int rows_jpeg(PDOC *d, POBJ *o, long obj, int w, int h, PIMG_ROW row, voi
 	if (r > 0)
 		*why = PIC_OK;
 	return r;
+}
+
+/* a JPEG 2000 picture (its bytes s, n whole): decoded reduced by 2^r, the
+   largest r it stays at least w x h at, each shown row the decoded one at
+   its place (as from_samples); the PDF's Indexed colours taken for a grey
+   one's samples */
+typedef struct {
+	ROWS *out;
+	long rh;			/* the decoded rows */
+	SMK m;
+	int stop;
+} JXR;
+
+static void jpx_row(void *u, long y, const unsigned char *px)
+{
+	JXR *j = u;
+
+	j->m.r = px;
+	if (!j->stop && !emit(j->out, y, j->rh, make_samples, &j->m))
+		j->stop = 1;
+}
+
+static int jpx_why(int r)
+{
+	return r == JPX_MEMORY ? PIC_MEMORY : r == JPX_UNSUPPORTED ? PIC_UNSUPPORTED : r == JPX_STOPPED ? PIC_STOPPED : PIC_DAMAGED;
+}
+
+static int rows_jpx(PDOC *d, POBJ *o, const unsigned char *s, long n, ROWS *out, int *why)
+{
+	int jw, jh, jc, lv, r, red = 0, rw, rh, nc, hival = 0;
+	unsigned char pal[256 * 3];
+	long x, *xs;
+	JXR j;
+
+	if ((r = jpx_info(s, n, 0, &jw, &jh, &jc, &lv)) != JPX_OK) {
+		*why = jpx_why(r);
+		return 0;
+	}
+	while (red < lv && jw >> (red + 1) >= out->w && jh >> (red + 1) >= out->h)
+		red++;
+	nc = colours(d, pd_get(d, o, "ColorSpace"), pal, &hival);
+	if (!(nc < 0 && jc == 1))
+		nc = jc >= 3 ? 3 : 1;		/* (the code-stream's own colours) */
+	xs = malloc((size_t)out->w * sizeof *xs);
+	if (!xs) {
+		*why = PIC_MEMORY;
+		return 0;
+	}
+	/* refused memory before a row came (the decoder's 4 bytes a pixel kept,
+	   a 1 MB ST's): smaller, a half each time, rather than not at all */
+	do {
+		jpx_info(s, n, red, &rw, &rh, &jc, &lv);
+		for (x = 0; x < out->w; x++)
+			xs[x] = x * rw / out->w;
+		memset(&j, 0, sizeof j);
+		j.out = out;
+		j.rh = rh;
+		j.m.xs = xs;
+		j.m.w = out->w;
+		j.m.bpc = 8;
+		j.m.nc = nc;
+		j.m.pal = pal;
+		r = jpx_decode(s, n, red, jpx_row, &j, poll_ok, &jw, &jh, &jc);
+	} while (r == JPX_MEMORY && out->ny == 0 && red++ < lv);
+	free(xs);
+	if (r == JPX_OK && j.stop)
+		r = JPX_STOPPED;
+	if (r != JPX_OK) {
+		*why = jpx_why(r);
+		return 0;
+	}
+	return 1;
+}
+
+static void into_pic(void *u, long y, const unsigned short *px)
+{
+	PIC *p = u;
+
+	memcpy(p->px + y * p->w, px, (size_t)p->w * 2);
+}
+
+static PIC *from_jpx(PDOC *d, POBJ *o, const unsigned char *s, long n, int w, int h, int *why)
+{
+	PIC *p = pic_new(w, h);
+	ROWS out;
+
+	memset(&out, 0, sizeof out);
+	out.w = w;
+	out.h = h;
+	out.row = into_pic;
+	out.u = p;
+	out.out = malloc((size_t)w * 2);
+	if (!p || !out.out) {
+		free(out.out);
+		if (p)
+			pic_free(p);
+		*why = PIC_MEMORY;
+		return NULL;
+	}
+	if (!rows_jpx(d, o, s, n, &out, why) || out.ny < h) {
+		if (out.ny < h && *why == PIC_OK)
+			*why = PIC_DAMAGED;
+		free(out.out);
+		pic_free(p);
+		return NULL;
+	}
+	free(out.out);
+	p->how = PIC_PNG;
+	return p;
 }
 
 int pdf_image_palette(PDOC *d, long obj, unsigned char *pal, int *n)
@@ -727,7 +983,7 @@ int pdf_image_raw_rows(PDOC *d, long obj, void (*row)(void *u, long y, const uns
 	return ok;
 }
 
-int pdf_image_rows(PDOC *d, long obj, int w, int h, PIMG_ROW row, void *u, long max_bytes, int *why)
+static int image_rows(PDOC *d, long obj, int w, int h, PIMG_ROW row, void *u, long max_bytes, int *why)
 {
 	POBJ *o = pdf_get(d, obj), *cs, *fl;
 	long sw, sh;
@@ -744,15 +1000,14 @@ int pdf_image_rows(PDOC *d, long obj, int w, int h, PIMG_ROW row, void *u, long 
 		fl = pdf_res(d, pa_at(fl, fl->a - 1));
 	if (fl && fl->t == PO_NAME)
 		fn = fl->u.p;
-	if (fn && (!strcmp(fn, "JPXDecode") || !strcmp(fn, "JBIG2Decode")))
-		return -1;			/* not shown: pdf_image says so */
 	if (fn && (!strcmp(fn, "DCTDecode") || !strcmp(fn, "DCT")))
 		return rows_jpeg(d, o, obj, w, h, row, u, why);
 	sw = pd_int(d, o, "Width", 0);
 	sh = pd_int(d, o, "Height", 0);
 	bpc = (int)pd_int(d, o, "BitsPerComponent", 8);
+	invert = decode_inverted(d, o);		/* (as pdf_image's) */
 	if (pdf_is_name(pd_get(d, o, "ImageMask"), "true") || ((cs = pd_get(d, o, "ImageMask")) && cs->t == PO_BOOL && cs->a))
-		bpc = 1, cs = NULL, nc = 1, invert = 1;	/* a stencil: painted where 0 */
+		bpc = 1, cs = NULL, nc = 1;
 	else
 		nc = colours(d, pd_get(d, o, "ColorSpace"), pal, &hival);
 	if (sw <= 0 || sh <= 0)
@@ -787,10 +1042,228 @@ int pdf_image_rows(PDOC *d, long obj, int w, int h, PIMG_ROW row, void *u, long 
 		} else
 			r = rows_ccitt(d, o, NULL, (const unsigned char *)b.s, b.len, sw, sh, &out, why);
 		sb_free(&b);
+	} else if (fn && !strcmp(fn, "JBIG2Decode")) {
+		/* (its bytes whole; the page a row at a time, jbig2.c's streaming) */
+		SBUF b;
+		const char *term = NULL;
+		long oom = d->st.oom;
+		JB2ROWS j;
+		BITS bs;
+		SBUF gb;
+
+		sb_init(&b);
+		r = 0;
+		if (pdf_stream(d, o, obj, &b, &term, max_bytes) != 0)
+			*why = stream_why(d, &b, max_bytes, oom);
+		else if (!term || strcmp(term, "JBIG2"))
+			*why = PIC_DAMAGED;
+		else if (jbig2_bits(d, o, (const unsigned char *)b.s, b.len, max_bytes, &j, &bs, &gb, why) == 0) {
+			r = rows_bits(&bs, sh < j.h ? sh : j.h, &out, why);
+			if (!r)
+				jbig2_done(&j, &gb, why);
+			else
+				jbig2_done(&j, &gb, &(int){ 0 });
+		}
+		sb_free(&b);
+	} else if (fn && !strcmp(fn, "JPXDecode")) {
+		/* (decoded whole: a code-block's coefficients reach many rows) */
+		SBUF b;
+		const char *term = NULL;
+		long oom = d->st.oom;
+
+		sb_init(&b);
+		r = 0;
+		if (pdf_stream(d, o, obj, &b, &term, max_bytes) != 0)
+			*why = stream_why(d, &b, max_bytes, oom);
+		else if (!term || strcmp(term, "JPX"))
+			*why = PIC_DAMAGED;
+		else
+			r = rows_jpx(d, o, (const unsigned char *)b.s, b.len, &out, why);
+		sb_free(&b);
 	} else
 		r = rows_samples(d, o, obj, sw, sh, bpc, nc, pal, invert, &out, max_bytes, why);
 	free(out.out);
 	if (r)
 		*why = PIC_OK;
+	return r;
+}
+
+/* ------------------------------------------------------------------ a soft mask over white */
+/*
+ * A picture with an /SMask (archive.org's text pages: a foreground drawn
+ * through a JBIG2 mask) is shown as it looks on white paper: its mask
+ * decoded first at the picture's size (a bit a pixel when the mask is
+ * 1-bit, so a 600 x 800 picture's is 60 KB), then each row blended as it
+ * passes. render.c draws the picture through the mask itself
+ * (pdfimg_raw_smask).
+ */
+int pdfimg_raw_smask;
+
+typedef struct {
+	unsigned char *a;
+	int bits;			/* 1: a bit a pixel, else a byte */
+	long w, h;
+	PIMG_ROW row;
+	void *u;
+	unsigned short *tmp;
+} SMASK;
+
+static long smask_of(POBJ *o)
+{
+	POBJ *sm = pd_getraw(o, "SMask");
+
+	return sm && sm->t == PO_REF ? sm->a : -1;
+}
+
+static int grey_of(unsigned short c)
+{
+	return ((c >> 11) * 8 + ((c >> 5) & 63) * 4 * 2 + (c & 31) * 8) / 4;
+}
+
+static void mask_in(void *u, long y, const unsigned short *px)
+{
+	SMASK *m = u;
+	long x;
+
+	if (y < 0 || y >= m->h)
+		return;
+	if (m->bits) {
+		unsigned char *r = m->a + y * ((m->w + 7) / 8);
+
+		for (x = 0; x < m->w; x++)
+			if (grey_of(px[x]) >= 128)
+				r[x >> 3] |= (unsigned char)(0x80 >> (x & 7));
+	} else
+		for (x = 0; x < m->w; x++)
+			m->a[y * m->w + x] = (unsigned char)grey_of(px[x]);
+}
+
+/* the mask of obj (mobj) at w x h into m: 1, or 0 (shown without it) */
+static int mask_load(PDOC *d, long mobj, int w, int h, long max_bytes, SMASK *m)
+{
+	POBJ *mo = pdf_get(d, mobj);
+	long bytes;
+	int why, r;
+
+	memset(m, 0, sizeof *m);
+	if (!mo || mo->t != PO_DICT)
+		return 0;
+	m->bits = pd_int(d, mo, "BitsPerComponent", 8) == 1;
+	m->w = w;
+	m->h = h;
+	bytes = m->bits ? (long)((w + 7) / 8) * h : (long)w * h;
+	if (bytes > 256L * 1024 || !(m->a = calloc((size_t)bytes, 1)))
+		return 0;
+	r = image_rows(d, mobj, w, h, mask_in, m, max_bytes, &why);
+	if (r < 0) {
+		PIC *p = image_whole(d, mobj, w, h, max_bytes, &why);
+		long y;
+
+		if (p)
+			for (y = 0; y < h; y++)
+				mask_in(m, y, p->px + y * (long)w);
+		r = p != NULL;
+		pic_free(p);
+	}
+	if (r != 1) {
+		free(m->a);
+		m->a = NULL;
+		return 0;
+	}
+	return 1;
+}
+
+/* row y of the picture over white through the mask */
+static void blend(const SMASK *m, long y, unsigned short *px)
+{
+	long x;
+
+	if (m->bits) {
+		const unsigned char *r = m->a + y * ((m->w + 7) / 8);
+
+		for (x = 0; x < m->w; x++)
+			if (!(r[x >> 3] & (0x80 >> (x & 7))))
+				px[x] = 0xFFFF;
+	} else {
+		const unsigned char *r = m->a + y * m->w;
+
+		for (x = 0; x < m->w; x++) {
+			unsigned a = r[x], c = px[x], k = 255 - a;
+			unsigned R = ((c >> 11) * a + 31 * k) >> 8, G = (((c >> 5) & 63) * a + 63 * k) >> 8, B = ((c & 31) * a + 31 * k) >> 8;
+
+			px[x] = (unsigned short)(R << 11 | G << 5 | B);
+		}
+	}
+}
+
+static void row_through(void *u, long y, const unsigned short *px)
+{
+	SMASK *m = u;
+
+	if (y < 0 || y >= m->h)
+		return;
+	memcpy(m->tmp, px, (size_t)m->w * 2);
+	blend(m, y, m->tmp);
+	m->row(m->u, y, m->tmp);
+}
+
+/* the decoders' work before a picture's rows (pdfimg.h) */
+long pdfimg_work_done, pdfimg_work_of;
+
+static void work_hook(long done, long of)
+{
+	pdfimg_work_done = done;
+	pdfimg_work_of = of;
+}
+
+static void work_begin(void)
+{
+	pdfimg_work_done = pdfimg_work_of = 0;
+	jpx_progress = work_hook;
+	jb2_progress = work_hook;
+}
+
+PIC *pdf_image(PDOC *d, long obj, int w, int h, long max_bytes, int *why)
+{
+	PIC *p;
+	POBJ *o;
+	long mo;
+	SMASK m;
+
+	work_begin();
+	p = image_whole(d, obj, w, h, max_bytes, why);
+
+	if (p && !pdfimg_raw_smask && (o = pdf_get(d, obj)) && (mo = smask_of(o)) >= 0 &&
+	    mask_load(d, mo, p->w, p->h, max_bytes, &m)) {
+		long y;
+
+		for (y = 0; y < p->h; y++)
+			blend(&m, y, p->px + y * (long)p->w);
+		free(m.a);
+	}
+	return p;
+}
+
+int pdf_image_rows(PDOC *d, long obj, int w, int h, PIMG_ROW row, void *u, long max_bytes, int *why)
+{
+	POBJ *o;
+	long mo;
+	SMASK m;
+	int r;
+
+	work_begin();
+	if (pdfimg_raw_smask || !(o = pdf_get(d, obj)) || o->t != PO_DICT || (mo = smask_of(o)) < 0 ||
+	    !mask_load(d, mo, w, h, max_bytes, &m))
+		return image_rows(d, obj, w, h, row, u, max_bytes, why);
+	m.row = row;
+	m.u = u;
+	m.tmp = malloc((size_t)w * 2);
+	if (!m.tmp) {
+		free(m.a);
+		return image_rows(d, obj, w, h, row, u, max_bytes, why);
+	}
+	r = image_rows(d, obj, w, h, row_through, &m, max_bytes, why);
+	free(m.tmp);
+	free(m.a);
 	return r;
 }

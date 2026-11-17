@@ -22,5 +22,12 @@ int rdraw_load(int (*turn)(void), char *err, int errlen);
 const ROVL *rdraw_ovl(void);		/* NULL until loaded */
 long rdraw_taken(void);			/* its bytes in memory */
 void rdraw_unload(void);
+/* render.ovl's room set aside before a document's heap grows (a short
+   machine: rdraw.c), 1 when it was; its size (0 none); given back to TOS
+   (render.ovl not loaded in it) */
+int rdraw_reserve(void);
+long rdraw_reserved(void);
+long rdraw_spare(void);		/* (that part of it a refusal gives back) */
+void rdraw_unreserve(void);
 
 #endif

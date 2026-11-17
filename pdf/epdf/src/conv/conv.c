@@ -29,13 +29,26 @@
 #define PAGE_W 640			/* the whole page's pictures' width when the caller gives none */
 #define NDRAW 16			/* drawings a page at most */
 #define DRAW_ID 900000000L		/* a drawing's number in the text until it has its object */
-#define TURN_PX 4096L			/* pixels between turns in w_picture's loops */
+#define TURN_PX 2048L			/* pixels between turns in w_picture's loops (4096: 55 ms of a Falcon's) */
+#define GREY_PX 4096L			/* the grey test's, some 16 ms (2048 compiled it to a slower loop: 1.6 s more on CONVTEST's page 6) */
 
 /* padding in a branch a conversion that opens never takes: the code after
    it at the same places in a 68030's instruction cache (addresses mod 256)
    as before pic_poll was set here (tools/rpad.py; render.c's RPAD) */
 #ifndef VPAD_A
 #define VPAD_A 248
+#endif
+#ifndef VPAD_G
+#define VPAD_G 6		/* (grey_test's loop where 2.33 had it, mod 256) */
+#endif
+/* (each executed once a call: the code after grey_test and w_picture
+   where 2.33 had it, mod 256; the compiler copies each onto two paths, so
+   each moves what follows twice its size) */
+#ifndef VPAD_GT
+#define VPAD_GT 128
+#endif
+#ifndef VPAD_W
+#define VPAD_W 238
 #endif
 #define VPAD_S2(n) #n
 #define VPAD_S(n) VPAD_S2(n)
@@ -258,6 +271,135 @@ static void w_raw(PW *w, long num, const char *dict, const unsigned char *d, lon
 	w_printf(w, "\nendstream\nendobj\n");
 }
 
+/* a palette's n colours as hex at s (cap bytes with the NUL), while they
+   fit; its length. (snprintf's "%02X" each: a picture's 256 colours held a
+   Falcon 140 ms between turns) */
+static int pal_hex(char *s, int cap, const unsigned char (*pal)[3], int n)
+{
+	int o = 0, k, c;
+
+	/* (the digits in the merged strings, not an array of their own: the
+	   tables after them at their places, mod 256) */
+	for (k = 0; k < n && o + 7 <= cap; k++)
+		for (c = 0; c < 3; c++) {
+			s[o++] = "0123456789ABCDEF"[pal[k][c] >> 4];
+			s[o++] = "0123456789ABCDEF"[pal[k][c] & 15];
+		}
+	s[o] = '\0';
+	return o;
+}
+
+/* 1 when the n pixels are all grey, their mid greys counted in *mid; a
+   turn every GREY_PX of them. (A function of its own: inside w_picture its
+   loop's registers came out as the rest of w_picture's code allowed, and a
+   change elsewhere there made it 1.6 s slower on CONVTEST's page 6) */
+static int __attribute__((noinline)) grey_test(const uint16_t *px, long n, long *midp)
+{
+	long i0, mid = 0;
+	int all = 1;
+
+	VPAD(VPAD_G);
+	for (i0 = 0; i0 < n && all; i0 += GREY_PX) {
+		long e = n - i0 > GREY_PX ? i0 + GREY_PX : n;
+#if defined(__m68k__) || defined(__mc68000__)
+		/* 2.33's loop as its compiler made it, instruction for
+		   instruction (its store to the stack included): on a 68030
+		   it stays in the instruction cache where every loop compiled
+		   from this C since missed it on about half its instructions,
+		   CONVTEST's page 6 1.4 s slower (Hatari's profile) */
+		const uint16_t *p = px + i0;
+		long i = i0, spill;
+		int grey;
+
+		__asm__ volatile(
+			"1:\tclrl %%d1\n\t"
+			"movew %[p]@+,%%d1\n\t"
+			"movel %%d1,%%d0\n\t"
+			"moveq #11,%%d2\n\t"
+			"asrl %%d2,%%d0\n\t"
+			"lsll #3,%%d0\n\t"
+			"movel %%d1,%%d2\n\t"
+			"moveq #13,%%d5\n\t"
+			"asrl %%d5,%%d2\n\t"
+			"orl %%d2,%%d0\n\t"
+			"movel %%d1,%%d2\n\t"
+			"lsrl #3,%%d2\n\t"
+			"moveq #3,%%d6\n\t"
+			"notb %%d6\n\t"
+			"andl %%d6,%%d2\n\t"
+			"bfextu %%d1{#21:#2},%%d6\n\t"
+			"orl %%d2,%%d6\n\t"
+			"movel %%d1,%%d2\n\t"
+			"lsll #3,%%d2\n\t"
+			"moveq #0,%%d5\n\t"
+			"notb %%d5\n\t"
+			"andl %%d5,%%d2\n\t"
+			"movel %%d2,%[spill]\n\t"
+			"bfextu %%d1{#27:#3},%%d1\n\t"
+			"orl %%d1,%%d2\n\t"
+			"movel %%d0,%%d1\n\t"
+			"cmpl %%d0,%%d2\n\t"
+			"bles 2f\n\t"
+			"movel %%d2,%%d1\n"
+			"2:\tcmpl %%d1,%%d6\n\t"
+			"bles 3f\n\t"
+			"movel %%d6,%%d1\n"
+			"3:\tcmpl %%d0,%%d2\n\t"
+			"bges 4f\n\t"
+			"movel %%d2,%%d0\n"
+			"4:\tcmpl %%d0,%%d6\n\t"
+			"bges 5f\n\t"
+			"movel %%d6,%%d0\n"
+			"5:\tsubl %%d0,%%d1\n\t"
+			"moveq #24,%%d0\n\t"
+			"cmpl %%d1,%%d0\n\t"
+			"blts 8f\n\t"
+			"moveaw #-49,%%a3\n\t"
+			"addal %%d6,%%a3\n\t"
+			"cmpaw #158,%%a3\n\t"
+			"bhis 6f\n\t"
+			"addql #1,%[mid]\n"
+			"6:\taddql #1,%[i]\n\t"
+			"cmpal %[e],%[i]\n\t"
+			"bnes 1b\n\t"
+			"moveq #1,%[grey]\n\t"
+			"bras 9f\n"
+			"8:\tmoveq #0,%[grey]\n"
+			"9:"
+			: [p] "+a" (p), [i] "+a" (i), [mid] "+d" (mid), [grey] "=d" (grey), [spill] "=m" (spill)
+			: [e] "d" (e)
+			: "d0", "d1", "d2", "d5", "d6", "a3", "cc");
+		if (!grey) {
+			all = 0;
+			break;
+		}
+#else
+		long i;
+
+		for (i = i0; i < e; i++) {
+			int c = px[i], r = R8(c), g = G8(c), b = B8(c), mx, mn;
+
+			mx = r > g ? r : g;
+			mx = b > mx ? b : mx;
+			mn = r < g ? r : g;
+			mn = b < mn ? b : mn;
+			if (mx - mn > 24) {
+				all = 0;
+				break;
+			}
+			if (g > 48 && g < 208)
+				mid++;
+		}
+		if (!all)
+			break;
+#endif
+		turn_now();
+	}
+	VPAD(VPAD_GT);
+	*midp = mid;
+	return all;
+}
+
 /* jpeg: the batch's "JPEG (small)": a photo or a grey picture as a JPEG */
 static int w_picture(PW *w, long num, const uint16_t *px, int pw, int ph, int jpeg)
 {
@@ -269,25 +411,7 @@ static int w_picture(PW *w, long num, const uint16_t *px, int pw, int ph, int jp
 	/* (each loop over the pixels turns between blocks of TURN_PX of them,
 	   nothing more inside: a 640 x 850 scan held EConvert 780 ms, 14 Nov
 	   2026) */
-	for (i0 = 0; i0 < n && grey; i0 += TURN_PX) {
-		long e = n - i0 > TURN_PX ? i0 + TURN_PX : n;
-
-		for (i = i0; i < e; i++) {
-			int c = px[i], r = R8(c), g = G8(c), b = B8(c), mx, mn;
-
-			mx = r > g ? r : g;
-			mx = b > mx ? b : mx;
-			mn = r < g ? r : g;
-			mn = b < mn ? b : mn;
-			if (mx - mn > 24) {
-				grey = 0;
-				break;
-			}
-			if (g > 48 && g < 208)
-				mid++;
-		}
-		turn_now();
-	}
+	grey = grey_test(px, n, &mid);
 	if (grey && mid * 50 < n) {
 		/* black and white (a scan, a line drawing) */
 		long rb = (pw + 7) / 8;
@@ -297,7 +421,9 @@ static int w_picture(PW *w, long num, const uint16_t *px, int pw, int ph, int jp
 		if (!d)
 			return -1;
 		for (y = 0; y < ph; y++) {
-			if ((y & 31) == 31)
+			/* (a turn every 8 rows, 5120 pixels at the 640 a picture is
+			   kept at: every 32, a drawing's held a Falcon 60 ms) */
+			if ((y & 7) == 7)
 				turn_now();
 			for (x = 0; x < pw; x++)
 				if (G8(px[(long)y * pw + x]) >= 128)
@@ -363,7 +489,7 @@ static int w_picture(PW *w, long num, const uint16_t *px, int pw, int ph, int jp
 			 "/BitsPerComponent 8", pw, ph);
 	} else {
 		unsigned char pal[256][3], *map = malloc(65536);
-		int nc, k, o;
+		int nc, o;
 
 		if (!map || !(nc = quant(px, n, 256, pal, map))) {
 			free(map);
@@ -380,10 +506,10 @@ static int w_picture(PW *w, long num, const uint16_t *px, int pw, int ph, int jp
 		free(map);
 		o = snprintf(dict, sizeof dict, "/Type /XObject /Subtype /Image /Width %d /Height %d "
 			     "/ColorSpace [/Indexed /DeviceRGB %d <", pw, ph, nc - 1);
-		for (k = 0; k < nc && o < (int)sizeof dict - 8; k++)
-			o += snprintf(dict + o, sizeof dict - (size_t)o, "%02X%02X%02X", pal[k][0], pal[k][1], pal[k][2]);
+		o += pal_hex(dict + o, (int)sizeof dict - o - 32, (const unsigned char (*)[3])pal, nc);
 		snprintf(dict + o, sizeof dict - (size_t)o, ">] /BitsPerComponent 8");
 	}
+	VPAD(VPAD_W);
 	w_stream(w, num, dict, d, n);
 	free(d);
 	return 0;

@@ -1922,6 +1922,8 @@ static void moved(long d)
 
 	if (d == 0)
 		return;
+	doc_view_moved();	/* (pictures and pages wait till the view rests) */
+	EPAD(EPAD_TM);
 	T_START();
 	win_info();
 	T_MARK("info");

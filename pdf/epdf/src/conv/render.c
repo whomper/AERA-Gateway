@@ -1156,10 +1156,11 @@ static void glyph_hook(void *u, long prog, int kind, const char *base, int comp,
    pages on Falcon-4:256 2-4 % slower from the shift alone); see
    tools/rpad.py */
 #ifndef RPAD_A
-#define RPAD_A 248
+#define RPAD_A 102
 #define RPAD_B 14
 #define RPAD_C 178
 #define RPAD_D 42
+#define RPAD_E 204
 #endif
 #define RPAD_S2(n) #n
 #define RPAD_S(n) RPAD_S2(n)
@@ -1248,7 +1249,9 @@ static void image_hook(void *u, long obj, const fx *ctm)
 	r->p_ih = h;		/* (the rows it is made at: the reader's calls count those) */
 	r->p_inimg = 1;
 	poll_page = r;
+	pdfimg_raw_smask = 1;		/* (its soft mask is drawn here) */
 	p = cv_image(r->d, obj, (int)w, (int)h, &why);
+	pdfimg_raw_smask = 0;
 	poll_page = NULL;
 	r->p_inimg = 0;
 	r->p_idone += r->p_icur > 0 ? r->p_icur : 0;
@@ -1260,11 +1263,50 @@ static void image_hook(void *u, long obj, const fx *ctm)
 		/* (the kept one given back for the memory, and tried again) */
 		pic_free((PIC *)r->ic_pic);
 		r->ic_pic = NULL;
+		pdfimg_raw_smask = 1;
 		p = cv_image(r->d, obj, (int)w, (int)h, &why);
+		pdfimg_raw_smask = 0;
 	}
 	if (!p) {
 		r->images_missed++;
 		return;
+	}
+	if (!mask && !p->alpha) {
+		/* a soft mask (/SMask, a stream of its own: archive.org's text
+		   pages' foreground through a JBIG2 mask): its brightness at the
+		   picture's size is how solid each pixel is */
+		POBJ *sm = pd_getraw(o, "SMask");
+
+		if (sm && sm->t == PO_REF) {
+			int swhy = 0;
+			PIC *a;
+
+			poll_page = r;
+			r->p_inimg = 1;
+			a = cv_image(r->d, sm->a, p->w, p->h, &swhy);
+			r->p_inimg = 0;
+			poll_page = NULL;
+			if (cv_turn)
+				cv_turn();
+			if (a && (p->alpha = malloc((size_t)p->w * p->h))) {
+				long i = 0;
+				int y, x;
+
+				/* (16 rows at a time, a turn between: the whole of a
+				   page-wide mask took page 6 of the showcase 115 ms
+				   without one on Falcon-4, rovl.py) */
+				for (y = 0; y < p->h; y++) {
+					for (x = 0; x < p->w; x++, i++) {
+						uint16_t c = a->px[i];
+
+						p->alpha[i] = (unsigned char)(((c >> 11) * 8 + ((c >> 5) & 63) * 4 * 2 + (c & 31) * 8) / 4);
+					}
+					if ((y & 15) == 15 && cv_turn)
+						cv_turn();
+				}
+			}
+			pic_free(a);
+		}
 	}
 	if (r->c.rows < r->c.h) {
 		/* kept for the next band, the one before let go */
@@ -1294,7 +1336,7 @@ draw:
 			free(a);
 		}
 	} else
-		rc_image(&r->c, p->px, NULL, p->w, p->h, m, 0, 0, &g->clip);
+		rc_image(&r->c, p->px, p->alpha, p->w, p->h, m, 0, 0, &g->clip);
 	if ((void *)p != r->ic_pic)
 		pic_free(p);
 }
@@ -1338,17 +1380,22 @@ int render_progress(const RPAGE *r)
 	long tot = r->p_ctot + r->p_itot, done, img;
 	int pp = r->d ? r->d->page_prog : 0;
 
-	if (tot <= 0 || r->p_itot <= 0)
+	if (tot <= 0 || r->p_itot <= 0) {
+		RPAD(RPAD_E);		/* (render_init and on where they were: this grew by a decoder's work, #48) */
 		return pp;			/* (no pictures: the content alone, as before) */
+	}
 	img = r->p_idone;
 	if (r->p_inimg && r->p_icur > 0 && r->p_ih > 0) {
 		/* its rows so far: a call every 16 rows (64 in some of the
-		   reader's), at most 95 % of it until it is done */
+		   reader's), at most 95 % of it until it is done; a JPX or JBIG2
+		   picture's decoder says its own work (it turns far more often) */
 		long rows = r->p_polls * 16, f;
 
 		if (rows > r->p_ih)
 			rows = r->p_ih;
 		f = rows * 950L / r->p_ih;		/* (thousandths) */
+		if (pdfimg_work_of > 0)
+			f = (pdfimg_work_done > pdfimg_work_of ? pdfimg_work_of : pdfimg_work_done) * 950L / pdfimg_work_of;
 		img += r->p_icur / 1000 * f + r->p_icur % 1000 * f / 1000;
 	}
 	if (img > r->p_itot)

@@ -27,6 +27,8 @@
 #include "coro.h"
 #include "pdfimg.h"
 #include "pics.h"
+
+static void note_start(const PICE *e);
 #include "rdraw.h"
 
 static PDOC *doc;
@@ -401,6 +403,7 @@ int doc_prepared(void)
 }
 
 static void page_pic_stop(void);
+static int pics_held;		/* Esc: no picture begun till the view moves (doc_pic_hold) */
 
 /* the view on the pages' text or on their pictures: laid out again from
    the page at the top (the caller lays the window out and draws it) */
@@ -592,12 +595,20 @@ static int pic_turn(void)
 }
 
 /* the text store's memory given back for a page or a picture refused it:
-   1 when there is enough to try again */
+   1 when there is enough to try again, 2 when that was render.ovl's room
+   (the store's still to give, if it's refused again) */
 static int give_back(const char *what)
 {
-	long b = ts_shrink(&store, STORE_KEEP);
+	long b, r = rdraw_reserved();
 	char a[24];
 
+	rdraw_unreserve();	/* render.ovl's room first, when it isn't in it (rdraw.c) */
+	if (r && !rdraw_reserved()) {
+		snprintf(a, sizeof a, "%ld", r);
+		log_event("ovl-unreserve", what, a);
+		return 2;
+	}
+	b = ts_shrink(&store, STORE_KEEP);
 	snprintf(a, sizeof a, "%ld", b);
 	log_event("memory-back", what, a);
 	if (b > 0)
@@ -914,7 +925,7 @@ int doc_pic_start(void)
 {
 	PICE *e;
 
-	if (!doc || rpic || !(e = pics_next()))
+	if (!doc || rpic || pics_held || !doc_view_resting() || !(e = pics_next()))
 		return 0;
 	{
 		/* its stack: 12 KB, 64 KB once pages are drawn (render.ovl's);
@@ -951,6 +962,8 @@ int doc_pic_start(void)
 		return 0;
 	}
 	rpic = e;
+	note_start(e);
+	EPAD(EPAD_DS);
 	rpic_planes = planes;
 	rpic_shown = 0;
 	rpic_rows = 0;
@@ -988,6 +1001,8 @@ static void stacks_note(void)
 
 int doc_pic_slice(unsigned long ms, long *obj)
 {
+	int g;
+
 	if (!rpic)
 		return 0;
 	slice_end = tos_ms() + ms;
@@ -997,8 +1012,9 @@ int doc_pic_slice(unsigned long ms, long *obj)
 	pics_band();			/* a band of colour rows to the screen's format */
 	if (!pdone)
 		return 0;
-	if ((rpic_rows ? !rpic_ok : !rpic_std) && rpic_why == PIC_MEMORY && retried_obj != rpic->obj && give_back("picture")) {
-		retried_obj = rpic->obj;
+	if ((rpic_rows ? !rpic_ok : !rpic_std) && rpic_why == PIC_MEMORY && retried_obj != rpic->obj && (g = give_back("picture"))) {
+		if (g == 1)
+			retried_obj = rpic->obj;
 		if (rpic_rows)
 			pics_made(rpic, 0, PIC_STOPPED);	/* its rows so far let go */
 		rpic->state = PICS_DECODING;
@@ -1035,16 +1051,10 @@ int doc_pic_busy(void)
 	return rpic != NULL;
 }
 
-/* the picture being made is one ahead of the view and one shown waits:
-   the one ahead stopped, its slot let go (made again later, if room) */
-void doc_pic_drop_ahead(void)
+/* the picture being made stopped within a turn, its slot let go: made
+   again when it is wanted again */
+static void pic_give_way(const char *ev)
 {
-	/* one ahead of the view gives way to one it shows; one the window
-	   shows but not on the page in focus gives way to that page's (Erez,
-	   8 Nov 2026: the page in focus first) */
-	if (!rpic || !((rpic->ahead && pics_shown_waiting()) ||
-		       (!rpic->ahead && pics_focus >= 0 && rpic->page != pics_focus && pics_focus_busy())))
-		return;
 	abandon = 1;
 	while (!pdone) {
 		running = &pic_co;
@@ -1057,7 +1067,36 @@ void doc_pic_drop_ahead(void)
 	pics_release(rpic);
 	rpic = NULL;
 	abandon = 0;
-	log_event("picture", "ahead-stopped", NULL);
+	log_event("picture", ev, NULL);
+}
+
+/* Esc (the hub, 16 Nov 2026: a JPX picture is 12-61 s on Falcon-4): the
+   picture or page being made stopped within a turn, and none begun till
+   the view moves; 1 when there was one */
+
+int doc_pic_hold(void)
+{
+	if (!rpic)
+		return 0;
+	if (rpic->obj >= PICS_PAGE)
+		page_pic_stop();
+	else
+		pic_give_way("held");
+	pics_held = 1;
+	return 1;
+}
+
+/* the picture being made is one ahead of the view and one shown waits:
+   the one ahead stopped, its slot let go (made again later, if room) */
+void doc_pic_drop_ahead(void)
+{
+	/* one ahead of the view gives way to one it shows; one the window
+	   shows but not on the page in focus gives way to that page's (Erez,
+	   8 Nov 2026: the page in focus first) */
+	if (!rpic || !((rpic->ahead && pics_shown_waiting()) ||
+		       (!rpic->ahead && pics_focus >= 0 && rpic->page != pics_focus && pics_focus_busy())))
+		return;
+	pic_give_way("ahead-stopped");
 }
 
 /* the progress row's (Erez, 2 Nov 2026) */
@@ -1089,6 +1128,12 @@ int doc_pic_progress(long *page, long *made, long *of)
 	*page = rpic->page;
 	*made = rpic->made;
 	*of = rpic->h;			/* (made whole, by the DSP or as a standard bitmap: 0 until done) */
+	if (rpic->obj < PICS_PAGE && pdfimg_work_of > 0) {
+		/* (JPX, JBIG2: their decoders' work first, a JPX picture's whole
+		   before a row comes, the hub 16 Nov 2026; the rows the last tenth) */
+		*of = 1000;
+		*made = pdfimg_work_done * 900 / pdfimg_work_of + (rpic->h > 0 ? rpic->made * 100 / rpic->h : 0);
+	}
 	if (rpic->obj >= PICS_PAGE) {
 		/* a page drawn: its content read, four fifths; its rows shown, the rest */
 		const ROVL *o = rdraw_ovl();
@@ -1204,6 +1249,7 @@ void doc_close(void)
 		rdraw_ovl()->close(rdoc);
 	rdoc = NULL;
 	rdraw_unload();			/* (its 676 KB back for the next document's text) */
+	rdraw_unreserve();
 	drawn = 0;
 	free(pdbl);
 	pdbl = NULL;
@@ -1226,6 +1272,12 @@ int doc_open(const char *path, int cols, int lines_mode, const char *cache)
 	const char *base;
 
 	doc_close();
+	if (rdraw_reserve()) {		/* render.ovl's room before the heap's blocks (rdraw.c) */
+		char a[24];
+
+		snprintf(a, sizeof a, "%ld", rdraw_reserved());
+		log_event("ovl-reserve", a, "");
+	}
 	{
 		/* a document's heap as the libc's has always been: a first block
 		   of a quarter of what is free (taken and given back to the heap
@@ -1332,7 +1384,7 @@ long doc_slice(unsigned long ms)
 {
 	long i, n = -1, len = 0;
 	char *a;
-	int rt_failed, was_read;
+	int rt_failed, was_read, g;
 
 	if (!doc_pending())
 		return -1;
@@ -1364,8 +1416,9 @@ long doc_slice(unsigned long ms)
 	if (!rdone)
 		return -1;
 	n = rpage;
-	if (rt->failed && doc->st.oom != rpage_oom && retried_page != n && give_back("page")) {
-		retried_page = n;
+	if (rt->failed && doc->st.oom != rpage_oom && retried_page != n && (g = give_back("page"))) {
+		if (g == 1)
+			retried_page = n;
 		ptext_free(rt);
 		rdone = 0;		/* the reader reads it again in the next slice */
 		return -1;
@@ -1466,4 +1519,63 @@ const char *doc_status(void)
 	else
 		snprintf(s, sizeof s, "%s  \xFA  %ld page%s", name, npages, npages == 1 ? "" : "s");
 	return s;
+}
+
+/* the window scrolled (Erez, 14 Nov 2026: a page
+   only passed over is no work for the machine). A move that follows another
+   within 400 ms (a held key, the arrows held, a page key pressed again and
+   again) holds the pictures till the view has been still 400 ms; one on its
+   own (a jump: the page strip, Find, a key pressed once) draws at once. A
+   page being drawn that left the view stops (drawn again when it is wanted
+   again) */
+static unsigned long view_rest_at, view_moved_at;
+/* (the bss after them where 2.32 had it, mod 256: 8 bytes and 248) */
+static char view_pad[248] __attribute__((used));
+
+void doc_view_moved(void)
+{
+	unsigned long now = tos_ms();
+	long p0, p1;
+
+	EPAD(EPAD_DV);
+	(void)*(volatile char *)view_pad;	/* (kept by the link: the pad above) */
+	if (view_moved_at && now - view_moved_at < 400)
+		view_rest_at = now + 400;
+	view_moved_at = now;
+	pics_held = 0;			/* (Esc's hold lasts till the view moves) */
+	/* (the pages in view only when a shown picture waits or a page is
+	   being drawn: the rows' walk cost the last page on Falcon-4 a tick,
+	   and the text with no pictures needs none of it) */
+	if (!pics_shown_waiting() && !(rpic && !rpic->ahead))
+		return;
+	win_pages_shown(&p0, &p1);
+	pics_unwant_outside(p0, p1);
+	if (rpic && !rpic->ahead && (rpic->page < p0 || rpic->page > p1)) {
+		/* the page being drawn, or a picture being made, on a page left:
+		   stopped within a turn (the hub, 16 Nov 2026: a JPX picture is
+		   12-61 s on Falcon-4), made again when it is wanted again */
+		if (rpic->obj >= PICS_PAGE)
+			page_pic_stop();
+		else
+			pic_give_way("left");
+	}
+}
+
+/* the view has rested its 400 ms (or a picture is under way): the
+   pictures' turns again; till then the reading has them all */
+int doc_view_resting(void)
+{
+	return rpic || (long)(tos_ms() - view_rest_at) >= 0;
+}
+
+/* a page's drawing begun: said for the rigs (passing.py, #96), those drawn
+   ahead of the view marked */
+static void note_start(const PICE *e)
+{
+	if (e->obj >= PICS_PAGE) {
+		char a[24];
+
+		snprintf(a, sizeof a, "%ld%s", e->page, e->ahead ? " ahead" : "");
+		log_event("page-start", a, NULL);
+	}
 }

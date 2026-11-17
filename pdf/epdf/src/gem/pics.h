@@ -38,6 +38,7 @@ int pics_shown_waiting(void);		/* a picture the window shows waits to be decoded
 extern long pics_focus;
 int pics_focus_busy(void);
 void pics_release(PICE *e);		/* its slot let go (an ahead one stopped) */
+void pics_unwant_outside(long p0, long p1);	/* the view moved: the shown ones asked for out of it forgotten */
 /* the decoder's answer for a picture made whole: std (the standard
    bitmap) or NULL (why) */
 void pics_done(PICE *e, unsigned char *std, long bytes, int why);

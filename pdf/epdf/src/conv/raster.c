@@ -87,7 +87,7 @@ void rc_clear(RCANVAS *c, uint16_t px)
    at the same places in a 68030's instruction cache (addresses mod 256)
    as before rc_image turned (tools/rpad.py; render.c's RPAD) */
 #ifndef APAD_A
-#define APAD_A 64
+#define APAD_A 0
 #endif
 #ifndef APAD_B
 #define APAD_B 118
@@ -777,7 +777,7 @@ void rc_image(RCANVAS *c, const uint16_t *px, const unsigned char *alpha, int pw
 {
 	RCLIP k;
 	int32_t xs[4], ys[4], x0, x1, y0, y1;
-	int i, X, Y, Yb, swap;
+	int i, X, Y, Yb, swap, step;
 	int *cmap;
 
 	/* the square's corners on the device */
@@ -814,8 +814,11 @@ void rc_image(RCANVAS *c, const uint16_t *px, const unsigned char *alpha, int pw
 	/* in blocks of IMG_ROWS rows, a turn between them (a photo laid whole
 	   held a Falcon 440 ms, 14 Nov 2026): the rows are laid by a function
 	   that calls none, so its loop keeps its registers */
+	/* (half as many through a soft mask: its rows blended cost page 6 of
+	   the showcase 60 ms in bands on Falcon-4, rovl.py) */
+	step = alpha ? IMG_ROWS / 2 : IMG_ROWS;
 	for (Y = k.y0; Y < k.y1; Y = Yb) {
-		Yb = k.y1 - Y > IMG_ROWS ? Y + IMG_ROWS : k.y1;
+		Yb = k.y1 - Y > step ? Y + step : k.y1;
 		img_rows(c, px, alpha, pw, ph, m, stencil, col, &k, cmap, swap, Y, Yb);
 		if (Yb < k.y1 && cv_turn)
 			cv_turn();

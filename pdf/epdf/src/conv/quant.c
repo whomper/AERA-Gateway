@@ -20,12 +20,16 @@ typedef struct {
 	int lo[3], hi[3];
 } BOX;
 
-/* padding in a branch only a refused allocation takes: the code after it
+/* padding in a branch only a refused allocation takes (QPAD_C: one never
+   taken): the code after it
    at the same places in a 68030's instruction cache (addresses mod 256)
    as before each split turned (tools/rpad.py; render.c's RPAD) */
 #ifndef QPAD_A
 #define QPAD_A 92
 #define QPAD_B 218
+#define QPAD_E 20		/* (box_fit's, once a call: nearest after it at 2.33's place) */
+#define QPAD_C 180		/* (quant's own turns grew it: the dithers after it at 2.33's places) */
+#define QPAD_D 42		/* (sort_axis's, once a split: quant after it at 2.33's place) */
 #endif
 #define QPAD_S2(n) #n
 #define QPAD_S(n) QPAD_S2(n)
@@ -39,14 +43,16 @@ static unsigned g_cmp;		/* the sort's comparisons: a turn every 4096 */
 
 /* the sort's comparators, one an axis (a test of the axis on each call cost more
    than the turn's count: the photo pages 1 s each on a Falcon). A turn
-   every 4096 comparisons: the first splits sort all of a picture's colours
-   in one qsort, 340 ms on a Falcon; the order is qsort's either way */
+   every 1024 comparisons (4096 held a Falcon 70 ms, 2048 a split's 70):
+   the first splits sort
+   all of a picture's colours in one qsort, 340 ms on a Falcon; the order is
+   qsort's either way */
 #define BY_AXIS(name, CH, PAD) \
 static int name(const void *x, const void *y) \
 { \
 	int a = CH(*(const uint16_t *)x), b = CH(*(const uint16_t *)y); \
  \
-	if ((++g_cmp & 4095) == 0 && cv_turn) { \
+	if ((++g_cmp & 1023) == 0 && cv_turn) { \
 		PAD; \
 		cv_turn(); \
 	} \
@@ -63,10 +69,13 @@ static void box_fit(BOX *b, const uint16_t *cols)
 	int lo0 = 255, lo1 = 255, lo2 = 255, hi0 = 0, hi1 = 0, hi2 = 0;
 	long i0, i;
 
-	/* (a block of 8192 colours between turns: the first box is all of a
+	/* (a block of 2048 colours between turns: the first box is all of a
 	   picture's colours) */
-	for (i0 = b->a; i0 < b->b; i0 += 8192) {
-		long e = b->b - i0 > 8192 ? i0 + 8192 : b->b;
+	for (i0 = b->a; i0 < b->b; i0 += 2048) {
+		long e = b->b - i0 > 2048 ? i0 + 2048 : b->b;
+
+		if (cv_turn)
+			cv_turn();	/* (at the start too: two fits and the next split's work in one turn, 55 ms) */
 
 		for (i = i0; i < e; i++) {
 			uint16_t c = cols[i];
@@ -79,9 +88,8 @@ static void box_fit(BOX *b, const uint16_t *cols)
 			if (u < lo2) lo2 = u;
 			if (u > hi2) hi2 = u;
 		}
-		if (e < b->b && cv_turn)
-			cv_turn();
 	}
+	QPAD(QPAD_E);
 	b->lo[0] = lo0;
 	b->lo[1] = lo1;
 	b->lo[2] = lo2;
@@ -90,9 +98,63 @@ static void box_fit(BOX *b, const uint16_t *cols)
 	b->hi[2] = hi2;
 }
 
+/* a box's colours in order of one channel, stable: qsort's order (its
+   merge sort keeps equal keys as they came), counted into tmp and back in
+   three passes with a turn every 8192. (qsort's last step put the 2-byte
+   colours back one at a time with no comparisons, so no turns: a split
+   held a Falcon 55 ms) */
+#define SORT_BY(CH) \
+	do { \
+		for (i = 0; i < n; i++) { \
+			if ((i & 8191) == 8191 && cv_turn) \
+				cv_turn(); \
+			cnt[CH(c[i])]++; \
+		} \
+		for (k = 0, sum = 0; k < 256; k++) { \
+			long v = cnt[k]; \
+ \
+			cnt[k] = sum; \
+			sum += v; \
+		} \
+		for (i = 0; i < n; i++) { \
+			if ((i & 8191) == 8191 && cv_turn) \
+				cv_turn(); \
+			tmp[cnt[CH(c[i])]++] = c[i]; \
+		} \
+	} while (0)
+
+static int sort_axis(uint16_t *c, long n, int ax)
+{
+	long cnt[256], i, sum;
+	int k;
+	/* (the block qsort took, its size and its time: the heap after a
+	   picture as 2.33 left it, the pages after it at their speed; a page
+	   of text after the photo pages was 2 ticks slower with one buffer
+	   of 2 bytes a colour) */
+	uint16_t *tmp = malloc(2 * (size_t)n * sizeof(char *) + sizeof *c);
+
+	if (!tmp)
+		return -1;
+	QPAD(QPAD_D);
+	memset(cnt, 0, sizeof cnt);
+	if (ax == 0)
+		SORT_BY(R8);
+	else if (ax == 1)
+		SORT_BY(G8);
+	else
+		SORT_BY(B8);
+	for (i = 0; i < n; i += 16384) {
+		if (cv_turn)
+			cv_turn();
+		memcpy(c + i, tmp + i, (size_t)(n - i < 16384 ? n - i : 16384) * sizeof *c);
+	}
+	free(tmp);
+	return 0;
+}
+
 int quant(const uint16_t *px, long count, int ncol, unsigned char (*pal)[3], unsigned char *map)
 {
-	uint32_t *hist = calloc(65536, sizeof *hist);
+	uint32_t *hist = malloc(65536 * sizeof *hist);
 	uint16_t *cols;
 	BOX *box;
 	long nc = 0, i;
@@ -102,8 +164,17 @@ int quant(const uint16_t *px, long count, int ncol, unsigned char (*pal)[3], uns
 		QPAD(QPAD_A);
 		return 0;
 	}
+	/* (cleared 32 KB a turn: calloc's 256 KB in one go, 70 ms of a
+	   Falcon's) */
+	for (i = 0; i < 65536; i += 8192) {
+		memset(hist + i, 0, 8192 * sizeof *hist);
+		if (cv_turn)
+			cv_turn();
+	}
+	/* (a turn every 8192 pixels: their counts land all over the 256 KB,
+	   16384 of them took 80 ms) */
 	for (i = 0; i < count; i++) {
-		if ((i & 16383) == 16383 && cv_turn)
+		if ((i & 8191) == 8191 && cv_turn)
 			cv_turn();
 		hist[px[i]]++;
 	}
@@ -170,10 +241,13 @@ int quant(const uint16_t *px, long count, int ncol, unsigned char (*pal)[3], uns
 		for (k = 1; k < 3; k++)
 			if (box[best].hi[k] - box[best].lo[k] > box[best].hi[ax] - box[best].lo[ax])
 				ax = k;
-		qsort(cols + box[best].a, (size_t)(box[best].b - box[best].a), sizeof *cols,
-		      ax == 0 ? by_r : ax == 1 ? by_g : by_b);
+		if (box[best].b - box[best].a < 2 || sort_axis(cols + box[best].a, box[best].b - box[best].a, ax))
+			qsort(cols + box[best].a, (size_t)(box[best].b - box[best].a), sizeof *cols,
+			      ax == 0 ? by_r : ax == 1 ? by_g : by_b);
 		half = box[best].pixels / 2;
 		for (j = box[best].a; j < box[best].b - 1; j++) {
+			if (((j - box[best].a) & 4095) == 4095 && cv_turn)
+				cv_turn();
 			acc += hist[cols[j]];
 			if (acc >= half)
 				break;
@@ -212,6 +286,8 @@ int quant(const uint16_t *px, long count, int ncol, unsigned char (*pal)[3], uns
 	free(hist);
 	free(cols);
 	free(box);
+	if (nb > ncol)
+		QPAD(QPAD_C);	/* (never: the boxes stop at ncol) */
 	return nb;
 }
 

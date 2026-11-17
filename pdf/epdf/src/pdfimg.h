@@ -13,10 +13,18 @@ PIC *pdf_image(PDOC *d, long obj, int w, int h, long max_bytes, int *why);
 /* the same picture a row at a time, never whole in memory: row(u, y, px)
    for y = 0 .. h - 1 as they are made (a program shows them as they
    come), px w pixels 5-6-5, the same pixels as pdf_image's. 1 done; 0 not
-   (why); -1 a picture this doesn't make (a progressive or CMYK JPEG,
-   JPX, JBIG2): pdf_image */
+   (why); -1 a picture this doesn't make (a progressive or CMYK JPEG):
+   pdf_image. A JPX picture is decoded whole first (its rows come after) */
 typedef void (*PIMG_ROW)(void *u, long y, const unsigned short *px);
 int pdf_image_rows(PDOC *d, long obj, int w, int h, PIMG_ROW row, void *u, long max_bytes, int *why);
+
+/* the work a picture's decoder (JPX, JBIG2) does before its rows come,
+   done of of, for a progress line: 0 of 0 when there is none, or none yet */
+extern long pdfimg_work_done, pdfimg_work_of;
+
+/* a picture with a soft mask (/SMask) comes from both as it looks on white
+   paper; with this set, as it is (render.c draws it through its mask) */
+extern int pdfimg_raw_smask;
 
 /* a picture of a palette's colours (Indexed, or 1 bit of grey; Flate or
    stored): 1, its colours (r g b) in pal (256 x 3) and their number in *n;

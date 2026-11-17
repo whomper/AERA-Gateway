@@ -63,6 +63,7 @@ int doc_pic_busy(void);
 int win_ahead_due(void);		/* pictures ahead of the view to look for */
 void win_ahead(void);			/* (a few rows a turn) */
 void doc_pic_drop_ahead(void);	/* a picture ahead stopped for one shown */
+int doc_pic_hold(void);		/* Esc: the picture or page being made stopped, none begun till the view moves */
 /* the progress row's: the page being read (-1 none), *prog how far
    through it in thousandths; the picture being made, its page and
    rows made of all (*of 0: not made a row at a time) */
@@ -84,6 +85,29 @@ int doc_page_drawable(void);
 int doc_drawn(void);			/* its pages drawn as printed by render.ovl (stage 2) */
 int doc_pic_drawing(void);		/* the picture being made is a page drawn */
 void doc_pic_stop_page_unless(long obj, int w, int h);	/* a zoom: another page's drawing stopped */
+/* padding run past once (bra.w over it): the code after it at 2.32's
+   places in a 68030's instruction cache, mod 256 (EPDF.PRG's pads) */
+#ifndef EPAD_DS
+#define EPAD_DS 104
+#endif
+#ifndef EPAD_TM
+#define EPAD_TM 246
+#endif
+#ifndef EPAD_DV
+#define EPAD_DV 74
+#endif
+#ifndef EPAD_PU
+#define EPAD_PU 66
+#endif
+#define EPAD_S2(n) #n
+#define EPAD_S(n) EPAD_S2(n)
+#if defined(__m68k__) || defined(__mc68000__)
+#define EPAD(n) __asm__ volatile("bra.w 1f\n\t.skip " EPAD_S(n) "\n1:")
+#else
+#define EPAD(n) ((void)0)
+#endif
+void doc_view_moved(void);		/* the window scrolled: pictures wait till it rests */
+int doc_view_resting(void);		/* ... and it has */
 extern char doc_font_dir[200];
 int doc_has_pages(void);		/* ... with its pages whole (View > Pages) */
 int doc_pages_mode(void);		/* the view shows them */

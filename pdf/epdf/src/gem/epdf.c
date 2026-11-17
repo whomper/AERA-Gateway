@@ -1308,6 +1308,13 @@ static void key(short kstate, short k)
 		log_event("copy-stopped", NULL, NULL);
 		return;
 	}
+	if (scan == 0x01 && !find_dir && doc_pic_hold()) {
+		/* Esc: the picture or page being made stopped within a turn (a
+		   JPX picture is 12-61 s on Falcon-4: the hub, 16 Nov 2026),
+		   none begun till the view moves */
+		log_event("picture-stopped", NULL, NULL);
+		return;
+	}
 	/* the AES makes these itself from Control with the arrows and
 	   Clr/Home, and gives them without Control in kstate; Shift may be gone
 	   too when EPDF was busy, so Shift+^Home and ^End both mean the last */
