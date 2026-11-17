@@ -1108,7 +1108,7 @@ class Handler(BaseHTTPRequestHandler):
             if fmt.startswith("Request timed out"):
                 aeragate.say("%s timed out" % self.address_string())
             else:
-                code = args[0] if args and isinstance(args[0], int) else "-"
+                code = int(args[0]) if args and isinstance(args[0], int) else "-"   # (3.9: an HTTPStatus)
                 aeragate.say("%s refused: %s" % (self.address_string(), code))
 
     def log_request(self, code="-", size="-"):

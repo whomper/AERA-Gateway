@@ -17,9 +17,9 @@ cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 cleanup
 
-docker build -q -t "aera-pios:$DEB" - >/dev/null <<EOF
+docker build --progress=plain -t "aera-pios:$DEB" - <<EOF
 FROM debian:$DEB
-RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
       systemd systemd-sysv dbus sudo git python3 iproute2 ca-certificates procps curl \
     && rm -rf /var/lib/apt/lists/* \
     && git config --system --add safe.directory '*'
