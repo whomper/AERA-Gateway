@@ -19,9 +19,9 @@ cleanup
 
 docker build --progress=plain -t "aera-pios:$DEB" - <<EOF
 FROM debian:$DEB
-# (bullseye's support ended: its security updates for arm64 are gone from
-# deb.debian.org, so only its main archive)
-RUN if [ "$DEB" = bullseye ]; then sed -i '/debian-security/d' /etc/apt/sources.list; fi \
+# (bullseye's support ended: its security updates are on archive.debian.org now)
+RUN if [ "$DEB" = bullseye ]; then \
+      sed -i 's|http://deb.debian.org/debian-security|http://archive.debian.org/debian-security|' /etc/apt/sources.list; fi \
     && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
       systemd systemd-sysv dbus sudo git python3 iproute2 ca-certificates procps curl \
     && rm -rf /var/lib/apt/lists/* \
