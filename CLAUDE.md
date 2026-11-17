@@ -97,6 +97,23 @@ sessions stay as they are.)
   release forward the same way. Decisions that are his still go to him first.
 A change to the docs alone needs no release of
   its own: it goes out with the next one.
+  - **The regression gate** (Erez, 17 Nov 2026: "we need to be extra
+  careful with regression issues as there are users of our software.
+  This means testing across all configurations" and "make sure we don't
+  loose performance"; guidelines 1.2, AERA-Atari a22574e). Every release,
+  before it goes out:
+    1. pyflakes, the unit tests, and CI with `tests/systemd.sh`;
+    2. each service the change touches tested by its owning app against
+       the candidate (`make itest` or `gateway.py`, from a `gateway/` copy
+       of the candidate commit): EMail, ECal, EContact, EFTP, EWeb, EPDF,
+       EPlay, ClaudeST's bridge;
+    3. the update path, an update keeping everything (`tests/systemd.sh`),
+       on Raspberry Pi OS bullseye and the newer one (CI's Debian bullseye
+       and bookworm runs on arm64);
+    4. the candidate and the results to the hub, which answers go or
+       faults; release on its go.
+
+    A fault a user reports becomes a test in the release that fixes it.
 - **Who decides what** (Erez, 31 Oct 2026; the guidelines' "Who decides
   what", AERA-Atari 797fddf). Erez's part, put to him before the work as
   a decision with a short context:

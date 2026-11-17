@@ -43,6 +43,18 @@ jobs:
       - name: Take over the apps' set-ups, install, remove; the claude recipe
         run: sudo tests/systemd.sh
 
+  pios:
+    name: Raspberry Pi OS's Debian ${{ matrix.debian }} (arm64, systemd)
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        debian: [bullseye, bookworm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: tests/systemd.sh in Debian ${{ matrix.debian }} with its own systemd (tests/pios.sh)
+        run: tests/pios.sh ${{ matrix.debian }}
+
   snap:
     name: Ubuntu, its Chromium a snap
     runs-on: ubuntu-24.04
