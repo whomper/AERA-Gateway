@@ -42,9 +42,17 @@ static int over_cap(PDOC *d, long n)
 #define over_cap(d, n) 0
 #endif
 
+void (*pdf_main_heap)(int on);
+
 void *pdf_malloc(PDOC *d, long n)
 {
-	void *p = over_cap(d, n) ? NULL : malloc((size_t)n);
+	void *p;
+
+	if (pdf_main_heap)
+		pdf_main_heap(1);
+	p = over_cap(d, n) ? NULL : malloc((size_t)n);
+	if (pdf_main_heap)
+		pdf_main_heap(0);
 
 	if (p) {
 		d->st.mem += n;
@@ -57,7 +65,13 @@ void *pdf_malloc(PDOC *d, long n)
 
 void *pdf_realloc(PDOC *d, void *p, long oldn, long n)
 {
-	void *q = over_cap(d, n - oldn) ? NULL : realloc(p, (size_t)n);
+	void *q;
+
+	if (pdf_main_heap)
+		pdf_main_heap(1);
+	q = over_cap(d, n - oldn) ? NULL : realloc(p, (size_t)n);
+	if (pdf_main_heap)
+		pdf_main_heap(0);
 
 	if (q) {
 		d->st.mem += n - oldn;
@@ -837,6 +851,15 @@ static void cache_put(PDOC *d, long num, POBJ *o)
 
 	c->num = (int32_t)(num + 1);
 	c->o = o;
+}
+
+/* an object marked unloadable for the page tried again at its next use:
+   one refused memory, where the caller has room now (pdftext.c's
+   missed_pics) */
+void pdf_retry_obj(PDOC *d, long num)
+{
+	if (num >= 0 && cache_find(d, num) == &unloadable)
+		d->cache[num & (PCACHE - 1)].o = NULL;
 }
 
 /* Parse an object whose text starts at buf. For a stream the dict gets an

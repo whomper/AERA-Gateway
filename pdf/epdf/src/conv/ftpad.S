@@ -46,3 +46,11 @@ CAT(FT_PAD_NAME, _str):
 	.endr
 	.byte	0
 #endif
+
+#if defined(FT_PAD_BSS) && FT_PAD_BSS > 0
+	/* (variables in the bss after one that grew: at their places too) */
+	.section .bss.FT_PAD_NAME,"aw",@nobits
+	.globl	CAT(FT_PAD_NAME, _bss)
+CAT(FT_PAD_NAME, _bss):
+	.skip	FT_PAD_BSS
+#endif

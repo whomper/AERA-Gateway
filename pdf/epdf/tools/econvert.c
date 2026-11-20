@@ -13,6 +13,7 @@
  *          --photos indexed|jpeg (indexed), --pictures page|screen (screen), --page-width N, --picture-width N (640: a screen's), --canvas KB (any), --progress ("progress DONE TOTAL" lines on stderr), --fonts DIR (the standard fonts' files,
  *          Liberation*.ttf; /usr/share/fonts/truetype/liberation), --width N (640)
  */
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -202,6 +203,43 @@ int main(int argc, char **argv)
 		} else if (!strcmp(argv[i], "--pictures") && i + 1 < argc) {
 			i++;
 			o.pic_size = !strcmp(argv[i], "screen") ? CV_PIC_SCREEN : CV_PIC_PAGE;
+		} else if (!strcmp(argv[i], "--pens") && i + 1 < argc) {
+			/* Faster display: the screen's pens, 3 bytes each by hardware
+			   register (2 to 256 of them) */
+			FILE *f = fopen(argv[++i], "rb");
+			long n = f ? (long)fread(o.pen_rgb, 1, sizeof o.pen_rgb, f) : 0;
+
+			if (f)
+				fclose(f);
+			if (n < 6 || n % 3) {
+				fprintf(stderr, "econvert: %s: not 2 to 256 pens of 3 bytes\n", argv[i]);
+				return 2;
+			}
+			o.pen_n = (int)(n / 3);
+		} else if (!strcmp(argv[i], "--pens-hex") && i + 1 < argc) {
+			/* the same as hex digits, 6 a pen (pdfgate's pens=) */
+			const char *h = argv[++i];
+			long n = (long)strlen(h), k;
+
+			if (n < 12 || n > 1536 || n % 6) {
+				fprintf(stderr, "econvert: --pens-hex: not 2 to 256 pens of 6 digits\n");
+				return 2;
+			}
+			for (k = 0; k < n; k += 2) {
+				unsigned v;
+
+				if (!isxdigit((unsigned char)h[k]) || !isxdigit((unsigned char)h[k + 1]) ||
+				    sscanf(h + k, "%2x", &v) != 1) {
+					fprintf(stderr, "econvert: --pens-hex: %.6s?\n", h + k / 6 * 6);
+					return 2;
+				}
+				o.pen_rgb[k / 6][k / 2 % 3] = (unsigned char)v;
+			}
+			o.pen_n = (int)(n / 6);
+		} else if (!strcmp(argv[i], "--column") && i + 1 < argc) {
+			o.pen_col = atoi(argv[++i]);	/* EPDF's text column in pixels (Faster display) */
+		} else if (!strcmp(argv[i], "--aspect") && i + 1 < argc) {
+			o.pen_aspect = atoi(argv[++i]);	/* a pixel's height to its width x 16 */
 		} else if (!strcmp(argv[i], "--photos") && i + 1 < argc) {
 			i++;
 			o.photos = !strcmp(argv[i], "jpeg") ? CV_PHOTOS_JPEG : CV_PHOTOS_INDEXED;

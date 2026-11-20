@@ -25,6 +25,7 @@
 #include "charset.h"
 #include "pdf.h"
 #include "trpara.h"
+#include "pic.h"
 
 #define PAGE_W 640			/* the whole page's pictures' width when the caller gives none */
 #define NDRAW 16			/* drawings a page at most */
@@ -401,7 +402,81 @@ static int __attribute__((noinline)) grey_test(const uint16_t *px, long n, long 
 }
 
 /* jpeg: the batch's "JPEG (small)": a photo or a grey picture as a JPEG */
-static int w_picture(PW *w, long num, const uint16_t *px, int pw, int ph, int jpeg)
+/* a picture in the screen's own pens (CVOPT.pen_n, Faster display):
+   dithered once as EPDF would, kept Indexed with the pens' colours at 1, 2,
+   4 or 8 bits a pixel; -1 no memory */
+static int w_pens(PW *w, long num, const uint16_t *px, int pw, int ph, const CVOPT *o)
+{
+	static PIC_PAL pal;
+	PIC_DITHER *dt;
+	int bpc = o->pen_n > 16 ? 8 : o->pen_n > 4 ? 4 : o->pen_n > 2 ? 2 : 1, y, x;
+	long rb = ((long)pw * bpc + 7) / 8;
+	unsigned char *d, *row;
+	char dict[2048];
+	int k;
+
+	pic_pal_init(&pal, o->pen_n, (const unsigned char (*)[3])o->pen_rgb);
+	dt = pic_dither_open(pw, &pal);
+	d = calloc((size_t)rb * ph, 1);
+	row = malloc((size_t)pw);
+	if (!dt || !d || !row) {
+		pic_dither_close(dt);
+		free(d);
+		free(row);
+		return -1;
+	}
+	if (o->pen_n <= 16) {
+		/* Sharp (EPDF's, Erez 5 Nov 2026): a picture of 128 colours or
+		   fewer on 16 pens or fewer takes each pixel's nearest pen */
+		unsigned char *seen = calloc(8192, 1);
+		long n = (long)pw * ph, i, nc = 0;
+
+		if (seen) {
+			for (i = 0; i < n && nc <= 128; i++)
+				if (!(seen[px[i] >> 3] & (1 << (px[i] & 7)))) {
+					seen[px[i] >> 3] |= (unsigned char)(1 << (px[i] & 7));
+					nc++;
+				}
+			free(seen);
+			if (nc <= 128)
+				pic_dither_sharp(dt);
+		}
+	}
+	for (y = 0; y < ph; y++) {
+		unsigned char *o8 = d + (long)y * rb;
+
+		if ((y & 7) == 7)
+			turn_now();
+		pic_dither_row(dt, px + (long)y * pw, NULL, row);
+		if (bpc == 8)
+			memcpy(o8, row, (size_t)pw);
+		else
+			for (x = 0; x < pw; x++)
+				o8[x * bpc >> 3] |= (unsigned char)(row[x] << (8 - bpc - (x * bpc & 7)));
+	}
+	pic_dither_close(dt);
+	free(row);
+	k = snprintf(dict, sizeof dict, "/Type /XObject /Subtype /Image /Width %d /Height %d "
+		     "/ColorSpace [/Indexed /DeviceRGB %d <", pw, ph, o->pen_n - 1);
+	k += pal_hex(dict + k, (int)sizeof dict - k - 32, (const unsigned char (*)[3])o->pen_rgb, o->pen_n);
+	snprintf(dict + k, sizeof dict - (size_t)k, ">] /BitsPerComponent %d", bpc);
+	w_stream(w, num, dict, d, rb * ph);
+	free(d);
+	return 0;
+}
+
+/* a picture's dictionary with one more entry (its /AERAShown), or as it is */
+static const char *with_extra(const char *dict, const char *extra)
+{
+	static char b[2304];
+
+	if (!extra || !*extra)
+		return dict;
+	snprintf(b, sizeof b, "%s %s", dict, extra);
+	return b;
+}
+
+static int w_picture(PW *w, long num, const uint16_t *px, int pw, int ph, int jpeg, const CVOPT *pens, const char *extra)
 {
 	long n = (long)pw * ph, i, i0, mid = 0;
 	int grey = 1;
@@ -431,10 +506,12 @@ static int w_picture(PW *w, long num, const uint16_t *px, int pw, int ph, int jp
 		}
 		snprintf(dict, sizeof dict, "/Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray "
 			 "/BitsPerComponent 1", pw, ph);
-		w_stream(w, num, dict, d, rb * ph);
+		w_stream(w, num, with_extra(dict, extra), d, rb * ph);
 		free(d);
 		return 0;
 	}
+	if (pens && pens->pen_n >= 2 && !jpeg)
+		return w_pens(w, num, px, pw, ph, pens);
 	if (jpeg) {
 		/* a photo only: a picture of 256 colours or fewer is kept exact
 		   (a chart, a drawing, a few-coloured graphic: smaller packed than
@@ -466,7 +543,7 @@ static int w_picture(PW *w, long num, const uint16_t *px, int pw, int ph, int jp
 		if (jpeg_encode(px, pw, ph, grey, 75, &j) == 0) {
 			snprintf(dict, sizeof dict, "/Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /%s "
 				 "/BitsPerComponent 8 /Filter /DCTDecode", pw, ph, grey ? "DeviceGray" : "DeviceRGB");
-			w_raw(w, num, dict, (const unsigned char *)j.s, j.len);
+			w_raw(w, num, with_extra(dict, extra), (const unsigned char *)j.s, j.len);
 			sb_free(&j);
 			return 0;
 		}
@@ -510,7 +587,7 @@ static int w_picture(PW *w, long num, const uint16_t *px, int pw, int ph, int jp
 		snprintf(dict + o, sizeof dict - (size_t)o, ">] /BitsPerComponent 8");
 	}
 	VPAD(VPAD_W);
-	w_stream(w, num, dict, d, n);
+	w_stream(w, num, with_extra(dict, extra), d, n);
 	free(d);
 	return 0;
 }
@@ -618,7 +695,8 @@ static uint16_t *crop(RPAGE *r, long pg, const RCLIP *b, int pw, int ph)
 typedef struct {
 	long src;			/* the original's image object */
 	int pw, flip;
-	long obj;			/* its object here */
+	long obj;
+	long sk;			/* Faster display: the size it shows at, its points (w << 16 | h); 0 none */			/* its object here */
 } PICMAP;
 
 typedef struct {
@@ -694,17 +772,53 @@ static long translate_page(CV *c, const char *txt, long len, char from[8])
 	return obj;
 }
 
-static long pic_known(CV *c, long src, int pw, int flip)
+/* Faster display: a picture's copy at the size EPDF's text view shows it
+   (docview.c's pic_rows: its width in points up to the column, its height
+   by the pixels' shape), dithered once in the screen's pens (w_pens); the
+   picture written after it names it /AERAShown. A black-and-white picture
+   has none (EPDF copies its bits already). Its object, or -1 */
+static long w_shown(CV *c, PW *w, long src, PIC *p, long wpt, long hpt, int flip)
+{
+	long col = c->o->pen_col > 0 ? c->o->pen_col : c->page_w, x, y, mid = 0, obj;
+	int aspect = c->o->pen_aspect > 0 ? c->o->pen_aspect : 16, why = 0, r;
+	PIC *q = p;
+
+	if (wpt <= 0 || hpt <= 0)
+		return -1;
+	if (grey_test(p->px, (long)p->w * p->h, &mid) && mid * 50 < (long)p->w * p->h)
+		return -1;
+	x = wpt < col ? wpt : col;
+	y = x * hpt / wpt * 16 / aspect;
+	if (y < 1)
+		y = 1;
+	if (x != p->w || y != p->h) {
+		q = cv_image(&c->d, src, (int)x, (int)y, &why);
+		if (!q || q->w != x || q->h != y) {
+			pic_free(q);
+			return -1;
+		}
+		flip_px(q->px, (int)x, (int)y, flip);
+	}
+	obj = w_new(w);
+	r = w_pens(w, obj, q->px, (int)x, (int)y, c->o);
+	if (q != p)
+		pic_free(q);
+	return r ? -1 : obj;
+}
+
+static long pic_known(CV *c, long src, int pw, int flip, long sk)
 {
 	long i;
 
+	/* (with Faster display a picture shown at two sizes is written twice,
+	   each with its /AERAShown at its size: the showcase's page 6) */
 	for (i = 0; i < c->npm; i++)
-		if (c->pm[i].src == src && c->pm[i].pw == pw && c->pm[i].flip == flip)
+		if (c->pm[i].src == src && c->pm[i].pw == pw && c->pm[i].flip == flip && c->pm[i].sk == sk)
 			return c->pm[i].obj;
 	return -1;
 }
 
-static void pic_remember(CV *c, long src, int pw, int flip, long obj)
+static void pic_remember(CV *c, long src, int pw, int flip, long obj, long sk)
 {
 	if (c->npm == c->cappm) {
 		long nc = c->cappm ? c->cappm * 2 : 64;
@@ -719,6 +833,7 @@ static void pic_remember(CV *c, long src, int pw, int flip, long obj)
 	c->pm[c->npm].pw = pw;
 	c->pm[c->npm].flip = flip;
 	c->pm[c->npm].obj = obj;
+	c->pm[c->npm].sk = sk;
 	c->npm++;
 }
 
@@ -1109,14 +1224,14 @@ static int convert_page(CV *c, long n)
 
 				if (px) {
 					obj = w_new(w);
-					if (w_picture(w, obj, px, pw, ph, 0)) {	/* (a drawing: never a JPEG) */
+					if (w_picture(w, obj, px, pw, ph, 0, NULL, NULL)) {	/* (a drawing: never a JPEG) */
 						obj = -1;
 						c->short_mem = 1;
 					}
 					free(px);
 					c->st->drawings++;
 				}
-			} else if ((obj = pic_known(c, src, pw, flip)) < 0) {
+			} else if ((obj = pic_known(c, src, pw, flip, c->o->pen_n >= 2 ? wpt << 16 | hpt : 0)) < 0) {
 				int why = 0;
 				PIC *p;
 
@@ -1126,14 +1241,20 @@ static int convert_page(CV *c, long n)
 					c->short_mem = 1;
 
 				if (p && p->w == pw && p->h == ph) {
+					char extra[40] = "";
+					long sobj;
+
 					flip_px(p->px, pw, ph, flip);
+					sobj = c->o->pen_n >= 2 ? w_shown(c, w, src, p, wpt, hpt, flip) : -1;
+					if (sobj >= 0)
+						snprintf(extra, sizeof extra, "/AERAShown %ld 0 R", sobj);
 					obj = w_new(w);
-					if (w_picture(w, obj, p->px, pw, ph, c->o->photos == CV_PHOTOS_JPEG)) {
+					if (w_picture(w, obj, p->px, pw, ph, c->o->photos == CV_PHOTOS_JPEG, NULL, extra)) {
 						obj = -1;
 						c->short_mem = 1;
 					}
 					else {
-						pic_remember(c, src, pw, flip, obj);
+						pic_remember(c, src, pw, flip, obj, c->o->pen_n >= 2 ? wpt << 16 | hpt : 0);
 						c->st->pictures++;
 					}
 				}

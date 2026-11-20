@@ -8,8 +8,10 @@
  *            button that opens the Gateway's installed languages over
  *            itself, the one chosen ticked (5.7); Languages...: the
  *            family's dialog (common's langs.c)
- *   General  (EConvert) Page previews: each converted page carries a
- *            small picture of itself, for EPDF's page strip
+ *   General  (EConvert) Optimise for: Smaller files or Faster display
+ *            (pictures also made for this screen's pens, the default);
+ *            Page previews: each converted page carries a small picture
+ *            of itself, for EPDF's page strip
  *   Secure   the Gateway's address and port, in EWeb's words (6.1, 7.4)
  *
  * The address holds more than it shows (5.4). Cancel, Esc and Undo put
@@ -24,11 +26,13 @@
 #include "settings.h"
 #include "dlgbuild.h"
 #include "gatedlg.h"
+#include "alert.h"
 
 void log_event(const char *what, const char *a, const char *b);	/* (the program's) */
 
 static char edit[128];			/* the address as typed (the caller's only on OK) */
 static char port_s[6];
+static short port_obj = -1, port_page;	/* the port's field and its page: where a refused port is typed again */
 static short edit_cap;
 static char lang_label[28];		/* " Hebrew              \x02" */
 static short lang_obj;
@@ -77,19 +81,24 @@ static void page_general(SETTINGS *s, short x, short y, void *user)
 	set_text(s, x, (short)(n + 2), "Translations are kept in memory only.");
 }
 
-/* EConvert's General: the pages' previews (off by default: Erez, 15 Nov 2026) */
-static short previews_edit;
+/* EConvert's General: Optimise for (Faster display the default: Erez, 17
+   Nov 2026) and the pages' previews (off by default: Erez, 15 Nov 2026) */
+static short previews_edit, optimise_edit;
 
 static void page_conv(SETTINGS *s, short x, short y, void *user)
 {
-	short n = set_y(s, 2);
+	static const char *const optimise[] = { "Smaller files", "Faster display" };
+	short n = set_y(s, 3), m = set_y(s, 4);
 
 	(void)user;
-	set_tick(s, x, y, "Page previews", &previews_edit);
-	set_text(s, x, n, "Each converted page carries a small");
-	set_text(s, x, (short)(n + 1), "picture of itself, for EPDF's page");
-	set_text(s, x, (short)(n + 2), "strip (View > Page strip). Converted");
-	set_text(s, x, (short)(n + 3), "on a Falcon, 2 seconds more a page.");
+	set_text(s, x, y, "Optimise for");
+	set_popup(s, x + 13, y, 18, optimise, 2, &optimise_edit);
+	set_text(s, x, set_y(s, 1), "Faster display: pictures made ready");
+	set_text(s, x, set_y(s, 2), "for this screen; bigger files.");
+	set_tick(s, x, n, "Page previews", &previews_edit);
+	set_text(s, x, m, "Each page carries a small picture of");
+	set_text(s, x, (short)(m + 1), "itself, for EPDF's page strip. On a");
+	set_text(s, x, (short)(m + 2), "Falcon, 2 seconds more a page.");
 }
 
 static void page_secure(SETTINGS *s, short x, short y, void *user)
@@ -99,7 +108,8 @@ static void page_secure(SETTINGS *s, short x, short y, void *user)
 	set_text(s, x, y, "Gateway");
 	set_long(s, x + 8, y, edit, 18, edit_cap, 0);
 	set_text(s, x + 28, y, "Port");
-	set_field(s, x + 33, y, port_s, 5, '9');
+	port_obj = set_field(s, x + 33, y, port_s, 5, '9');
+	port_page = set_page_now(s);
 	if (user) {
 		set_text(s, x, n, "Options > Open on the Gateway sends a");
 		set_text(s, x, (short)(n + 1), "PDF there to be converted for this");
@@ -127,6 +137,24 @@ static void drawn(OBJECT *tree, short band)
 	log_event("dialog", "settings", at);
 }
 
+/* OK: a port outside 1 to 65535 is refused with what to type, the field
+   kept as typed and the text cursor in it (D30, Erez 9 Nov 2026: nothing
+   changed silently) */
+static int check(SETTINGS *s, void *user)
+{
+	long p = atol(port_s);
+
+	(void)user;
+	if (p >= 1 && p <= 65535)
+		return 1;
+	alert(1, "[1][The Gateway's port is a number.|Please type a number|from 1 to 65535.][ OK ]");
+	set_show(s, port_page);
+	if (port_obj >= 0)
+		set_focus(s, port_obj);
+	log_event("settings-refused", "port", port_s);
+	return 0;
+}
+
 static int run(int with_tr, char *host, int hostcap, unsigned short *port)
 {
 	static const SET_PAGE both[] = { { "General", page_general }, { "Secure", page_secure } };
@@ -142,9 +170,19 @@ static int run(int with_tr, char *host, int hostcap, unsigned short *port)
 	snprintf(port_s, sizeof port_s, "%u", (unsigned)*port);
 	placed = 0;
 	settings_drawn = drawn;
-	ok = with_tr == 1 ? settings_run("Settings", both, 2, 0, 17, (void *)1) :
-	     with_tr == 2 ? settings_run("Settings", conv, 2, 0, 16, NULL) :
-			    settings_run("Settings", secure, 1, 0, 16, NULL);
+	{
+		SET_DEF d;
+
+		memset(&d, 0, sizeof d);
+		d.title = "Settings";
+		d.pages = with_tr == 1 ? both : with_tr == 2 ? conv : secure;
+		d.npages = with_tr ? 2 : 1;
+		d.height = with_tr == 1 ? 17 : 16;
+		d.user = with_tr == 1 ? (void *)1 : NULL;
+		d.check = check;
+		port_obj = -1;
+		ok = settings_dialog(&d);
+	}
 	settings_drawn = NULL;
 	log_event("dialog-closed", "settings", ok ? "ok" : "cancel");
 	if (!ok)
@@ -164,16 +202,19 @@ const char *gate_dialog_host(void)
 	return edit;
 }
 
-int gate_dialog_conv(char *host, int hostcap, unsigned short *port, short *previews)
+int gate_dialog_conv(char *host, int hostcap, unsigned short *port, short *previews, short *optimise)
 {
 	int ok;
 
 	tr_pick = NULL;
 	tr_languages = NULL;
 	previews_edit = *previews ? 1 : 0;
+	optimise_edit = *optimise ? 1 : 0;
 	ok = run(2, host, hostcap, port);
-	if (ok)
+	if (ok) {
 		*previews = previews_edit;
+		*optimise = optimise_edit;
+	}
 	return ok;
 }
 

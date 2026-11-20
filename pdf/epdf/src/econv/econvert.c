@@ -51,6 +51,7 @@
 #include "icon.h"
 #include "icon16.h"
 #include "icon256.h"
+#include "scrpens.h"
 
 extern const char app_version[];
 short vdi_h, cw, ch, desk_x, desk_y, desk_w, desk_h, planes, gl_wchar, gl_hchar;	/* (scr_w, scr_h: src/gem/gemui.c) */
@@ -85,6 +86,16 @@ static int pages_set = CV_PAGES_MONO, photos_set = CV_PHOTOS_INDEXED;
    PREVIEWS= in the INF; off by default (Erez, 15 Nov 2026: 1.9 s a page on a
    4 MB Falcon, "a setting flag, off by default") */
 static short previews_set;
+/* Optimise for: Smaller files (0) or Faster display (1, the default: Erez,
+   17 Nov 2026), OPTIMISE= in the INF ("size", "display"): with Faster
+   display each picture also gets a copy in this screen's pens at the size
+   EPDF shows it (conv.h's pen_n, docs/CONVERTED-PDF.md) */
+static short optimise_set = 1;
+/* this screen's, taken on the main stack as a batch begins (the job's
+   stack calls no AES): its registers' colours (EConvert's own two pens as
+   they were before it took them), EPDF's text column, the pixels' shape */
+static int scr_pen_n, scr_col, scr_aspect = 16;
+static unsigned char scr_rgb[256][3];
 static char out_dir[160], in_dir[160];
 /* Gateway mode (Erez, 7 Nov 2026): the PDFs converted by the Gateway
    (AERA-Gateway's pdfgate) instead of here. A Falcon or a TT converts here
@@ -158,6 +169,8 @@ static void settings_read(void)
 		photos_set = !strcmp(v, "jpeg") ? CV_PHOTOS_JPEG : CV_PHOTOS_INDEXED;
 	if ((v = inf_get(&inf, "PREVIEWS")) != NULL)
 		previews_set = v[0] == '1';
+	if ((v = inf_get(&inf, "OPTIMISE")) != NULL)
+		optimise_set = strcmp(v, "size") != 0;
 	if ((v = inf_get(&inf, "WRITETO")) != NULL && strlen(v) < sizeof out_dir)
 		strcpy(out_dir, v);
 	if ((v = inf_get(&inf, "FOLDER")) != NULL && strlen(v) < sizeof in_dir)
@@ -653,6 +666,14 @@ static int on_the_gateway(const char *in, const char *out, char *err, int errlen
 	po.pic_w = iw;
 	po.page_double = -1;
 	po.thumbs = previews_set;		/* (thumbs=1: AERA-Gateway 1.48 on) */
+	if (optimise_set && scr_pen_n >= 2) {
+		/* Faster display: this screen's pens (pens=: a Gateway without
+		   them is asked again without, pigate.c) */
+		po.pen_n = scr_pen_n;
+		po.pen_rgb = (const unsigned char (*)[3])scr_rgb;
+		po.pen_col = scr_col;
+		po.pen_aspect = scr_aspect;
+	}
 	{
 		char q[40];
 
@@ -699,6 +720,12 @@ static void worker(void)
 			o.pages = pages_set;
 			o.photos = photos_set;
 			o.thumbs = previews_set;
+			if (optimise_set && scr_pen_n >= 2) {
+				o.pen_n = scr_pen_n;
+				memcpy(o.pen_rgb, scr_rgb, sizeof o.pen_rgb);
+				o.pen_col = scr_col;
+				o.pen_aspect = scr_aspect;
+			}
 			o.mem_free = mem_free;	/* (a page refused memory: made again in bands) */
 			screen_sizes(&o.page_w, &o.pic_w);
 			o.fontdir = font_dir;
@@ -1630,6 +1657,16 @@ static void begin(void)
 		return;
 	}
 	screen_sizes_measure();
+	scr_pen_n = scr_pens(vdi_h, planes, scr_rgb);
+	if (own_pens) {
+		/* (its own band's and row's pens: the colours they had) */
+		int i, c;
+
+		for (i = 0; i < 2; i++)
+			for (c = 0; c < 3; c++)
+				scr_rgb[scr_pen_reg(i ? PEN_ROW : PEN_NAVY, planes)][c] = (unsigned char)(pens_was[i][c] * 255L / 1000);
+	}
+	scr_col = cw > 0 ? sizes_page / cw * cw : sizes_page;	/* (EPDF's column: whole cells) */
 	coro_start_long(&work_co, work_stack, CONV_STACK, worker);
 	batch_bytes = bytes_done = 0;
 	for (i = 0; i < nfiles; i++)
@@ -1788,9 +1825,10 @@ static int settings_dialog(void)
 
 	if (working)
 		return 0;
-	if (!gate_dialog_conv(gate_host, (int)sizeof gate_host, &gate_port, &previews_set))
+	if (!gate_dialog_conv(gate_host, (int)sizeof gate_host, &gate_port, &previews_set, &optimise_set))
 		return 0;
 	setting("PREVIEWS", previews_set ? "1" : "0", "1: each page carries a small picture of itself, for EPDF's page strip");
+	setting("OPTIMISE", optimise_set ? "display" : "size", "display: pictures made for this screen's colours too (bigger files); size: as small as can be");
 	setting("GATE", gate_host, "the Gateway's address (Through the Gateway)");
 	snprintf(port, sizeof port, "%u", (unsigned)gate_port);
 	setting("GATEPORT", port, "the Gateway's port for PDFs (8380)");
@@ -1981,6 +2019,12 @@ static void click(short mx, short my)
 	/* a button as GEM's: shown pressed, and taken only when let go on it
 	   (a click that wasn't the user's, or one moved off, does nothing:
 	   common's dlg_win_button) */
+	if (o == B_GO && working) {
+		/* Stop in a job: on the press, not tracked to the release (D33,
+		   Erez 9 Nov 2026: the job stops the moment it is asked to) */
+		command(CMD_GO);
+		return;
+	}
 	if (o >= 0 && (tree[o].ob_flags & EXIT)) {
 		int took = dlg_win_button(tree, o);
 
@@ -2179,6 +2223,8 @@ int main(void)
 	}
 	scr_w = work_out[0] + 1;
 	scr_h = work_out[1] + 1;
+	if (work_out[3] > 0)
+		scr_aspect = (int)(work_out[4] * 16L / work_out[3]);	/* (the pixel's height to width: EPDF's pix_aspect) */
 	vq_extnd(vdi_h, 1, work_out);
 	planes = work_out[4];
 	progbar_pens(vdi_h, 0);

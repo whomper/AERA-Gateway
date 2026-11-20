@@ -17,10 +17,15 @@ PIC *pdf_image(PDOC *d, long obj, int w, int h, long max_bytes, int *why);
    pdf_image. A JPX picture is decoded whole first (its rows come after) */
 typedef void (*PIMG_ROW)(void *u, long y, const unsigned short *px);
 int pdf_image_rows(PDOC *d, long obj, int w, int h, PIMG_ROW row, void *u, long max_bytes, int *why);
+long pdf_image_rows_need(PDOC *d, long obj, int w, int h);	/* its memory, about; 0 not known */
 
 /* the work a picture's decoder (JPX, JBIG2) does before its rows come,
    done of of, for a progress line: 0 of 0 when there is none, or none yet */
 extern long pdfimg_work_done, pdfimg_work_of;
+/* (EPDF's build, -DPDFIMG_WHAT: the picture last begun, for its log line) */
+extern const char *pdfimg_kind;
+extern int pdfimg_reduce;
+extern long pdfimg_dw, pdfimg_dh;
 
 /* a picture with a soft mask (/SMask) comes from both as it looks on white
    paper; with this set, as it is (render.c draws it through its mask) */

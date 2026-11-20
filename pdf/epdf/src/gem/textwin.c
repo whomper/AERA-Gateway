@@ -16,6 +16,7 @@
 #include "tos.h"
 #include "gemui.h"
 #include "text.h"
+#include "textcells.h"
 #include "iconify.h"
 #include "docview.h"
 #include "bidi.h"
@@ -806,7 +807,15 @@ static void draw_rows(const GRECT *c, long r0, long r1)
 					memset(padded + n, ' ', (size_t)pad);
 					text_plain(vdi_h, x, y, padded, n + pad);	/* MD_REPLACE, pen 1, no effects: set above */
 				} else {
-					text_plain(vdi_h, x, y, vis, n);
+					if (text_plain_state() >= 0 || !font_gdos())
+						text_plain(vdi_h, x, y, vis, n);	/* (the system font: as 2.37) */
+					else {
+						/* a GDOS font: in its cells, its Hebrew as the font
+						   has it; a character a cell leaves the spaces as
+						   they were, so the row's text is cleared first */
+						blank(c, x, end, y, ch);
+						text_cells_n(vdi_h, x, y, vis, n);
+					}
 					blank(c, end, right, y, ch);
 				}
 			}

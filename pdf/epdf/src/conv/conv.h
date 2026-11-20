@@ -34,6 +34,18 @@ typedef struct {
 	   colours: EPDF's page strip); 0, the default, none (Erez, 15 Nov 2026:
 	   "a setting flag, off by default": 1.9 s a page on a 4 MB Falcon) */
 	int thumbs;
+	/* Faster display (Erez, 17 Nov 2026: the default): the screen's pens,
+	   by hardware register as EPDF's bitmaps hold them (2 .. 256; 0:
+	   Smaller files). A picture is dithered once to them (common's dither,
+	   EPDF's own, with its Sharp rule) and kept Indexed with their colours
+	   at the fewest bits a pixel that hold them: EPDF on a screen of these
+	   pens copies it, any other dithers it as before */
+	int pen_n;
+	unsigned char pen_rgb[256][3];
+	/* that screen's: EPDF's text column in pixels (a picture shows at its
+	   width in points up to it; 0: page_w) and its pixels' shape (16 a
+	   square pixel, 32 ST medium's: docview's pic_aspect; 0: 16) */
+	int pen_col, pen_aspect;
 	long canvas_max;		/* the page canvas's most bytes, 0 any: a page drawn in
 				   bands under it (slower) */
 	/* the memory free now (EConvert: GEMDOS's), or NULL: a page refused

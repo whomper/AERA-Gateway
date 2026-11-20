@@ -37,6 +37,7 @@ typedef struct {
 	long fonts;			/* fonts loaded */
 	long images, image_px, image_raw;	/* pictures drawn, their pixels and stored bytes */
 	long img_dct, img_jpx, img_ccitt, img_jbig2, img_flate, img_other;
+	long img_missed;		/* pictures given their line though their Do was lost to memory (missed_pics) */
 	long forms;			/* form XObjects run */
 	long chunks;			/* pieces of text */
 	long mem, mem_peak;		/* bytes malloc'd now, the most */
@@ -177,6 +178,7 @@ void pdf_page_reset(PDOC *d);			/* drop the page arena and cache */
 
 /* ------------------------------------------------------------------ objects */
 POBJ *pdf_get(PDOC *d, long num);		/* the object, NULL if missing; the dict for a stream */
+void pdf_retry_obj(PDOC *d, long num);	/* one marked unloadable for the page tried again at its next use */
 POBJ *pdf_res(PDOC *d, POBJ *o);		/* follow references */
 POBJ *pd_get(PDOC *d, POBJ *dict, const char *key);	/* resolved; NULL if absent or null */
 POBJ *pd_getraw(POBJ *dict, const char *key);	/* as written (maybe a PO_REF) */
@@ -365,6 +367,11 @@ static inline fx fxmul(fx a, fx b)
 }
 
 /* allocation, counted */
+/* (EPDF's pictures on a 68000 take their memory from a heap zone of their
+   own, common's heap_zone: the reader's blocks, which outlive a picture,
+   come from the main heap all the same. pdf_main_heap(1) before each of
+   them, (0) after; NULL elsewhere) */
+extern void (*pdf_main_heap)(int on);
 void *pdf_malloc(PDOC *d, long n);
 void *pdf_realloc(PDOC *d, void *p, long oldn, long n);
 void pdf_free(PDOC *d, void *p, long n);

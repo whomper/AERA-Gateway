@@ -25,6 +25,9 @@
 #include "scrsize.h"
 #include "gwopen.h"
 #include "gemui.h"
+#include "epdf.h"
+#include "docview.h"
+#include "scrpens.h"
 
 void log_event(const char *what, const char *a, const char *b);	/* (epdf.c's, the rigs' console) */
 
@@ -78,6 +81,24 @@ static int progress(void *u, int ph, long d, long t)
    window's kind, the text column's margins) */
 static int sz_page = 640, sz_pic = 640;
 
+/* Faster display (EPDF 2.41, docs/CONVERTED-PDF.md): this screen's pens
+   by register and the text view's column as it is now, so each picture
+   also comes in these pens at the size it is shown; none past 256
+   colours or without a laid-out document (pigate.c asks a Gateway
+   without them again without) */
+static int sz_pen_n, sz_col;
+static unsigned char (*sz_rgb)[3];	/* (768 bytes, taken at the first Gateway open) */
+
+static void pens_measure(void)
+{
+	DOCVIEW *v = doc_view();
+
+	sz_col = v && v->pic_w > 0 ? v->pic_w : 0;
+	if (sz_col && planes <= 8 && !sz_rgb)
+		sz_rgb = malloc(256 * sizeof *sz_rgb);
+	sz_pen_n = sz_col && sz_rgb ? scr_pens(vdi_h, planes, sz_rgb) : 0;
+}
+
 /* asked of the AES on the main stack (gw_start): the job's stack never
    calls it */
 static void sizes_measure(void)
@@ -88,6 +109,7 @@ static void sizes_measure(void)
 	sz_page = w;
 	scr_work_size(NAME | CLOSER | FULLER | MOVER | SIZER | UPARROW | DNARROW | VSLIDE, 0, &w, &h);
 	sz_pic = w;
+	pens_measure();
 }
 
 static void sizes(int *page_w, int *pic_w)
@@ -116,6 +138,12 @@ static void job(void)
 		o.page_double = -1;
 		o.translate = translate_to[0] ? translate_to : NULL;	/* (View > Translate on) */
 		o.thumbs = gw_thumbs;		/* (View > Page strip on: the pages' previews) */
+		if (sz_pen_n >= 2) {
+			o.pen_n = sz_pen_n;
+			o.pen_rgb = (const unsigned char (*)[3])sz_rgb;
+			o.pen_col = sz_col;
+			o.pen_aspect = pix_aspect;
+		}
 		{
 			char q[24];
 

@@ -834,6 +834,11 @@ static int rows_jpx(PDOC *d, POBJ *o, const unsigned char *s, long n, ROWS *out,
 		j.m.bpc = 8;
 		j.m.nc = nc;
 		j.m.pal = pal;
+#ifdef PDFIMG_WHAT
+		pdfimg_reduce = red;
+		pdfimg_dw = rw;
+		pdfimg_dh = rh;
+#endif
 		r = jpx_decode(s, n, red, jpx_row, &j, poll_ok, &jw, &jh, &jc);
 	} while (r == JPX_MEMORY && out->ny == 0 && red++ < lv);
 	free(xs);
@@ -983,6 +988,12 @@ int pdf_image_raw_rows(PDOC *d, long obj, void (*row)(void *u, long y, const uns
 	return ok;
 }
 
+#ifdef PDFIMG_WHAT
+static void note_kind(PDOC *d, long obj);
+#else
+#define note_kind(d, obj) ((void)0)
+#endif
+
 static int image_rows(PDOC *d, long obj, int w, int h, PIMG_ROW row, void *u, long max_bytes, int *why)
 {
 	POBJ *o = pdf_get(d, obj), *cs, *fl;
@@ -992,6 +1003,7 @@ static int image_rows(PDOC *d, long obj, int w, int h, PIMG_ROW row, void *u, lo
 	const char *fn = NULL;
 	ROWS out;
 
+	note_kind(d, obj);	/* (here: a mask decoded before it began its own work, and cleared it) */
 	*why = PIC_DAMAGED;
 	if (!o || o->t != PO_DICT || w <= 0 || h <= 0)
 		return 0;
@@ -1209,6 +1221,15 @@ static void row_through(void *u, long y, const unsigned short *px)
 
 /* the decoders' work before a picture's rows (pdfimg.h) */
 long pdfimg_work_done, pdfimg_work_of;
+#ifdef PDFIMG_WHAT
+/* the picture last begun: its filter (the last of an array), and a JPEG
+   2000 one's reduction and size as decoded (-1: none); for EPDF's log
+   line (its build only: render.ovl's and EConvert's code where 2.36 had
+   it) */
+const char *pdfimg_kind = "";
+int pdfimg_reduce = -1;
+long pdfimg_dw, pdfimg_dh;
+#endif
 
 static void work_hook(long done, long of)
 {
@@ -1216,9 +1237,27 @@ static void work_hook(long done, long of)
 	pdfimg_work_of = of;
 }
 
+#ifdef PDFIMG_WHAT
+/* the filter a picture is decoded by (the last of an array), for the logs */
+static void note_kind(PDOC *d, long obj)
+{
+	static char kind[24];	/* (copied: the object may be gone when the log line is written) */
+	POBJ *o = pdf_get(d, obj), *fl = o && o->t == PO_DICT ? pd_get(d, o, "Filter") : NULL;
+
+	if (fl && fl->t == PO_ARR && fl->a)
+		fl = pdf_res(d, pa_at(fl, fl->a - 1));
+	strncpy(kind, fl && fl->t == PO_NAME ? fl->u.p : "none", sizeof kind - 1);
+	pdfimg_kind = kind;
+}
+#endif
+
 static void work_begin(void)
 {
 	pdfimg_work_done = pdfimg_work_of = 0;
+#ifdef PDFIMG_WHAT
+	pdfimg_reduce = -1;
+	pdfimg_dw = pdfimg_dh = 0;
+#endif
 	jpx_progress = work_hook;
 	jb2_progress = work_hook;
 }
@@ -1231,6 +1270,7 @@ PIC *pdf_image(PDOC *d, long obj, int w, int h, long max_bytes, int *why)
 	SMASK m;
 
 	work_begin();
+	note_kind(d, obj);
 	p = image_whole(d, obj, w, h, max_bytes, why);
 
 	if (p && !pdfimg_raw_smask && (o = pdf_get(d, obj)) && (mo = smask_of(o)) >= 0 &&
@@ -1242,6 +1282,51 @@ PIC *pdf_image(PDOC *d, long obj, int w, int h, long max_bytes, int *why)
 		free(m.a);
 	}
 	return p;
+}
+
+/* what pdf_image_rows will take for obj shown w x h on a monochrome screen,
+   about, beyond what the reader keeps: for a heap zone sized to it (EPDF
+   on a 68000: a picture too big refused at its start, not after 11 s of
+   work; the hub's heap_zone, 18 Nov 2026). 0: not known (JBIG2, JPX: their
+   decoders' own state), no zone. Fitted to the zones' peaks on a 4 MB ST
+   (big.py, 18 Nov 2026), each a little over what was measured:
+     Flate (and none): inflate's state (pdffilt.c's PCSRC_INFLATE), 15
+       bytes a shown pixel's column, 2.5 a source's (novel-boymechanic's
+       scans: 1460 wide 82,028, 773 wide 80,292, both 350 shown);
+     CCITT: the coded bytes' piece, 10 a source column, 2 a shown one
+       (scan-stinternals' pages, 1950 wide, 468 shown: 51,924 to 53,720);
+     DCT: TJpgDec's work and 22 a source column (scan-gfabasic's 1354
+       wide 41,108; scan-stinternals' 2022 wide 55,600);
+   with a soft mask's alpha whole and its own stream on top */
+#define NEED_INFLATE 73000L	/* pdffilt.c's PCSRC_INFLATE */
+#define NEED_PIECE 32768L	/* its RAW_PIECE, the coded bytes read at a time */
+long pdf_image_rows_need(PDOC *d, long obj, int w, int h)
+{
+	POBJ *o = pdf_get(d, obj), *fl;
+	const char *fn = NULL;
+	long sw, n;
+
+	if (!o || o->t != PO_DICT || w <= 0 || h <= 0)
+		return 0;
+	fl = pd_get(d, o, "Filter");
+	if (fl && fl->t == PO_ARR && fl->a)
+		fl = pdf_res(d, pa_at(fl, fl->a - 1));
+	if (fl && fl->t == PO_NAME)
+		fn = fl->u.p;
+	sw = pd_int(d, o, "Width", 0);
+	if (sw <= 0 || pd_int(d, o, "Height", 0) <= 0)
+		return 0;
+	if (fn && (!strcmp(fn, "DCTDecode") || !strcmp(fn, "DCT")))
+		n = 12288L + sw * 22;
+	else if (fn && (!strcmp(fn, "CCITTFaxDecode") || !strcmp(fn, "CCF")))
+		n = NEED_PIECE + 10240 + sw * 5 + (long)w * 2;	/* (ccitt.c: its 32 KB of tables and 4 per column; a 6,600-wide scan 74.6 KB on the host, 2.39) */
+	else if (!fn || !strcmp(fn, "FlateDecode") || !strcmp(fn, "Fl"))
+		n = NEED_INFLATE + (long)w * 15 + sw * 5 / 2;
+	else
+		return 0;
+	if (smask_of(o) >= 0)
+		n += (long)w * h + NEED_INFLATE + (long)w * 2;	/* the mask's alpha whole, its stream, a row */
+	return n;
 }
 
 int pdf_image_rows(PDOC *d, long obj, int w, int h, PIMG_ROW row, void *u, long max_bytes, int *why)

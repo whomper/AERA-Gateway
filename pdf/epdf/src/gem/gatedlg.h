@@ -9,7 +9,7 @@
 /* EConvert's: the Gateway's address (host, hostcap bytes) and port, as they
    are shown and as the user leaves them, and its General page's "Page
    previews" (*previews, 0 or 1); all the caller's only on OK, then 1 */
-int gate_dialog_conv(char *host, int hostcap, unsigned short *port, short *previews);
+int gate_dialog_conv(char *host, int hostcap, unsigned short *port, short *previews, short *optimise);
 /* EPDF's: the same with "Translate into" (to, a language code; its button
    shows to_name and calls pick with its place, x and y: the popup over
    it; pick may change to and the name) and
