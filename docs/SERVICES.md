@@ -648,6 +648,9 @@ Every option is optional, and each may be given once:
 |---|---|
 | `pages` | `none`, `mono`, `colour`, `colouronly` (colour only on the pages that have colour; EPDF 2.8) |
 | `thumbs` | `1`: each page carries a preview (`/Thumb`); without it, none (EPDF 2.33) |
+| `pens` | the Atari screen's pens, 2 to 256, 6 lower-case hex digits each, register 0 first: each picture also comes as a copy in those pens, at the size EPDF shows it (Faster display, EPDF 2.41) |
+| `column` | 64-4096: EPDF's text column in pixels, for those copies (EPDF 2.41) |
+| `aspect` | 4-64: a pixel's height to its width × 16, for those copies (EPDF 2.41) |
 | `photos` | `indexed`, `jpeg` |
 | `pictures` | `page`, `screen` |
 | `page_width` | 160-4096 |
