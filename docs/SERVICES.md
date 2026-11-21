@@ -539,13 +539,14 @@ keys: for what a snapshot can't do (a CAPTCHA, a login made by scripts).
 | Address | What it does |
 |---|---|
 | `/live?w=W&h=H&url=ADDRESS` | the page; `w`/`h` EWeb's page size (the view is then 1:1, three screens tall); `url` opened first (`https://` added if it has none) |
+| `/live?...&pic=1` | the page made with its picture (kept for `shot.jpg`): the browser's links as an image map over it (a click on one is a click at its middle), and `<meta name="aera-live" content="typing">` when a field there has the keyboard (EWeb 1.24) |
 | `/live/shot.jpg` | the screen, as a JPEG, or as pens when X-Gateway-Picture asks for them |
 | `/live/click?at.x=X&at.y=Y` | a real click on the screen |
 | `/live/type?t=TEXT[&enter=1]` | real typing, then Return |
 | `/live/key?k=enter\|tab\|backspace\|esc\|up\|down\|back\|reload` | a key |
 | `/live/page` | "As a page": a snapshot of what is shown |
 
-Click, type and key answer 303 back to `/live`.
+Click, type and key answer 303 back to `/live` with `pic=1`.
 
 ### Refusals
 
