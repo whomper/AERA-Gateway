@@ -430,7 +430,10 @@ X-Gateway-Picture: fit=608
   `POST http://webgate/palette` with 2-256 colours as R G B bytes answers 204
   with `X-Gateway-Palette: CRC`; a picture asked with colours webgate hasn't
   got answers 409 `webgate: send the colours first` with
-  `X-Gateway-Palette: need`.
+  `X-Gateway-Palette: need`. `;soft=N` (1-15, last) makes the pens with the
+  softer colours, the dither passing on N sixteenths of each pixel's error
+  (the Falcon's DSP and the accelerated machines), and the answer then says
+  `X-Gateway-Soft: N`; without it, the whole dither.
 - The answer says what was done: `X-Gateway-Picture: WEBP 1200x800 to JPEG 608x405`
   (and `X-Gateway-Pens: aerapens COMMON BUILD` for pens). Its other headers
   (ETag, Cache-Control) are the server's.
