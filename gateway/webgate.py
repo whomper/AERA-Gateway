@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 AERA | Erez Yaary
-"""webgate - the Raspberry Pi gateway for EWeb on the Atari.
+"""webgate - the Gateway's service for EWeb on the Atari.
 
 EWeb on a Falcon makes its own secure connections (TLS 1.2, the curves on
 the DSP); the ST edition, EWEBST.PRG, can't, and some sites take TLS 1.3

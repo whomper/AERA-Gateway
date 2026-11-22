@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 AERA | Erez Yaary
-"""eftpgate - the Raspberry Pi gateway for EFTP on the Atari.
+"""eftpgate - the Gateway's service for EFTP on the Atari.
 
 Servers on the internet want FTPS (FTP over TLS) or SFTP (SSH), which an
 8 MHz ST can't do. So EFTP speaks plain FTP to the Pi on your home
@@ -980,7 +980,7 @@ class Server(socketserver.ThreadingTCPServer):
 
 def parser():
     """the command line (aera-gateway reads a service's settings with it)"""
-    ap = argparse.ArgumentParser(description="the Raspberry Pi gateway for EFTP: plain FTP in, FTPS or SFTP out")
+    ap = argparse.ArgumentParser(description="the Gateway's service for EFTP: plain FTP in, FTPS or SFTP out")
     ap.add_argument("--port", type=int, default=2121)
     ap.add_argument("--bind", default="0.0.0.0")
     ap.add_argument("--allow", action="append", help="only this Atari's address (may be given more than once)")
