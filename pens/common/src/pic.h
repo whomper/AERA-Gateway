@@ -106,6 +106,10 @@ extern const PIC_DSP *pic_dsp;
 /* put and the gets set it when the DSP stops answering, and then do
    nothing */
 extern int pic_dsp_failed;
+/* atari/dspjpeg.c: the DSP given back where a picture's decode holds it,
+   for a terminate or crash handler; weak, so a program without the DSP
+   tests it first: if (pic_dsp_give_back) pic_dsp_give_back(); */
+extern void pic_dsp_give_back(void) __attribute__((weak));
 extern unsigned long pic_dsp_bad;	/* dspjpeg.c: the refused destination of a DSP picture (0: none) */
 /* 1 (as it starts): the DSP shrinks a JPEG shown smaller too, sending
    only the pixels shown; 0: it sends them all, for the scaler (the tests
@@ -133,11 +137,24 @@ typedef struct {
 	   pens (a monochrome ST's 32 KB back), NULL: each worked out */
 	unsigned char *near;
 	unsigned char order[256];	/* the pens sorted by their red */
+	/* (last, as PIC.OVL reads a program's PIC_PAL by its places)
+	   pic_pal_soft's share, in sixteenths; 0: 16, all of it */
+	unsigned char soft;
 } PIC_PAL;
 /* n pens of these colours. A PIC_PAL starts zeroed (static, or memset)
    and may be made again; pic_pal_free gives its table back */
 void pic_pal_init(PIC_PAL *pal, int n, const unsigned char rgb[][3]);
 void pic_pal_free(PIC_PAL *pal);
+/* Soft (Erez, 21 Nov 2026, EContact's photos): the share of each pixel's
+   error the dithers pass on, in sixteenths, 1 to 16 (0 or 16: all of it,
+   Floyd-Steinberg as it always was, byte for byte, at no cost). Less is
+   less grain where the palette has no near colour (a pastel among 256's
+   6-level cube, anything on 16), for a colour a little off. Every dither
+   takes it: pic_dither, pic_dither_row and the DSP's (PIC.OVL 1.3 on;
+   with an older one a soft dither is the 68030's, the same pens). EContact
+   asks for 12 on 16 pens and 8 on more; off unless asked. pic_pal_init
+   leaves it as it is */
+void pic_pal_soft(PIC_PAL *pal, int sixteenths);
 /* the pen nearest a colour (to 4 bits a component; -128..383 each) */
 int pic_pal_nearest(PIC_PAL *pal, int r, int g, int b);
 /* the picture as pens, Floyd-Steinberg (serpentine; a colour wanted past
@@ -146,6 +163,14 @@ int pic_pal_nearest(PIC_PAL *pal, int r, int g, int b);
    0 (they aren't drawn) and carry no error. pic_poll is called every 16
    rows (pic_dither's own; the scaler's is pic_scale_poll_rows): 1 done, 0 when it stopped it (out then partly made) */
 int pic_dither(const PIC *p, PIC_PAL *pal, unsigned char *out);
+/* the DSP's alone (PIC_OVL_BUILD: PIC.OVL's build): 1 done, 0 the 68030 must */
+int pic_dither_dsp(const PIC *p, PIC_PAL *pal, unsigned char *out);
+int pic_dither_dsp_prepare(PIC_PAL *pal);	/* its check now: 1 the DSP will */
+/* the same a piece a call (PIC.OVL's prepare_step): -1 call again, then 1
+   or 0 as pic_dither_dsp_prepare; NULL stops one under way. _forget: as
+   if never checked (the tests) */
+int pic_dither_dsp_prepare_step(PIC_PAL *pal);
+void pic_dither_dsp_forget(void);
 /* the same a row at a time, for a picture that isn't whole in memory: rows
    of w pixels (5-6-5, alpha or NULL) given top to bottom, each one's pens
    to out (w bytes); the same pens as pic_dither's for the same rows (not
