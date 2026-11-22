@@ -38,11 +38,11 @@ installer (`gateway/aera-gateway`), which also sets up ClaudeST's bridge
   hub. An app release that needs a gateway change names that version
   and goes out after it.
 
-## Talking with Erez
+## Talking with the owner
 
-Write to him only when he has to decide something, with a short context:
+Write to them only when they have to decide something, with a short context:
 no progress or in-between messages. Analysis is the information, your
-assessment and what he should do. (Messages to the hub and the app
+assessment and what they should do. (Messages to the hub and the app
 sessions stay as they are.)
 
 ## Rules
@@ -76,7 +76,7 @@ sessions stay as they are.)
   yourself only on a throwaway computer. A change to the docs alone
   (README, docs/, CLAUDE.md) takes the short path: pushed once it reads
   right, without the test runs (guidelines 1.2).
-- **Only formal releases leave the build machine.** Erez gets vX.Y
+- **Only formal releases leave the build machine.** The owner gets vX.Y
   releases made by the Release workflow from `main`, nothing else: no
   test builds, no dev builds, no builds from a branch. Work lands on
   `main`; to try a fix on real hardware, release it. If a release doesn't
@@ -87,14 +87,14 @@ sessions stay as they are.)
   and Actions > Release > Run workflow; the Pi follows the latest one
   (`update-pi.sh`), and ClaudeST's bridge comes from ClaudeST's latest
   release.
-  - **Releases go out without asking Erez** (decided 23 Oct 2026;
+  - **Releases go out without asking the owner** (decided 23 Oct 2026;
   guidelines 1.2, AERA-Atari a1345ca). Release when work on `main` is
   ready, as soon as this repo's checks pass (the checks above and CI,
   `tests/systemd.sh` included); there are no TOS rigs or family GEM
   checks here. Don't wait for a yes and don't collect work for a later
-  release. Then give Erez the link in one line, with anything he has to
+  release. Then give the owner the link in one line, with anything they have to
   do (on the Pi, `./update-pi.sh`), and send the hub the link. Fix a bad
-  release forward the same way. Decisions that are his still go to him first.
+  release forward the same way. Decisions that are theirs still go to them first.
 A change to the docs alone needs no release of
   its own: it goes out with the next one.
   - **The regression gate** (decided 17 Nov 2026: "we need to be extra
@@ -115,16 +115,16 @@ A change to the docs alone needs no release of
 
     A fault a user reports becomes a test in the release that fixes it.
 - **Who decides what** (decided 31 Oct 2026; the guidelines' "Who decides
-  what", AERA-Atari 797fddf). Erez's part, put to him before the work as
+  what", AERA-Atari 797fddf). The owner's part, put to them before the work as
   a decision with a short context:
   - new programs and ideas, their core capabilities, and how they work
     with the other programs;
   - the user experience: the look, the layout, the way through a task,
     the words, the icons, the defaults;
-  - phases: work stays inside the phase he approved; at its end, one
+  - phases: work stays inside the phase they approved; at its end, one
     phase report (what it set out to do, what was done with the release
     links, what is left, the next phase as a proposal), and the next
-    phase starts when he says so;
+    phase starts when they say so;
   - priorities and conflicts between programs or sessions (through the
     hub, with its options and recommendation);
   - packages on the Pi and ports.
@@ -148,9 +148,9 @@ A change to the docs alone needs no release of
 
 ## Maintenance mode (decided 1 Nov 2026; 17 Nov 2026)
 
-AERA-Gateway is in maintenance mode while EWeb, EPDF and EPlay go to 1.0 (AERA-Atari, ATARI-APP-GUIDELINES.md, section 8). Until Erez ends it:
+AERA-Gateway is in maintenance mode while EWeb, EPDF and EPlay go to 1.0 (AERA-Atari, ATARI-APP-GUIDELINES.md, section 8). Until the owner ends it:
 - No new features, clean-ups or installer work of its own.
-- Every family rule holds for it as for the focus apps (decided 17 Nov 2026: "Applications on maintenance does not mean they contain faults"): 7.3, 1.2's release rules, the log rules and every other. The hub notifies this session of each new or changed rule; the session adopts it and reports to the hub, which ticks its row in section 8. Whether that needs a release of its own is reviewed with Erez through the hub; a fault fix always gets one.
+- Every family rule holds for it as for the focus apps (decided 17 Nov 2026: "Applications on maintenance does not mean they contain faults"): 7.3, 1.2's release rules, the log rules and every other. The hub notifies this session of each new or changed rule; the session adopts it and reports to the hub, which ticks its row in section 8. Whether that needs a release of its own is reviewed with the owner through the hub; a fault fix always gets one.
 - What EWeb, EPDF or EPlay ask for (webgate, aerapens, aerajsc, pdfgate, radiogate) goes on as before, committed and released by this session.
 - Otherwise a release only for:
   - a security or data-loss fault;
@@ -158,5 +158,5 @@ AERA-Gateway is in maintenance mode while EWeb, EPDF and EPlay go to 1.0 (AERA-A
   - something outside that stops it working (Raspberry Pi OS, a certificate, a server).
 
   Such a release takes only that fix, and its notes say why.
-- Nothing runs in the background; the session waits for Erez, the hub or a focus app's session.
-- Only Erez's explicit word ends this mode. The hub passes it on quoting him.
+- Nothing runs in the background; the session waits for the owner, the hub or a focus app's session.
+- Only the owner's explicit word ends this mode. The hub passes it on quoting them.
