@@ -1570,7 +1570,7 @@ class BrowserProxyTest(unittest.TestCase):
 
     def test_tunnel_and_page_with_allow_local(self):
         webgate.Config.allow_local = True
-        webgate.Config.allow = ["192.168.1.50"]       # the Atari's: not the browser's concern
+        webgate.Config.allow = ["192.168.1.60"]       # the Atari's: not the browser's concern
         try:
             s = socket.create_connection(("127.0.0.1", self.ext.server_address[1]), timeout=10)
             self.addCleanup(s.close)

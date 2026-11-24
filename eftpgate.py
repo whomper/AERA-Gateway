@@ -29,7 +29,7 @@ python3-paramiko), and aeragate.py next to it. `aera-gateway install ftp`
 sets it up as a service. Falcon mode doesn't need it for FTPS: the Falcon
 does TLS itself.
 
-    eftpgate.py [--port 2121] [--allow 192.168.1.50] [--allow-local]
+    eftpgate.py [--port 2121] [--allow 192.168.1.60] [--allow-local]
                 [--state /var/lib/eftpgate] [-v]
 """
 

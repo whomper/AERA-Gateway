@@ -27,7 +27,7 @@ Only standard Python 3 is needed (Raspberry Pi OS has it), and aeragate.py
 next to it. `aera-gateway install dav` sets it up as a service. Falcon mode
 doesn't use it: the Falcon does TLS itself.
 
-    ecalgate.py [--port 8180] [--allow 192.168.1.50] [--allow-local] [-v]
+    ecalgate.py [--port 8180] [--allow 192.168.1.60] [--allow-local] [-v]
 """
 
 import argparse
