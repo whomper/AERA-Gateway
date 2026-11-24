@@ -155,7 +155,7 @@ EWeb shows on its "can't open" page.
 Only standard Python 3 is needed, and aeragate.py next to it.
 `aera-gateway install web` sets it up as a service.
 
-    webgate.py [--port 8280] [--allow 192.168.1.50] [--allow-local] [--cafile F] [--pens-socket P] [-v]
+    webgate.py [--port 8280] [--allow 192.168.1.60] [--allow-local] [--cafile F] [--pens-socket P] [-v]
 """
 
 import argparse
