@@ -50,7 +50,7 @@ tests/snap.sh     install web --browser for real with Ubuntu's Chromium snap
 tests/docker.sh   the Docker image for real: every service, /data kept
 ```
 
-ClaudeST's bridge came here from ClaudeST on 9 Nov 2026 (Erez), in
+ClaudeST's bridge came here from ClaudeST on 9 Nov 2026, in
 `gateway/claude-st/`: it is released with AERA-Gateway, and ClaudeST still
 owns its protocol and reviews its changes.
 

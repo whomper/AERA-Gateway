@@ -536,12 +536,12 @@ snap() {
 sed -i "s/^cur_atari=\$(grep -o -- '--allow \[^ \]\*' <<<\"\$args\"/cur_atari=\$( (grep -o -- '--allow [^ ]*' <<<\"\$args\" || true)/" \
   "$W/ClaudeST/pi/install.sh"
 grep -q "|| true) | awk" "$W/ClaudeST/pi/install.sh" || fail "can't mend pi/install.sh's --allow line"
-"$W/ClaudeST/pi/install.sh" --network --atari 192.168.1.20 --backend demo < /dev/null
+"$W/ClaudeST/pi/install.sh" --network --atari 192.168.1.60 --backend demo < /dev/null
 snap "$W/old"
 "$W/ClaudeST/pi/install.sh" --uninstall
 rm -rf /etc/claude-st /var/lib/claude-st
 userdel claude-st
-"$GW/aera-gateway" install claude --from "$W/ClaudeST" --network --atari 192.168.1.20 --backend demo < /dev/null
+"$GW/aera-gateway" install claude --from "$W/ClaudeST" --network --atari 192.168.1.60 --backend demo < /dev/null
 snap "$W/new"
 diff -r "$W/old" "$W/new" || fail "the claude recipe differs from pi/install.sh"
 sleep 3
@@ -552,7 +552,7 @@ sed -i 's/^CLAUDE_SESSION_KEY=$/CLAUDE_SESSION_KEY=sk-test-not-a-key/' /etc/clau
 # from ClaudeST on 9 Nov 2026), every setting and key kept
 "$GW/aera-gateway" update < /dev/null
 grep -q "^CLAUDE_SESSION_KEY=sk-test-not-a-key$" /etc/claude-st/claude-st.env || fail "update lost the key"
-grep -q "^CLAUDE_ST_ARGS=--backend demo --tcp 0.0.0.0:2323 --allow 192.168.1.20$" /etc/claude-st/claude-st.env \
+grep -q "^CLAUDE_ST_ARGS=--backend demo --tcp 0.0.0.0:2323 --allow 192.168.1.60$" /etc/claude-st/claude-st.env \
   || fail "update changed the settings"
 for f in claude_bridge.py backends.py atari_text.py requirements.txt; do
   cmp -s "$GW/claude-st/bridge/$f" "/opt/claude-st/bridge/$f" || fail "update didn't put AERA-Gateway's $f in place"

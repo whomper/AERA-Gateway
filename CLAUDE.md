@@ -97,10 +97,8 @@ sessions stay as they are.)
   release forward the same way. Decisions that are theirs still go to them first.
 A change to the docs alone needs no release of
   its own: it goes out with the next one.
-  - **The regression gate** (decided 17 Nov 2026: "we need to be extra
-  careful with regression issues as there are users of our software.
-  This means testing across all configurations" and "make sure we don't
-  loose performance"; guidelines 1.2, AERA-Atari a22574e). Every release,
+  - **The regression gate** (decided 17 Nov 2026: the software has users, so
+  every configuration is tested and no performance is lost; guidelines 1.2, AERA-Atari a22574e). Every release,
   before it goes out:
     1. pyflakes, the unit tests, and CI with `tests/systemd.sh`;
     2. each service the change touches tested by its owning app against
@@ -156,7 +154,7 @@ A change to the docs alone needs no release of
 
 AERA-Gateway is in maintenance mode while EWeb, EPDF and EPlay go to 1.0 (AERA-Atari, ATARI-APP-GUIDELINES.md, section 8). Until the owner ends it:
 - No new features, clean-ups or installer work of its own.
-- Every family rule holds for it as for the focus apps (decided 17 Nov 2026: "Applications on maintenance does not mean they contain faults"): 7.3, 1.2's release rules, the log rules and every other. The hub notifies this session of each new or changed rule; the session adopts it and reports to the hub, which ticks its row in section 8. Whether that needs a release of its own is reviewed with the owner through the hub; a fault fix always gets one.
+- Every family rule holds for it as for the focus apps (decided 17 Nov 2026: an app in maintenance is held to the same rules): 7.3, 1.2's release rules, the log rules and every other. The hub notifies this session of each new or changed rule; the session adopts it and reports to the hub, which ticks its row in section 8. Whether that needs a release of its own is reviewed with the owner through the hub; a fault fix always gets one.
 - What EWeb, EPDF or EPlay ask for (webgate, aerapens, aerajsc, pdfgate, radiogate) goes on as before, committed and released by this session.
 - Otherwise a release only for:
   - a security or data-loss fault;

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 AERA | Erez Yaary
 #
-# The Gateway in a Docker container (Erez, 9 Nov 2026): every service, as
+# The Gateway in a Docker container (decided 9 Nov 2026): every service, as
 # `aera-gateway install` sets them up on a Raspberry Pi, started by
 # docker/aera-gateway-run instead of systemd. Built from the repository's
 # root:

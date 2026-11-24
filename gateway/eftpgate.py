@@ -13,7 +13,7 @@ network, and eftpgate speaks FTPS or SFTP to the server:
 The Atari names the server in its login, the way FTP proxies have always
 done it:
 
-    USER sftp:erez@my.server.net:22        (sftp, ftps, ftps-implicit)
+    USER sftp:demo@my.server.net:22        (sftp, ftps, ftps-implicit)
     PASS the server's own password
 
 and eftpgate logs in there with them. To the Atari it is an ordinary,
@@ -541,7 +541,7 @@ class _FTPDataFile:
 # ---------------------------------------------------------------- the Atari's side
 
 def parse_login(spec):
-    """'sftp:erez@my.server.net:22' -> (proto, user, host, port)"""
+    """'sftp:demo@my.server.net:22' -> (proto, user, host, port)"""
     m = re.match(r"(sftp|ftps|ftps-implicit|ftpes):(.*)@([^@:]+|\[[^]]+\])(?::(\d+))?$", spec, re.I)
     if not m:
         return None

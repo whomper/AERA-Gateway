@@ -1,7 +1,7 @@
 # The Gateway in Docker
 
 The Gateway's services can run in one Docker container instead of being
-installed on a Raspberry Pi with `aera-gateway` (Erez, 9 Nov 2026): the
+installed on a Raspberry Pi with `aera-gateway` (decided 9 Nov 2026): the
 same programs, the same ports and the same rules, started by
 `docker/aera-gateway-run` instead of systemd. The image comes with every
 AERA-Gateway release from GitHub Packages:

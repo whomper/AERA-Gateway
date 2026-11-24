@@ -3,7 +3,7 @@
 # Copyright (C) 2026 AERA | Erez Yaary
 # tests/systemd.sh on the Debian a Raspberry Pi OS is made from, with its
 # own systemd, in a container: the update path on bullseye (Python 3.9)
-# and on the newer one (the regression gate, Erez, 17 Nov 2026). CI runs
+# and on the newer one (the regression gate, decided 17 Nov 2026). CI runs
 # it on arm64, as a Raspberry Pi is.
 #
 #   tests/pios.sh bullseye|bookworm|trixie

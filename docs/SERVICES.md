@@ -282,9 +282,9 @@ Command line: `eftpgate.py [--port 2121] [--bind 0.0.0.0] [--allow IP] [--allow-
 The Atari names the server in its login, the way FTP proxies always have:
 
 ```
-USER sftp:erez@my.server.example:22        (sftp, port 22 by default)
-USER ftps:erez@ftp.example.org             (explicit FTPS, AUTH TLS, port 21)
-USER ftps-implicit:erez@ftp.example.org    (implicit FTPS, port 990)
+USER sftp:demo@my.server.example:22        (sftp, port 22 by default)
+USER ftps:demo@ftp.example.org             (explicit FTPS, AUTH TLS, port 21)
+USER ftps-implicit:demo@ftp.example.org    (implicit FTPS, port 990)
 PASS the server's own password
 ```
 
@@ -780,7 +780,7 @@ Content-Length: 19
   (`>`) are kept. Web and e-mail addresses, amounts and numbers with units
   pass the engine untouched.
 - **Languages from the Atari:** the apps' Languages page sends the wanted set
-  only when it closes with OK (Erez, 7 Nov 2026); a job downloads what is
+  only when it closes with OK (decided 7 Nov 2026); a job downloads what is
   missing and removes what isn't wanted, and translategate starts again with
   the new models. Only from the Ataris allowed.
 - A closed connection stops the work.
@@ -847,7 +847,7 @@ sudo aera-gateway install radio [--allow ATARI_IP]
 | `--allow-local` / `--no-allow-local` | also play stations on the home network |
 | `-v` / `--no-verbose` | log every request |
 
-It installs ffmpeg if it is missing (Erez, 8 Nov 2026). radiogate may take
+It installs ffmpeg if it is missing (decided 8 Nov 2026). radiogate may take
 768 MB of memory.
 
 Command line: `radiogate.py [--port 8580] [--bind 0.0.0.0] [--allow IP] [--allow-local] [--cafile F] [--ffmpeg PATH] [--jobs 2] [--memory-mb 256] [--timeout 20] [-v]`.
@@ -885,9 +885,9 @@ Icy-MetaData: 1
 `/logo` looks the station up in radio-browser.info, a public directory of
 stations: by its address, then by its exact name, then by its name's first
 words (taken only from a station on the same domain). So the Gateway sends
-that directory the station's address and name (Erez, 8 Nov 2026).
+that directory the station's address and name (decided 8 Nov 2026).
 `/search` sends it the words, genre, country and language asked for (EPlay's
-Find station; Erez, 9 Nov 2026); the log gives only how many stations came.
+Find station; decided 9 Nov 2026); the log gives only how many stations came.
 
 ### Refusals
 
@@ -932,7 +932,7 @@ only ends it.
 ## claude: ClaudeST
 
 ClaudeST's bridge, connecting an Atari running `CLAUDEST.PRG` to claude.ai or
-the Anthropic API. It came here from ClaudeST on 9 Nov 2026 (Erez) and is
+the Anthropic API. It came here from ClaudeST on 9 Nov 2026 and is
 released with AERA-Gateway; ClaudeST still owns its protocol (see ClaudeST's
 `PROTOCOL.md`) and reviews its changes. The Gateway sets it up as ClaudeST's
 `pi/install.sh` did (`tests/systemd.sh` checks that).
@@ -941,7 +941,7 @@ released with AERA-Gateway; ClaudeST still owns its protocol (see ClaudeST's
   and `atari_text.py`; `gateway/claude-st/CLAUDEST` names the ClaudeST commit
   it came from), installed in `/opt/claude-st` and run as `claude-st.service`
   (`gateway/claude-st/claude-st.service`).
-- **Port:** 2323. ClaudeST reaches it through STinG; the serial cable went with ClaudeST 2.3 (Erez, 9 Nov 2026).
+- **Port:** 2323. ClaudeST reaches it through STinG; the serial cable went with ClaudeST 2.3 (decided 9 Nov 2026).
 
 ### Install
 
@@ -991,7 +991,7 @@ one-letter answers are in ClaudeST's `PROTOCOL.md`.
 
 ## dash: the dashboard
 
-dashgate (`gateway/dashgate.py`, the Gateway's own; Erez, 10 Nov 2026): one
+dashgate (`gateway/dashgate.py`, the Gateway's own; decided 10 Nov 2026): one
 read-only page for a browser on the Mac or PC, at `http://GATEWAY_IP:8888/`.
 It shows each service running or not and since when, its ports and what it
 speaks; the connections today and this run, with the last eight hours as a
@@ -1002,7 +1002,7 @@ servers, the browser, translate's languages, ClaudeST's backend; never a
 password or a key); and the computer's memory, disk, processor load and
 temperature. It follows the computer's light or dark look, and loads nothing
 from the internet. The page comes filled in, so it reads the same with a
-browser's scripts off (EWeb's default for a site not in its list; Erez,
+browser's scripts off (EWeb's default for a site not in its list; decided
 10 Nov 2026) and then refreshes itself every 30 s. With scripts it refreshes
 every 4 s, picks out one service's activity, and has a light/dark button.
 
@@ -1042,7 +1042,7 @@ that lets the page run only its own script and ask only the Gateway.
 - **The services' states and settings:** from systemd and the units'
   command lines on a Raspberry Pi; from `aera-gateway-run`
   (`/run/aera-gateway/services.json`) in a container.
-- **The counts start again** when dashgate starts (Erez, 10 Nov 2026).
+- **The counts start again** when dashgate starts (decided 10 Nov 2026).
 
 ### Refusals
 

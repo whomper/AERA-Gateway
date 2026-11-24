@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 AERA | Erez Yaary
-"""aera-gateway-run - the Gateway's services in a Docker container (Erez,
+"""aera-gateway-run - the Gateway's services in a Docker container (decided
 9 Nov 2026): what systemd does for them on a Raspberry Pi, done here.
 
 It starts the services named in AERA_SERVICES, each as its own user, with
