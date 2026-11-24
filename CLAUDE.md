@@ -138,7 +138,13 @@ A change to the docs alone needs no release of
   ("decided <date>"), never who. The author and copyright lines keep
   "AERA | Erez Yaary". Older text is cleaned when its file is next touched.
 - **Never commit:** real addresses from the owner's network (use
-  `192.168.1.x`, `PI_IP`, `ATARI_IP`), passwords, session keys.
+  `192.168.1.x`, `PI_IP`, `ATARI_IP`), passwords, session keys; nor,
+  on any branch, anything the owner gives a session (their files, the
+  Pi's logs, screenshots, share links or file IDs, their messages and
+  words, their machines' settings), in files, commit messages, test
+  names or notes. A fault they report becomes a case made from scratch
+  that shows the same thing (AERA-Atari standards/GITHUB-IDENTITY.md,
+  Commits).
 - British English, as in the app READMEs.
 - **The name** reads "AERA | Erez Yaary" wherever it is given: copyright
   lines (`Copyright (C) 2026 AERA | Erez Yaary`), the docs, and as the
