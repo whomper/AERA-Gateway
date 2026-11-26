@@ -238,6 +238,7 @@ Atari connection.
 | 504 | `ecalgate: can't reach HOST (REASON)` | the server took over 60 s |
 | 502 | `ecalgate: can't reach HOST (REASON)` | any other failure on the way |
 | 502 | `ecalgate: HOST sent a broken compressed answer` | gzip or deflate that won't unpack |
+| 502 | `ecalgate: HOST sent an answer compressed as X, which it can't unpack` | a packing other than gzip, x-gzip, deflate or identity |
 
 ### Limits, log, needs
 
@@ -318,7 +319,8 @@ HOST, CIPHER`, `213 SIZE`, `226 sent`.
 | 530 | `SFTP needs paramiko on the Gateway: sudo apt install python3-paramiko` | no paramiko |
 | 530 | `can't reach HOST:PORT: REASON` | SFTP can't connect |
 | 530 | `HOST:PORT doesn't speak SSH: REASON` | the SSH handshake fails |
-| 530 | `HOST's SSH key has changed: if that is right, remove it from /var/lib/eftpgate/known_hosts on the Gateway` | a remembered key differs |
+| 530 | `HOST's SSH key has changed: if that is right, remove it from known_hosts on the Gateway` | a remembered key differs, or the server offers only another kind of key |
+| 530 | `The Gateway can't read its known_hosts: remove it there and connect again` | `/var/lib/eftpgate/known_hosts` is there but can't be read whole |
 | 530 | `HOST wants another kind of login (TYPES)` | no password login offered |
 | 530 | `login incorrect` | the password is refused |
 | 530 | `HOST's certificate didn't check out: REASON` | the FTPS certificate check fails |
@@ -341,7 +343,7 @@ HOST, CIPHER`, `213 SIZE`, `226 sent`.
   data connection must come within 30 s.
 - **SSH host keys:** remembered the first time in
   `/var/lib/eftpgate/known_hosts` (`[host]:port` for another port) and checked
-  every time after. **FTPS** data connections reuse the control connection's
+  every time after; a known server is held to the kinds of key it is known by. **FTPS** data connections reuse the control connection's
   TLS session and always use `PROT P`.
 - **Log:** logins (`logged in to HOST (SFTP to HOST, CIPHER)`) and logouts;
   with `-v`, every command and reply, `PASS` shown as `****`. Never passwords
