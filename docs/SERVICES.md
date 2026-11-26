@@ -756,7 +756,7 @@ HTTP/1.0, one request a connection, all text UTF-8.
 
 | Request | Answer |
 |---|---|
-| `GET /status` | `translategate 1`, `engine argos VERSION`, `ready` (or `loading`) |
+| `GET /status` | `translategate 1`, `engine argos VERSION`, `ready` (or `loading`, or `failed: WHY` when it couldn't load) |
 | `GET /languages` | one `CODE<TAB>NAME` line for each language installed |
 | `GET /languages?all=1` | `cap_mb 1108`, `used_mb N`, then `CODE<TAB>NAME<TAB>MB<TAB>installed\|available` for each language there is |
 | `POST /translate?to=CODE[&from=CODE]` | the translation, with `X-Translate-From: CODE` |
@@ -802,6 +802,7 @@ The body is one line, `translategate: WHY`.
 | 422 | `the translation came out too long` | the engine's answer was over 4 times the text |
 | 422 | `those languages take N MB; 1108 MB fit` | a Languages request too big |
 | 503 | `the engine is loading` | just started |
+| 503 | `WHY: see journalctl -u translategate` | it couldn't load (no languages installed, or its packages broken) |
 | 503 | `a languages job is running` / `can't start the job (REASON)` | a Languages request while one runs |
 | 504 | `it took over 60 s` | too long, waiting for the engine included |
 | 500 | `the engine failed` | |
