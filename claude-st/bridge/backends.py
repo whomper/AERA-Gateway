@@ -1014,6 +1014,7 @@ class ClaudeAiBackend(Backend):
         tail = (isinstance(page, dict) and page.get("last_id")) or (events and event_id(events[-1])) or None
         self._code_tail = tail
         if not (isinstance(page, dict) and page.get("has_more")) or not events or not tail:
+            log.debug("Code session: one page")
             return events
         # which end is this? Older events before it: not the start, so the
         # newest page (claude.ai's, with no cursor). Asking for newer ones
@@ -1040,19 +1041,23 @@ class ClaudeAiBackend(Backend):
                 older = [e for e in self._data(page) if event_id(e) not in seen]
                 if not older:
                     break
+            log.debug("Code session: newest first, read back")
             return events
         # nothing before it: the oldest page (or a server without before_id)
         newer = self._code_events(session_id, after=tail, cap=1)     # one page
         if not newer:       # and nothing after it either: all there is
             self._code_tail = tail
+            log.debug("Code session: one page")
             return events
         # the oldest page: the newest end, if the server sorts on request
         latest = self._code_newest(session_id, path, events + newer, want, deadline)
         if latest:
+            log.debug("Code session: oldest first, read with order=desc")
             return latest
         # else walk forward, keeping the latest: from where the last read
         # of this session got to (code-marks.json), or from the start
         mark = self._marks().get(session_id)
+        log.debug("Code session: oldest first, walked from %s", "its mark" if mark else "the start")
         if mark:
             try:
                 got = self._code_walk(session_id, mark, [], cap, deadline)
@@ -1091,6 +1096,7 @@ class ClaudeAiBackend(Backend):
             mark = self._walk_mark(events, mark)
         if mark:
             self._marks().set(session_id, mark)
+        log.debug("Code session: walked %d events%s", read, ", out of time" if self.code_partial else "")
         return events
 
     def _walk_mark(self, events, mark):
