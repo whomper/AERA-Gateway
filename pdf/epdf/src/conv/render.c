@@ -1075,7 +1075,7 @@ static void glyph_hook(void *u, long prog, int kind, const char *base, int comp,
 			   bit a pixel below, every pixel a quarter inked (MONO_INK)
 			   black: crisp at 10 pixels with every stroke. FreeType's own
 			   mono rendering lost an r's arm and a t's bar at that size
-			   (EDOS_01.PDF), and its light hinting (the auto-hinter) read
+			   (a Calamus SL PDF), and its light hinting (the auto-hinter) read
 			   no better and held a Falcon 305 ms at a font's first glyph */
 			if (FT_Load_Glyph(face, gid, FT_LOAD_NO_BITMAP | FT_LOAD_NO_HINTING) ||
 			    FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL)) {
@@ -1111,7 +1111,7 @@ static void glyph_hook(void *u, long prog, int kind, const char *base, int comp,
 				/* a screen's: inked from a quarter too, and a stroke
 				   that falls between two pixels, each under a quarter,
 				   inked at the stronger of them (a light face's 1 at
-				   8 pixels was lost: EDOS_01.PDF's Montserrat Light) */
+				   8 pixels was lost) */
 				int x;
 
 				for (y = 0; y < e->h; y++)

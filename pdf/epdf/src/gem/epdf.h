@@ -18,6 +18,7 @@ int settings_lines(void);		/* View > The page's lines: 1, else paragraphs joined
 
 /* about.c */
 void about_box(void);
+void about_ready(void);	/* (the About box made ready: the first timer event) */
 /* an iconified window drawn as the icon, status under it */
 void app_icon_redraw(short h, const GRECT *area, const char *status);
 
@@ -64,7 +65,9 @@ int doc_pic_ahead_only(void);
 int win_ahead_due(void);		/* pictures ahead of the view to look for */
 void win_ahead(void);			/* (a few rows a turn) */
 void doc_pic_drop_ahead(void);	/* a picture ahead stopped for one shown */
-int doc_pic_hold(void);		/* Esc: the picture or page being made stopped, none begun till the view moves */
+int doc_pic_hold(void);
+void doc_pics_pause(int on);
+void doc_print_room(void);	/* printing: the decoded pictures and the store's spare memory let go */	/* printing: the picture being made stopped, none begun till 0 */		/* Esc: the picture or page being made stopped, none begun till the view moves */
 /* the progress row's: the page being read (-1 none), *prog how far
    through it in thousandths; the picture being made, its page and
    rows made of all (*of 0: not made a row at a time) */
@@ -140,7 +143,7 @@ void win_sliders(void);
 void win_where(short *x, short *y, short *w, short *h);
 int win_message(const short *msg);
 void win_status(const char *s);		/* after the info line's page, until cleared (NULL) */
-/* the progress row (Erez, 2 Nov 2026): the job running now, kind > 0, its
+/* the progress row (decided 2 Nov 2026): the job running now, kind > 0, its
    words and how far (done of total; total 0: not known), or kind 0
    none; called every turn. The row shows once a job has run half a
    second and goes when none has for a third; it is drawn in a turn of

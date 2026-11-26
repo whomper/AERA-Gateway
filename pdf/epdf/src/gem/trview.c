@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
  * Copyright (C) 2026 AERA | Erez Yaary */
 /*
- * trview.c - View > Translate (Erez, 8 Nov 2026; AERA-Atari
- * standards/TRANSLATION-SERVICE.md, "EWeb and EPDF: what Erez approved"):
+ * trview.c - View > Translate (decided 8 Nov 2026; AERA-Atari
+ * standards/TRANSLATION-SERVICE.md, EWeb and EPDF):
  * the text view's paragraphs translated, page by page from the page in
  * view, the original shown until each page's translation has come.
  *

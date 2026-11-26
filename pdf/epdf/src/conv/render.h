@@ -36,7 +36,7 @@ typedef struct {
 	const char *fontdir;		/* the standard fonts' files (Liberation*.ttf), or NULL */
 	long glyphs, glyphs_missed, images, images_missed;
 	int mono_glyphs;		/* 1: glyphs a bit a pixel (the mono page's: grey edges
-					   dithered broke 10-pixel text into dots, Erez, 4 Nov 2026);
+					   dithered broke 10-pixel text into dots, decided 4 Nov 2026);
 					   2: those under 20 pixels, a screen's of 16 colours or fewer
 					   (render.ovl's, ROVL_HOST's crisp) */
 	long image_ms;			/* the page's pictures' decode, in render_clock's ms */
@@ -49,7 +49,7 @@ typedef struct {
 	/* how far through the page (render_progress): its content streams'
 	   and its pictures' stored bytes, as the page starts, and the
 	   pictures' read so far (a page that is a scan sat at its content's
-	   end, 40 %, while the picture took most of the time: Erez, 13 Nov
+	   end, 40 %, while the picture took most of the time: decided 13 Nov
 	   2026) */
 	long p_ctot, p_itot, p_idone, p_icur, p_polls, p_ih;
 	int p_inimg;

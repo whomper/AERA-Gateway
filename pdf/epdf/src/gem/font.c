@@ -66,7 +66,7 @@ static void set(short id, short pt)
 	ch = h;
 	font_text(id, cw, ch);
 	/* a GDOS font: its runs in their cells, its Hebrew letters as it has
-	   them (Erez, 17 Nov 2026: FreeMono drew TOS's Hebrew codes as other
+	   them (decided 17 Nov 2026: FreeMono drew TOS's Hebrew codes as other
 	   letters; EMail's way, common's text_cells_n) */
 	if (id == 1) {
 		text_hebrew(FS_HEB_MAP, NULL, 1, pt);

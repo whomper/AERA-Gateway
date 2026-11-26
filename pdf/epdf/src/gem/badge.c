@@ -1,15 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
  * Copyright (C) 2026 AERA | Erez Yaary */
 /*
- * The "Optimised" badge's ground (Erez, 4 Nov 2026: "darker green with
- * nice shading in 16 colors using what is available and a great looking
- * shaded optimized for 256 colors").
+ * The "Optimised" badge's ground (decided 4 Nov 2026).
  *
  * A rounded box with a dark edge, shaded from its top down, drawn a band
  * of rows at a time (rows alike are one rectangle). EPDF sets no pens: the
  * shades are the loaded palette's, found once with vq_color.
- *   256 colours and more: a gloss (Erez, 5 Nov: "shade it much better.
- *     Use more hues as needed"): a bright mint top falling to an emerald
+ *   256 colours and more: a gloss (decided 5 Nov): a bright mint top falling to an emerald
  *     body and a deep green foot, five stops each the palette's nearest
  *     green of any hue (TOS's 256 have greens at four brightnesses, each
  *     with blue and yellow beside it, and no pale ones), each row a stop

@@ -39,7 +39,7 @@ static inline uint32_t frac_fx(uint32_t fp, int fd)
  */
 static inline const unsigned char *lex_digits(const unsigned char *s, short n, uint32_t *v)
 {
-#if defined(__mc68000__) || defined(__m68k__)
+#if (defined(__mc68000__) || defined(__m68k__)) && !defined(__mcoldfire__)
 	uint32_t a = *v;
 
 	__asm__("moveq #0,%%d0\n\t"

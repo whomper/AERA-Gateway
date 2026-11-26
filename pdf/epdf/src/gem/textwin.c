@@ -44,8 +44,7 @@ static unsigned long t_mark;
 /* no info line: the status bar at the foot says what it said (as EWeb's) */
 #define WKIND (NAME | CLOSER | FULLER | MOVER | SIZER | UPARROW | DNARROW | VSLIDE)
 /* a zoomed page's window: the left and right arrows and slider move it
-   sideways (Erez, 14 Nov 2026: "have a vertical and add a horizontal
-   scroll"; then "show only when zoomed in": always there, the bar cost
+   sideways (decided 14 Nov 2026: always there, the bar cost
    every start 65 ms on an ST, 30 on a Falcon). The window is made again
    at its place when a zoom starts and when it ends (remake) */
 #define WKIND_ZOOM (WKIND | LFARROW | RTARROW | HSLIDE)
@@ -281,8 +280,8 @@ static int fill_set;
 
 /* a page's head: a line across, "Page n" on it; a converted PDF's
    (EConvert's) with the badge "Optimised" at its right end, green on a
-   screen with colours, black in mono (Erez, 31 Oct 2026); a dark green
-   shaded from the top down, the text white with a shadow (Erez, 4 Nov) */
+   screen with colours, black in mono (decided 31 Oct 2026); a dark green
+   shaded from the top down, the text white with a shadow (decided 4 Nov) */
 static void draw_head(short x, short y, short w, long page)
 {
 	static const char badge[] = "Optimised";
@@ -290,8 +289,7 @@ static void draw_head(short x, short y, short w, long page)
 	short n, my = (short)(y + ch / 2), tx, end = (short)(x + w - MARGIN - 1), bx = 0, bw = 0, bh = 0, sw = 0, sh = 0, small = 0;
 
 	if (tr_on() && doc_tr_state(page) == TR_DONE && doc_tr_from(page)[0])
-		/* the page shown translated: where it came from (Erez, 8 Nov 2026:
-		   "Page 3 \xFA from Hebrew") */
+		/* the page shown translated: where it came from (decided 8 Nov 2026) */
 		n = (short)snprintf(s, sizeof s, " Page %ld \xFA from %s ", page + 1, lang_name(doc_tr_from(page)));
 	else
 		n = (short)snprintf(s, sizeof s, " Page %ld ", page + 1);
@@ -300,9 +298,8 @@ static void draw_head(short x, short y, short w, long page)
 	tx = (short)(x + MARGIN + 2 * cw);
 	if (doc_prepared()) {
 		/* the text centred in the system's small font, 3 pixels each side
-		   and its shadow's pixel, the box 0.7 of the line high (Erez, 4
-		   Nov: "the text is centered and the bounding box isn't too
-		   wide"; 5 Nov: "smaller by 30%"): a 16-pixel font's badge 81 x
+		   and its shadow's pixel, the box 0.7 of the line high (decided 4
+		   and 5 Nov: the text centred, the box 30 % smaller): a 16-pixel font's badge 81 x
 		   16 -> 61 x 11. An 8-pixel line (ST low and medium) keeps its
 		   font and the box its height: the small font there is 3 pixels
 		   of a monitor high, past reading */
@@ -415,6 +412,13 @@ static int maybe_rtl(const char *s, short n)
 
 	if (n <= 0)
 		return 0;
+#ifdef __mcoldfire__
+	(void)f;
+	while (n-- > 0)
+		if ((unsigned char)*s++ > 0xC1)
+			return 1;
+	return 0;
+#else
 	__asm__("subq.w #1,%1\n\t"
 		"moveq #-63,%%d1\n"		/* 0xC1 */
 		"1:\tcmp.b (%0)+,%%d1\n\t"
@@ -424,6 +428,7 @@ static int maybe_rtl(const char *s, short n)
 		:
 		: "d1", "cc");
 	return f != 0;
+#endif
 }
 
 static int row_visual(const char *s, long n, const char **vis, short *x)
@@ -456,7 +461,7 @@ static short pic_x(int w)
 /* a row of a picture: its bitmap's band, or, until it is decoded, its
    frame with a word in it */
 /* a picture shown with fewer pixels than it has: a click shows it whole
-   (Erez, 5 Nov 2026) */
+   (decided 5 Nov 2026) */
 static int enlargeable(const PICE *e, const DVPIC *pr)
 {
 	long d, w, h;
@@ -479,8 +484,7 @@ static void enlarge_icon(const GRECT *c, short x, short y)
 }
 
 /* "Drawing a sharper page... 40%" across a page's picture at x, y, w wide
-   (Erez, 10 Nov 2026: "There is no indication that a better visual is
-   being prepared. It should say so in a more prominent location"): a
+   (decided 10 Nov 2026): a
    black band with white words, a row high */
 static int band_pct = -1;		/* the per cent the band shows */
 
@@ -653,7 +657,7 @@ static void invert(const GRECT *c, short x1, short x2, short y)
 /*
  * A row's selection as it shows under the span (p0, o0)-(p1, o1), in order
  * (p0 < 0: none): 0 none; 1 its cells [a, b); 2 the whole row, every letter
- * of it selected, shown to the text's right edge (Erez, 31 Oct 2026), so a
+ * of it selected, shown to the text's right edge (decided 31 Oct 2026), so a
  * run of such rows is one box to invert (Select all on an ST).
  */
 static int sel_shape(long p0, long o0, long p1, long o1, long page, long off, long n, long *a, long *b)
@@ -864,11 +868,7 @@ static int overlap(const GRECT *a, const GRECT *b, GRECT *o)
 
 
 /*
- * The status bar (Erez, 2 Nov 2026: "Like EWeb, placed at the bottom,
- * says viewing page x / y and then if there is activity going on, such as
- * opening a page, picture of whatever, it is stated after that text.
- * Progress is marked with a thin line at the bottom of that text area that
- * is filled from left to right"): at the foot of the window and always
+ * The status bar (decided 2 Nov 2026): at the foot of the window and always
  * there, as EWeb's (the window has no info line). A line along its top,
  * its words ("Viewing page 3 / 8 * Reading page 5 of 8 * 30% * 2 min
  * left"), and along its foot a line 2 pixels high (3 in a tall font) that
@@ -878,8 +878,7 @@ static int overlap(const GRECT *a, const GRECT *b, GRECT *o)
  *
  * Drawn in turns of its own, at most every 250 ms while a job runs (the
  * guidelines' progress), and then only what changed, each pixel written
- * once (no flicker: Erez, 1 Nov 2026, "the progress displays flicker
- * every second"): the letters that changed by text_plain on the white
+ * once (no flicker: decided 1 Nov 2026): the letters that changed by text_plain on the white
  * ground, the line's new part.
  */
 #define BAR_CELLS 160
@@ -1178,8 +1177,8 @@ void win_progress_draw(void)
 
 /* the window's rectangles over area, each drawn */
 /*
- * A picture whole (Erez, 5 Nov 2026: clicked, "it expands to full
- * glory"): in the one window (3.2), the picture alone at its own pixels,
+ * A picture whole (decided 5 Nov 2026: clicked, it shows at its
+ * full size): in the one window (3.2), the picture alone at its own pixels,
  * at most the text column's width, made like any other (pics.c, its rows
  * as they come); Up, Down and the page keys move it, Esc, Backspace,
  * Return or a click give the text back as it was.
@@ -1195,12 +1194,12 @@ static struct {
 	/* a converted PDF's page: its own picture enlarged at once (made in a
 	   second or so from what is stored), then the page drawn sharp at that
 	   size (render.ovl, seconds to tens of seconds) in its place when it
-	   is ready (Erez, 8 Nov 2026: "tens of seconds of wait time") */
+	   is ready (decided 8 Nov 2026) */
 	MFDB pre;			/* the page's picture as View > Pages shows it, enlarged */
 	int pre_heap;
 } zoom;
 
-/* View > Zoom in and Zoom out's steps (Erez, 8 Nov 2026: keypad + and -,
+/* View > Zoom in and Zoom out's steps (decided 8 Nov 2026: keypad + and -,
    100 to 400 %; a click on a page still goes to 200 % and back) */
 static const short zsteps[] = { 100, 150, 200, 300, 400 };
 static int zoom_failed_at;		/* the size that couldn't be made (this document): not offered again */
@@ -1262,7 +1261,7 @@ static int zoom_move(long l, long t)
 }
 
 /* a slider of the window dragged while a page is zoomed (vert: the right
-   one): the page moved there, not the text back (Erez, 14 Nov 2026) */
+   one): the page moved there, not the text back (decided 14 Nov 2026) */
 static void zoom_slid(int vert, short pos)
 {
 	if (vert)
@@ -1427,8 +1426,7 @@ static int zoom_page_pic(const DVPIC *b, int pct, DVPIC *out)
 
 /* p (a page's zoomed picture) shown, and until it is made (render.ovl:
    seconds to tens of seconds) the page's picture as View > Pages has it
-   enlarged at once, its pixels nearest (Erez, 8 Nov 2026: "tens of
-   seconds of wait time ... the user may think there is an error"), where
+   enlarged at once, its pixels nearest (decided 8 Nov 2026), where
    memory holds both */
 static void zoom_set_pic(const DVPIC *p)
 {
@@ -1563,7 +1561,7 @@ int win_zoom_can(int dir)
 	return 0;
 }
 
-/* View > Zoom In and ^+: the page in view at 200 % (Erez, 14 Nov 2026:
+/* View > Zoom In and ^+: the page in view at 200 % (decided 14 Nov 2026:
    two sizes, Normal and Zoom; 200 % a click's too), else the biggest
    there is room for */
 void win_zoom_in(void)
@@ -1602,6 +1600,10 @@ void win_zoom_in(void)
 			zoom_to(k, (short)(work.x + work.w / 2), (short)(work.y + work.h / 2));
 			return;
 		}
+	/* no size had the memory (a 4 MB Falcon in 256 colours: 200 % is about
+	   2 MB of bitmap): said, not nothing at all (decided 21 Nov 2026) */
+	log_event("zoom-refused", "memory", NULL);
+	win_status("Not enough memory to zoom");
 }
 
 /* the zoom ended (View > Zoom In again, ^-, ^0): View > Pages' page as it was */
@@ -1676,7 +1678,7 @@ int win_zoom_at(short mx, short my)
 	zoom.p.obj = v->pic.obj;
 	/* its own pixels, up to twice the text column (wider than the window:
 	   Left and Right move it), as much of that as memory holds: the
-	   machine's own (Erez, 5 Nov) */
+	   machine's own (decided 5 Nov) */
 	w = e->sw < 2L * cols * cw ? e->sw : 2L * cols * cw;
 	for (;;) {
 		h = e->sh * w / e->sw * 16 / (pix_aspect > 0 ? pix_aspect : 16);
@@ -1853,7 +1855,7 @@ void win_redraw(const GRECT *area)
 
 /*
  * The whole window drawn again (next page, View > The page's lines, a
- * new font), in one piece: drawing is not sliced (Erez, 4 Nov 2026, the
+ * new font), in one piece: drawing is not sliced (decided 4 Nov 2026, the
  * guidelines' "Drawing is not such a job"; from 0.5.1 to 1.1 a VDI font's
  * text was owed to later turns in bands of about 60 ms, and a scroll's
  * rows to the next turn).
@@ -1983,7 +1985,7 @@ static void moved(long d)
 		text_clip(vdi_h, clip);		/* the VDI clips raster copies too */
 		/* (common's: on TOS's screen each 16-pixel group with all its
 		   planes, so the Falcon's plane-by-plane copy never shows the
-		   text grey and coloured between its places, Erez's Falcon in
+		   text grey and coloured between its places, a Falcon in
 		   16 colours, 14 Nov 2026; else vro_cpyfm) */
 		scr_rows(vdi_h, pxy);
 		text_noclip(vdi_h);
@@ -2064,9 +2066,7 @@ void win_goto_page(long n)
 }
 
 /*
- * Pictures ahead of the view (Erez, 4 Nov 2026: "can the images even
- * though they are not yet displayed get silently converted behind the
- * scene in a way that will not block the user reading and navigating"):
+ * Pictures ahead of the view (decided 4 Nov 2026):
  * the view's page and AHEAD_PAGES after it, a page a turn when nothing else
  * waits, each picture queued to be made quietly (pics_ahead, which takes
  * two at a time). The pictures are found in the pages' stored text

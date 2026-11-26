@@ -65,7 +65,7 @@ int dv_init(DOCVIEW *v, TSTORE *ts, long npages, int cols, int lines_mode);
    page counted at its height in the pass dv_init makes, none left stale.
    View > Pages and Translate switched: with dv_init a page's picture was a
    row till it came into view, then grew, and what was below it jumped as
-   a held key scrolled (Erez's Falcon, 14 Nov 2026) */
+   a held key scrolled (a Falcon, 14 Nov 2026) */
 int dv_init_pics(DOCVIEW *v, TSTORE *ts, long npages, int cols, int lines_mode, int pic_w, int pic_ch, int pic_aspect);
 void dv_free(DOCVIEW *v);
 /* page n's text came (ts_put): its rows counted again */

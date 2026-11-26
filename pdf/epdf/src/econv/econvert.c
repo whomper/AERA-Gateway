@@ -5,7 +5,7 @@
  * (docs/CONVERTED-PDF.md) for EPDF, on a Falcon or a TT (a 68030; an ST
  * is told so).
  *
- * One window holds the batch (Erez, 31 Oct 2026): the files (Add files,
+ * One window holds the batch (decided 31 Oct 2026): the files (Add files,
  * Add folder, Clear), the folder they are written to, the batch's
  * settings (the whole pages: none, mono, mono and colour; the photos: 256
  * colours or JPEG), Convert; and, while it works, two bars, the file and
@@ -52,6 +52,8 @@
 #include "icon16.h"
 #include "icon256.h"
 #include "scrpens.h"
+#include "translate.h"
+#include "charset.h"
 
 extern const char app_version[];
 short vdi_h, cw, ch, desk_x, desk_y, desk_w, desk_h, planes, gl_wchar, gl_hchar;	/* (scr_w, scr_h: src/gem/gemui.c) */
@@ -60,12 +62,45 @@ static char start_dir[160], inf_path[180], font_dir[180];
 static INF inf;
 static MBAR menu;
 
+/* the log (the guidelines' 6.5, D8; decided 22 Nov 2026): econvert.log
+   beside ECONVERT.PRG through common's conn.c, as EPDF's */
+static int log_on;
+
 void log_event(const char *what, const char *a, const char *b)
 {
 	char line[200];
+	int n = snprintf(line, sizeof line, "ECONVERT %s %s %s\n", what, a ? a : "", b ? b : "");
 
-	snprintf(line, sizeof line, "ECONVERT %s %s %s\n", what, a ? a : "", b ? b : "");
 	nf_debug(line);
+	if (log_on && n > 0) {
+		/* "what -- a b": the time and the name are conn.c's; the tag,
+		   the trailing blanks and the newline off */
+		char *s = line + 9 + strlen(what) + 1, *e = line + (n < (int)sizeof line ? n : (int)sizeof line - 1);
+
+		while (e > s && (e[-1] == '\n' || e[-1] == ' '))
+			e--;
+		conn_log(what, " -- ", s, (long)(e - s));
+	}
+}
+
+/* the log's first line: "start -- EConvert 2.44, 2026-11-22 14:05:31" */
+static void log_begin(void)
+{
+	char v[32];
+
+	snprintf(v, sizeof v, "EConvert %s", app_version);
+	conn_log_start(v);
+}
+
+static void log_set(int on, const char *dir)
+{
+	log_on = on;
+	if (on && !conn_logfile[0])
+		path_join(conn_logfile, sizeof conn_logfile, dir, "econvert.log");
+	else if (!on) {
+		conn_log_flush();
+		conn_logfile[0] = '\0';
+	}
 }
 
 /* the system font is the only one (gemui.h's: the About box asks) */
@@ -83,10 +118,10 @@ static const char inf_head[] =
 	"; EConvert's settings. EConvert writes this file itself; a line it doesn't know is kept.\r\n\r\n";
 static int pages_set = CV_PAGES_MONO, photos_set = CV_PHOTOS_INDEXED;
 /* each page's preview (/Thumb, EPDF's page strip): Settings' "Page previews",
-   PREVIEWS= in the INF; off by default (Erez, 15 Nov 2026: 1.9 s a page on a
-   4 MB Falcon, "a setting flag, off by default") */
+   PREVIEWS= in the INF; off by default (decided 15 Nov 2026: 1.9 s a page on a
+   4 MB Falcon: a setting, off by default) */
 static short previews_set;
-/* Optimise for: Smaller files (0) or Faster display (1, the default: Erez,
+/* Optimise for: Smaller files (0) or Faster display (1, the default: decided
    17 Nov 2026), OPTIMISE= in the INF ("size", "display"): with Faster
    display each picture also gets a copy in this screen's pens at the size
    EPDF shows it (conv.h's pen_n, docs/CONVERTED-PDF.md) */
@@ -97,15 +132,23 @@ static short optimise_set = 1;
 static int scr_pen_n, scr_col, scr_aspect = 16;
 static unsigned char scr_rgb[256][3];
 static char out_dir[160], in_dir[160];
-/* Gateway mode (Erez, 7 Nov 2026): the PDFs converted by the Gateway
+/* Gateway mode (decided 7 Nov 2026): the PDFs converted by the Gateway
    (AERA-Gateway's pdfgate) instead of here. A Falcon or a TT converts here
    by default; an ST can only send (its converter needs a 68030) */
 static int has_030, on_gateway;
 static char gate_host[64];
 static unsigned short gate_port = GATE_PORT;
+/* Translate (decided 20 Nov 2026): a pop-up in the
+   window, Off when EConvert starts (his default; not kept in the INF), else
+   the language each page's text is translated into by the Gateway's
+   translation service, in both modes (on This Atari the text alone goes
+   to it) */
+#define TR_PORT 8480			/* translategate's (AERA-Gateway) */
+static unsigned short tr_port = TR_PORT;
+static char tr_code[TR_LANG], tr_name[24];
 
 /* no Gateway of its own yet: EPDF's, from epdf.inf in the folder above
-   (the release's epdf\econvert\), or beside it (Erez, 8 Nov 2026: the
+   (the release's epdf\econvert\), or beside it (decided 8 Nov 2026: the
    converter takes the Gateway EPDF has) */
 static void epdf_gateway(void)
 {
@@ -159,7 +202,9 @@ static void settings_read(void)
 	} else
 		inf_parse(&inf, inf_head, (long)strlen(inf_head));
 	/* NatFeats only where the INF asks (NATFEATS=1: the test rigs; not in
-	   Settings), before the first log_event, as EPDF's (Erez, 15 Nov 2026) */
+	   Settings), before the first log_event, as EPDF's (decided 15 Nov 2026) */
+	if ((v = inf_get(&inf, "LOG")) != NULL)
+		log_on = v[0] == '1';	/* (the file named at the start: log_set) */
 	if ((v = inf_get(&inf, "NATFEATS")) != NULL && v[0] == '1')
 		nf_on = 1;
 	if ((v = inf_get(&inf, "PAGES")) != NULL)
@@ -182,6 +227,8 @@ static void settings_read(void)
 		strcpy(gate_host, v);
 	if ((v = inf_get(&inf, "GATEPORT")) != NULL && atol(v) > 0 && atol(v) < 65536)
 		gate_port = (unsigned short)atol(v);
+	if ((v = inf_get(&inf, "TRPORT")) != NULL && atol(v) > 0 && atol(v) < 65536)
+		tr_port = (unsigned short)atol(v);	/* (translategate's elsewhere: the rigs) */
 	if (!gate_host[0])
 		epdf_gateway();
 }
@@ -211,9 +258,7 @@ static long mem_free(void)
 	return (long)Malloc(-1L);
 }
 
-/* the sizes this machine shows (Erez, 5 Nov 2026: "the 640 pixel
-   limitation is based on the actual user's machine ... figure out
-   available display area yourself and adapt to it"): the whole page's
+/* the sizes this machine shows (decided 5 Nov 2026): the whole page's
    picture as wide as EPDF's text column in a window the desktop's size
    (its kind and margins: textwin.c's WKIND and MARGIN), and a picture at
    most that window's inside (common's scr_work_size) */
@@ -237,16 +282,44 @@ static void screen_sizes(int *page_w, int *pic_w)
 	*pic_w = sizes_pic;
 }
 
-#define MAXF 200
-static struct {
+/* the list: as long as memory allows (decided 25 Nov 2026: no fixed
+   number; the files are converted one at a time), on the heap, which TOS
+   gives from TT RAM where there is some; grown by room() */
+typedef struct {
 	char path[160];
+	short rel;			/* where its name under the folder added starts (Add
+					   folder...: its subfolders too, kept under Write to) */
 	long bytes;
 	int state;			/* 0 to do, 1 done, 2 failed, 3 stopped */
 	long out_bytes;			/* the converted PDF's size (done) */
 	char why[120];
-} files[MAXF];
-static int nfiles;
-/* how the last batch went, under the bars until the list changes (Erez,
+} FENT;
+static FENT *files;
+static int nfiles, nroom;
+
+/* room for n more in the list: 1, or 0 when memory refuses it */
+static int room(int n)
+{
+	FENT *f;
+	long want;
+
+	if (nfiles + n <= nroom)
+		return 1;
+	want = (long)nfiles + n;
+	if (want < 32)
+		want = 32;
+	if (want < 2L * nroom)
+		want = 2L * nroom;	/* (doubling: few reallocs as a tree comes in) */
+	if (!(f = realloc(files, (size_t)want * sizeof *f))) {
+		want = (long)nfiles + n;	/* (no room to double: just what is asked) */
+		if (!(f = realloc(files, (size_t)want * sizeof *f)))
+			return 0;
+	}
+	files = f;
+	nroom = (int)want;
+	return 1;
+}
+/* how the last batch went, under the bars until the list changes (decided
    10 Nov 2026: the result in the window, not an alert; the list keeps every
    file with its mark until Clear) */
 static char s_result[80];
@@ -269,7 +342,7 @@ static long file_size(const char *p)
 	return n;
 }
 
-static int add_file(const char *p)
+static int add_file_under(const char *p, int rel)
 {
 	int i;
 	long n;
@@ -277,10 +350,11 @@ static int add_file(const char *p)
 	for (i = 0; i < nfiles; i++)
 		if (!strcmp(files[i].path, p))
 			return 0;
-	if (nfiles >= MAXF || strlen(p) >= sizeof files[0].path || (n = file_size(p)) < 0)
+	if (strlen(p) >= sizeof files[0].path || (n = file_size(p)) < 0 || !room(1))
 		return 0;
 	s_result[0] = '\0';	/* (the list changed: the last batch's line goes) */
 	strcpy(files[nfiles].path, p);
+	files[nfiles].rel = (short)rel;
 	files[nfiles].bytes = n;
 	files[nfiles].state = 0;
 	files[nfiles].out_bytes = 0;
@@ -289,29 +363,85 @@ static int add_file(const char *p)
 	return 1;
 }
 
-/* every PDF in the folder dir (no trailing \) */
-static int add_folder(const char *dir)
+/* a file on its own: written by its name into Write to's folder */
+static int add_file(const char *p)
+{
+	return add_file_under(p, (int)(base_of(p) - p));
+}
+
+/* every PDF in the folder dir (no trailing \) and in its subfolders, each
+   kept with its place under the folder first added (from rel), so that the
+   copies go into the same subfolders under Write to (decided 25 Nov 2026:
+   Add folder... takes the whole tree). 8 levels at most; a DTA a level */
+/* 1: add_tree counts the PDFs it would add, adding none */
+static int counting;
+
+/* already in the list */
+static int listed(const char *p)
+{
+	int i;
+
+	for (i = 0; i < nfiles; i++)
+		if (!strcmp(files[i].path, p))
+			return 1;
+	return 0;
+}
+
+static int add_tree(const char *dir, int rel, int depth)
 {
 	char pat[180], p[200];
 	DTA *old = Fgetdta(), dta;
 	int n = 0;
 
+	if (depth > 8 || strlen(dir) + 14 >= sizeof files[0].path)
+		return 0;
 	Fsetdta(&dta);
 	snprintf(pat, sizeof pat, "%s\\*.PDF", dir);
 	if (Fsfirst(pat, 0) == 0)
 		do {
 			snprintf(p, sizeof p, "%s\\%s", dir, dta.d_fname);
-			n += add_file(p);
+			n += counting ? strlen(p) < sizeof files[0].path && !listed(p) : add_file_under(p, rel);
+		} while (Fsnext() == 0);
+	snprintf(pat, sizeof pat, "%s\\*.*", dir);
+	if (Fsfirst(pat, 0x10) == 0)
+		do {
+			if ((dta.d_attrib & 0x10) && dta.d_fname[0] != '.') {
+				snprintf(p, sizeof p, "%s\\%s", dir, dta.d_fname);
+				n += add_tree(p, rel, depth + 1);
+				Fsetdta(&dta);	/* (the level below set its own) */
+			}
 		} while (Fsnext() == 0);
 	Fsetdta(old);
 	return n;
 }
 
+/* room for n more PDFs, or said that memory has none and nothing added
+   (decided 25 Nov 2026: all of them or none) */
+static int too_many(int n)
+{
+	if (n <= 0 || room(n))
+		return 0;
+	alert(1, "[1][Not enough memory for|these %d PDFs. None|were added.][ OK ]", n);
+	log_event("too-many", NULL, NULL);
+	return 1;
+}
+
+/* the folder's tree, all of it or none (-1: too many, said) */
+static int add_folder(const char *dir)
+{
+	int n;
+
+	counting = 1;
+	n = add_tree(dir, (int)strlen(dir) + 1, 0);
+	counting = 0;
+	if (too_many(n))
+		return -1;
+	return add_tree(dir, (int)strlen(dir) + 1, 0);
+}
+
 /* ---------------------------------------------------------------- the window's tree */
 
-/* The window (Erez, 9 Nov 2026: "Go with B but use the list management
-   of A ... a visual separator just beneath that area ... the same
-   separator as the one at the bottom"): a black band with the icon, the
+/* The window (decided 9 Nov 2026): a black band with the icon, the
    name and what the batch is; the files in a list, its buttons at the
    right; a line; the settings as pop-up buttons (the family's, 5.7: over
    the button, the choice ticked); a line; the file's and the batch's
@@ -320,7 +450,7 @@ enum {
 	BOX, BAND1, BAND2, ICON, LIST, L0, L1, L2, L3, L4, L5, L6,
 	M0, M1, M2, M3, M4, M5, M6, G0, G1, G2, G3, G4, G5, G6,
 	B_ADD, B_FOLDER, B_REMOVE, B_CLEAR, B_OUT, SEP1, SEP1W,
-	T_PAGES, U_PAGES, T_PHOTOS, U_PHOTOS, T_ON, U_ON, SEP2, SEP2W,
+	T_PAGES, U_PAGES, T_PHOTOS, U_PHOTOS, T_ON, U_ON, T_TR, U_TR, SEP2, SEP2W,
 	T_FILE, BAR1, T_BATCH, BAR2, B_GO, NOBJ
 };
 /* a row of the list: L (its ground and the name), M (the mark), G (the size
@@ -333,12 +463,12 @@ enum {
 #define LTEXT (LW - 3)			/* a row's characters (the pane bar at its right) */
 
 static OBJECT tree[NOBJ];
-static TEDINFO ted_b1, ted_b2, ted_u[3], ted_row[7], ted_mark[7], ted_rest[7];
+static TEDINFO ted_b1, ted_b2, ted_u[4], ted_row[7], ted_mark[7], ted_rest[7];
 static BITBLK icon_blk;
 static char s_band1[COLS + 1], s_band2[COLS + 1], s_file[COLS + 1], s_batch[COLS + 1];
-static char s_row[LROWS][NAME_W + 1], s_mark[LROWS][2], s_rest[LROWS][LTEXT + 1], s_u[3][28];
+static char s_row[LROWS][NAME_W + 1], s_mark[LROWS][2], s_rest[LROWS][LTEXT + 1], s_u[4][28];
 
-/* the mock-up's colours (Erez's B2, 9 Nov 2026: "the color coding is not
+/* the mock-up's colours (the B2 mock-up, 9 Nov 2026: "the color coding is not
    like the mockup"), each the nearest of the first 16 pens as this
    screen has them (pen_nearest: the pens an object can name); on a mono
    screen black and white */
@@ -508,6 +638,8 @@ static void build(void)
 	popup_button(U_PHOTOS, 1, 44, (short)(11 | (half << 8)), 21);
 	obj(T_ON, BOX, G_STRING, 0, (long)"Convert on:", 2, 13, 11, 1);
 	popup_button(U_ON, 2, 15, 13, 18);
+	obj(T_TR, BOX, G_STRING, 0, (long)"Translate:", 36, 13, 10, 1);
+	popup_button(U_TR, 3, 47, 13, 18);
 	obj(SEP2, BOX, G_BOX, 0, line, 1, (short)(14 | ((half + 2) << 8)), COLS - 2, (short)(0 | (1 << 8)));
 	obj(SEP2W, BOX, G_BOX, 0, 0x00000070L, 1, (short)(14 | ((half + 3) << 8)), COLS - 2, (short)(0 | (1 << 8)));
 	obj(T_FILE, BOX, G_STRING, 0, (long)s_file, 2, (short)(15 | (half << 8)), COLS - 4, 1);
@@ -610,15 +742,38 @@ static int progress_cb(void *u, long done, long total)
 	return turn(NULL);
 }
 
-/* the folder's own name for a file: the original's name, in out_dir */
-static void out_path(const char *in, char *out, long n)
+/* a file's name under the folder it was added from: its name, or for Add
+   folder... its subfolders and name ("2021\\JULY.PDF") */
+static const char *rel_of(int i)
 {
-	snprintf(out, (size_t)n, "%s\\%s", out_dir, base_of(in));
+	return files[i].path + files[i].rel;
+}
+
+/* the converted copy's name: out_dir, then the file's place under the
+   folder it was added from */
+static void out_path_of(int i, char *out, long n)
+{
+	snprintf(out, (size_t)n, "%s\\%s", out_dir, rel_of(i));
+}
+
+/* the subfolders of out (a file's path under out_dir) made where missing */
+static void out_folders(const char *out)
+{
+	char d[200];
+	char *s;
+
+	snprintf(d, sizeof d, "%s", out);
+	for (s = d + strlen(out_dir) + 1; (s = strchr(s, '\\')) != NULL; s++) {
+		*s = '\0';
+		Dcreate(d);	/* (one there already: refused, as it should be) */
+		*s = '\\';
+	}
 }
 
 /* ---- Gateway mode: the file sent, the Gateway's progress as the file's
-   (sending its first tenth, the Gateway's work the next eight, the
-   converted PDF the last), conn.c's waits a turn each (pf_idle) */
+   (by time, pigate.c's pg_share: the sending, the Gateway's work and the
+   converted PDF each as long as they take), conn.c's waits a turn each
+   (pf_idle) */
 static int gate_waiting;		/* the Gateway hasn't begun this one yet */
 static int gate_phase = -1;		/* PG_SEND, PG_WORK, PG_RECV; -1 none */
 static long gate_part, gate_whole;		/* the bytes of the phase so far, and in all */
@@ -642,8 +797,7 @@ static int gate_progress(void *u, int phase, long done, long total)
 		gate_whole = total;
 	}
 	cur_total = 1000;
-	cur_done = phase == PG_SEND ? done * 100 / total : phase == PG_WORK ? 100 + done * 800 / total :
-		   900 + done * 100 / total;
+	cur_done = pg_share();	/* (by time: the Gateway's work is quick, the sending and receiving slow) */
 	return turn(NULL);
 }
 
@@ -666,6 +820,8 @@ static int on_the_gateway(const char *in, const char *out, char *err, int errlen
 	po.pic_w = iw;
 	po.page_double = -1;
 	po.thumbs = previews_set;		/* (thumbs=1: AERA-Gateway 1.48 on) */
+	po.translate = tr_code[0] ? tr_code : NULL;
+	po.source_path = in;	/* (added to the copy as it comes: EPDF draws its pages from the original) */
 	if (optimise_set && scr_pen_n >= 2) {
 		/* Faster display: this screen's pens (pens=: a Gateway without
 		   them is asked again without, pigate.c) */
@@ -693,6 +849,36 @@ static int on_the_gateway(const char *in, const char *out, char *err, int errlen
 	return r == -3 ? -1 : r;
 }
 
+/* This Atari's conversion, Translate on: a page's paragraphs to the
+   Gateway's translation service (common's translate.c), its waits a turn
+   each (pf_idle); CVOPT's codes for a refusal: 2 no such pair, 3 busy, 4
+   too long */
+static int tr_direct(void *u, const char *to, const char *utf8, long len, char **out, long *outlen, char from[8])
+{
+	char err[120], used[TR_LANG];
+	char *t;
+
+	(void)u;
+	err[0] = '\0';
+	conn_stop = 0;
+	pf_idle = gate_idle;
+	t = translate_utf8(gate_host, tr_port, to, NULL, utf8, len, NULL, used, outlen, err, sizeof err);
+	pf_idle = NULL;
+	if (!t && !err[0]) {
+		*out = NULL;		/* (nothing came back for nothing sent) */
+		snprintf(from, 8, "same");
+		return 0;
+	}
+	if (!t) {
+		log_event("translate-failed", err, NULL);
+		return !strcmp(err, translate_refusal(422)) ? 2 : !strcmp(err, translate_refusal(503)) ? 3 :
+		       !strcmp(err, translate_refusal(504)) ? 4 : 1;
+	}
+	*out = t;
+	snprintf(from, 8, "%s", strcmp(used, to) ? used : "same");
+	return 0;
+}
+
 static void worker(void)
 {
 	for (;;) {
@@ -711,7 +897,8 @@ static void worker(void)
 			cur_total = 1000;
 			t_file = tos_ms();
 			if (on_gateway) {
-				out_path(files[i].path, outp, sizeof outp);
+				out_path_of(i, outp, sizeof outp);
+				out_folders(outp);
 				memset(&st, 0, sizeof st);
 				r = on_the_gateway(files[i].path, outp, err, sizeof err);
 				goto done_one;
@@ -720,6 +907,11 @@ static void worker(void)
 			o.pages = pages_set;
 			o.photos = photos_set;
 			o.thumbs = previews_set;
+			o.source_path = files[i].path;
+			if (tr_code[0]) {
+				o.translate_to = tr_code;
+				o.translate = tr_direct;
+			}	/* (EPDF's sharp and zoomed pages: the original found by it) */
 			if (optimise_set && scr_pen_n >= 2) {
 				o.pen_n = scr_pen_n;
 				memcpy(o.pen_rgb, scr_rgb, sizeof o.pen_rgb);
@@ -731,7 +923,8 @@ static void worker(void)
 			o.fontdir = font_dir;
 			o.progress = progress_cb;
 			o.turn = turn;
-			out_path(files[i].path, outp, sizeof outp);
+			out_path_of(i, outp, sizeof outp);
+			out_folders(outp);
 			r = cv_convert(files[i].path, outp, &o, &st, err, sizeof err);
 done_one:
 			files[i].state = r == 0 ? 1 : r == -2 ? 3 : 2;
@@ -751,7 +944,7 @@ done_one:
 				log_event("converted", base_of(files[i].path), a);
 				{
 					/* the job's stack, deepest so far, in crash.log's "last
-					   status" (Erez's bombs left no record of it) */
+					   status" (the bombs reported left no record of it) */
 					static long most;
 
 					if (u > most) {
@@ -782,7 +975,7 @@ static GRECT work_area(void)
 	return r;
 }
 
-/* "45%, 2 min left" (the family's form: Erez, 9 Nov 2026, D35) from the share done (thousandths) and the time it took */
+/* "45%, 2 min left" (the family's form: decided 9 Nov 2026, D35) from the share done (thousandths) and the time it took */
 static void left(char *s, long n, long share, unsigned long since)
 {
 	unsigned long t = tos_ms() - since, rest;
@@ -801,6 +994,8 @@ static void left(char *s, long n, long share, unsigned long since)
 
 static long share_file(void)
 {
+	if (gate_phase >= 0)
+		return pg_share();	/* (moved on with the time between the exchange's calls) */
 	return cur_total > 0 ? cur_done * 1000L / cur_total : 0;
 }
 
@@ -866,7 +1061,16 @@ static void row_text(int k, int i)
 		else if (cur_total >= 1000 && !on_gateway)
 			snprintf(what, sizeof what, "page %ld of %ld", cur_done / 1000 + 1, cur_total / 1000);
 	}
-	snprintf(s_row[k], sizeof s_row[k], "   %-12.12s", base_of(files[i].path));
+	{
+		/* (a name under a subfolder: its last 12 letters, ".." first) */
+		const char *nm = rel_of(i);
+		size_t ln = strlen(nm);
+
+		if (ln > 12)
+			snprintf(s_row[k], sizeof s_row[k], "   ..%-10.10s", nm + ln - 10);
+		else
+			snprintf(s_row[k], sizeof s_row[k], "   %-12.12s", nm);
+	}
 	s_mark[k][0] = mark;
 	s_mark[k][1] = '\0';
 	snprintf(s_rest[k], sizeof s_rest[k], "%8s  %-*.*s", size, LTEXT - NAME_W - 10, LTEXT - NAME_W - 10, what);
@@ -942,6 +1146,7 @@ static void texts(void)
 	snprintf(s_u[0], sizeof s_u[0], " %-16s\x02", pages_names[pages_set]);
 	snprintf(s_u[1], sizeof s_u[1], " %-19s\x02", photos_names[photos_set]);
 	snprintf(s_u[2], sizeof s_u[2], " %-16s\x02", on_names[on_gateway]);
+	snprintf(s_u[3], sizeof s_u[3], " %-16.16s\x02", tr_code[0] ? tr_name : "Off");
 	if (!working) {
 		snprintf(s_file, sizeof s_file, "The file");
 		snprintf(s_batch, sizeof s_batch, "%s", s_result[0] ? s_result : "The batch");
@@ -958,7 +1163,7 @@ static void progress_texts(void)
 	if (!working)
 		return;
 	left(a, sizeof a, share_file(), t_file);
-	/* the three phases (guideline 7.3, Erez 7 Nov 2026) */
+	/* the three phases (guideline 7.3, decided 7 Nov 2026) */
 	if (gate_phase == PG_SEND || gate_phase == PG_RECV) {
 		char p1[16], p2[16];	/* "12 KB of 3.4 MB" (D35) */
 
@@ -1252,12 +1457,21 @@ static void draw(const GRECT *clip, short start)
 			}
 			if (planes >= 4 && gl_hchar >= 16) {
 				/* the colour icon over the band (a raster copy keeps to no
-				   clip: drawn where its whole square is in this one) */
+				   clip): drawn whole where the window shows all of it (r)
+				   and this redraw touches it. Held to the redraw's piece (c)
+				   it was drawn by none when the pieces split it, the band
+				   painted over its half (after the file selector, 2.45 and
+				   before) */
 				short ix, iy;
+				GRECT ic;
 
 				objc_offset(tree, ICON, &ix, &iy);
 				iy = (short)(tree[BOX].ob_y + (2 * gl_hchar - ICON_H) / 2);
-				if (ix >= c.x && iy >= c.y && ix + ICON_W <= c.x + c.w && iy + ICON_H <= c.y + c.h)
+				ic.x = ix;
+				ic.y = iy;
+				ic.w = ICON_W;
+				ic.h = ICON_H;
+				if (holds(&r, &ic) && meets(&c, &ic))
 					about_icon16(icon16_px, ix, iy, 1, 1, 0);
 			}
 			p[0] = c.x;
@@ -1334,8 +1548,8 @@ static void redraw_list_alone(void)
 /* the file's line and bar to the batch's, one rectangle drawn once
    (four objects drawn one by one were 80 ms of a Falcon's turn) */
 
-/* g drawn off the screen and shown in one copy (offdraw.h: Erez, 10 Nov
-   2026, "The converter UI statistics flicker every second"): the ground,
+/* g drawn off the screen and shown in one copy (offdraw.h: decided 10 Nov
+   2026): the ground,
    the words and the bar of a row all come at once. Where TOS's own screen
    can't be borrowed (MiNT, MagiC, NVDI that won't follow it, a piece too
    tall) it is drawn on the screen as before */
@@ -1571,6 +1785,8 @@ static void cmd_add(void)
 		return;
 	setting("FOLDER", in_dir, "the folder the file selector shows first");
 	snprintf(p, sizeof p, "%s\\%s", in_dir, name);
+	if (!listed(p) && too_many(1))
+		return;
 	if (add_file(p)) {
 		texts();
 		redraw_list();
@@ -1584,7 +1800,7 @@ static void cmd_folder(void)
 	if (working || !pick("Add every PDF in a folder", in_dir, sizeof in_dir, name, sizeof name))
 		return;
 	setting("FOLDER", in_dir, "the folder the file selector shows first");
-	if (!add_folder(in_dir))
+	if (!add_folder(in_dir))	/* (-1: too many, said) */
 		alert(1, "[1][No PDF in that folder|could be added.][ OK ]");
 	texts();
 	redraw_list();
@@ -1623,7 +1839,7 @@ static void begin(void)
 		if (!out_dir[0])
 			return;
 	}
-	if (on_gateway) {
+	if (on_gateway || tr_code[0]) {
 		if (!gate_host[0] && !settings_dialog())
 			return;
 		if (!gate_host[0])
@@ -1637,15 +1853,21 @@ static void begin(void)
 	for (i = 0; i < nfiles; i++) {
 		char d[160];
 
+		char o[200];
+
+		/* (a copy written over its own original: its folder and the copy's the same) */
 		strncpy(d, files[i].path, sizeof d - 1);
 		d[sizeof d - 1] = '\0';
 		if (strrchr(d, '\\'))
 			*strrchr(d, '\\') = '\0';
-		if (!strcmp(d, out_dir)) {
+		out_path_of(i, o, sizeof o);
+		if (strrchr(o, '\\'))
+			*strrchr(o, '\\') = '\0';
+		if (!strcmp(d, o)) {
 			alert(1, "[1][The converted PDFs need a folder|of their own, not the PDFs' own.|Choose another with Write to...][ OK ]");
 			return;
 		}
-		out_path(files[i].path, p, sizeof p);
+		out_path_of(i, p, sizeof p);
 		if (files[i].state != 1 && file_size(p) >= 0)
 			there++;
 	}
@@ -1742,7 +1964,7 @@ static void finish_progress(void)
 }
 
 /* its third: what came of it, said under the bars ("3 converted, 1 failed
-   in 4:12"; Erez, 10 Nov 2026: in the window, no alert), every file left in
+   in 4:12"; decided 10 Nov 2026: in the window, no alert), every file left in
    the list with its mark. Only a Gateway that doesn't answer is an alert:
    the user has something to do */
 static void finished(void)
@@ -1798,7 +2020,7 @@ static void about_box(void)
 	about_show(&a);
 }
 
-enum { CMD_NONE, CMD_ABOUT, CMD_ADD, CMD_FOLDER, CMD_REMOVE, CMD_CLEAR, CMD_OUT, CMD_GO, CMD_QUIT, CMD_GUIDE, CMD_SETTINGS };
+enum { CMD_NONE, CMD_ABOUT, CMD_ADD, CMD_FOLDER, CMD_REMOVE, CMD_CLEAR, CMD_OUT, CMD_GO, CMD_QUIT, CMD_GUIDE, CMD_SETTINGS, CMD_LOG };
 
 static const MBAR_ITEM desk_items[] = { { "About EConvert...", NULL, CMD_ABOUT }, { NULL, NULL, CMD_NONE } };
 static const MBAR_ITEM file_items[] = {
@@ -1813,10 +2035,27 @@ static const MBAR_ITEM file_items[] = {
 	{ "Quit", "^Q", CMD_QUIT },
 	{ NULL, NULL, CMD_NONE } };
 /* Options as the family's: Settings... (^,) first (the hub's review, 9 Nov 2026) */
-static const MBAR_ITEM options_items[] = { { "Settings...", "^,", CMD_SETTINGS }, { NULL, NULL, CMD_NONE } };
+static const MBAR_ITEM options_items[] = { { "Settings...", "^,", CMD_SETTINGS }, { "-", NULL, CMD_NONE },
+					     { "Write a log", NULL, CMD_LOG },	/* a tick, last (6.5, D8) */
+					     { NULL, NULL, CMD_NONE } };
 static const MBAR_ITEM help_items[] = { { "EConvert help", "Help", CMD_GUIDE }, { NULL, NULL, CMD_NONE } };
 static const MBAR_TITLE titles[] = { { " EConvert ", desk_items }, { " File ", file_items }, { " Options ", options_items },
 				     { " Help ", help_items }, { NULL, NULL } };
+
+/* Options > Write a log, or Settings' tick: on or off, kept in LOG= */
+static void log_tick(int on)
+{
+	if (on) {
+		log_set(1, start_dir);
+		log_begin();
+	} else {
+		log_event("log", "off", NULL);
+		log_set(0, start_dir);
+	}
+	setting("LOG", on ? "1" : "0", "1: econvert.log written beside ECONVERT.PRG (Options > Write a log)");
+	if (has_menu)
+		menu_icheck(menu.tree, mbar_object(&menu, CMD_LOG), on);
+}
 
 /* Options > Settings... (^,): where the Gateway is; 1 when OK */
 static int settings_dialog(void)
@@ -1825,8 +2064,11 @@ static int settings_dialog(void)
 
 	if (working)
 		return 0;
+	settings_log = (short)log_on;
 	if (!gate_dialog_conv(gate_host, (int)sizeof gate_host, &gate_port, &previews_set, &optimise_set))
 		return 0;
+	if (settings_log != log_on)
+		log_tick(settings_log);
 	setting("PREVIEWS", previews_set ? "1" : "0", "1: each page carries a small picture of itself, for EPDF's page strip");
 	setting("OPTIMISE", optimise_set ? "display" : "size", "display: pictures made for this screen's colours too (bigger files); size: as small as can be");
 	setting("GATE", gate_host, "the Gateway's address (Through the Gateway)");
@@ -1840,6 +2082,9 @@ static void command(int c)
 	switch (c) {
 	case CMD_SETTINGS:
 		settings_dialog();
+		break;
+	case CMD_LOG:
+		log_tick(!log_on);
 		break;
 	case CMD_ABOUT:
 		about_box();
@@ -1866,7 +2111,9 @@ static void command(int c)
 		break;
 	case CMD_CLEAR:
 		if (!working) {
-			nfiles = 0;
+			nfiles = nroom = 0;
+			free(files);	/* (the list's memory given back) */
+			files = NULL;
 			lsel = -1;
 			s_result[0] = '\0';
 			texts();
@@ -1974,6 +2221,85 @@ static void choose(short o)
 	redraw_obj(o);
 }
 
+/* Translate's pop-up: Off, then the languages the Gateway's translation
+   service has installed (GET /languages, asked each time it opens: the
+   user may have installed one from EPDF meanwhile), the one chosen ticked,
+   over the button (5.7) */
+static void choose_language(void)
+{
+	static SBUF names;
+	static char lab[TR_LANGS_MAX + 1][TR_LANGNAME + 2];
+	static char codes[TR_LANGS_MAX + 1][TR_LANG];
+	const char *l[TR_LANGS_MAX + 1];
+	char err[120];
+	short n = 1, sel = 0, r, x, y;
+	long k;
+
+	if (!gate_host[0] && !settings_dialog())
+		return;
+	if (!gate_host[0])
+		return;
+	if (!net_ready && !(net_ready = net_init())) {
+		alert(1, "[1][The Gateway is reached through STinG, MiNTnet or MagiC-Net, and none of them is running.][ OK ]");
+		return;
+	}
+	graf_mouse(BUSYBEE, NULL);
+	sb_reset(&names);
+	k = translate_languages(gate_host, tr_port, &names, err, sizeof err);
+	graf_mouse(ARROW, NULL);
+	log_event("languages", k ? "ok" : "failed", NULL);
+	if (!k) {
+		alert(1, "[1][The Gateway's languages can't be had:|%.40s][ OK ]", err);
+		return;
+	}
+	codes[0][0] = '\0';
+	snprintf(lab[0], sizeof lab[0], "%sOff", tr_code[0] ? "" : "\x08");
+	l[0] = lab[0];
+	for (k = 0; names.s && k < names.len && n <= TR_LANGS_MAX;) {
+		const char *a = names.s + k, *e = memchr(a, '\n', (size_t)(names.len - k)), *t;
+		long ll = e ? e - a : names.len - k;
+
+		t = memchr(a, '\t', (size_t)ll);
+		if (t && t > a && t - a < TR_LANG) {
+			snprintf(codes[n], sizeof codes[n], "%.*s", (int)(t - a), a);
+			if (translate_code_ok(codes[n])) {
+				long al;
+				char *nm = cs_to_atari(t + 1, ll - (t + 1 - a), CS_UTF8, &al);
+				int on = !strcmp(codes[n], tr_code);
+
+				snprintf(lab[n], sizeof lab[n], "%s%.*s", on ? "\x08" : "", nm ? (int)al : (int)strlen(codes[n]),
+					 nm ? nm : codes[n]);
+				free(nm);
+				if (on)
+					sel = n;
+				l[n] = lab[n];
+				n++;
+			}
+		}
+		k += ll + 1;
+	}
+	if (n == 1) {
+		alert(1, "[1][The Gateway has no languages installed:|EPDF's Settings, Languages....][ OK ]");
+		return;
+	}
+	objc_offset(tree, U_TR, &x, &y);
+	r = popup_m(x, (short)(y - 3 - sel * (ch + 2)), l, n);
+	if (!popup_put_back) {
+		GRECT g = { popup_area.x, popup_area.y, popup_area.w, popup_area.h };
+
+		wind_update(BEG_UPDATE);
+		draw(&g, BOX);
+		wind_update(END_UPDATE);
+	}
+	if (r < 0 || r == sel)
+		return;
+	snprintf(tr_code, sizeof tr_code, "%s", codes[r]);
+	snprintf(tr_name, sizeof tr_name, "%s", lab[r][0] == '\x08' ? lab[r] + 1 : lab[r]);
+	log_event("translate-to", tr_code[0] ? tr_code : "off", NULL);
+	texts();
+	redraw_obj(U_TR);
+}
+
 /* the family's tooltip (D18) on the window's buttons: what each does, its key */
 static int win_tip(short x, short y, char *out, int size)
 {
@@ -1994,6 +2320,7 @@ static int win_tip(short x, short y, char *out, int size)
 	case U_PAGES: t = "Each page whole as a picture: none, mono, or mono and colour"; break;
 	case U_PHOTOS: t = "Photos in 256 colours (fast to show) or as JPEG (small)"; break;
 	case U_ON: t = "Convert on this Atari, or send the PDFs to the Gateway"; break;
+	case U_TR: t = "Translate each page's text through the Gateway, or Off"; break;
 	}
 	if (!t)
 		return 0;
@@ -2021,7 +2348,7 @@ static void click(short mx, short my)
 	   common's dlg_win_button) */
 	if (o == B_GO && working) {
 		/* Stop in a job: on the press, not tracked to the release (D33,
-		   Erez 9 Nov 2026: the job stops the moment it is asked to) */
+		   decided 9 Nov 2026: the job stops the moment it is asked to) */
 		command(CMD_GO);
 		return;
 	}
@@ -2042,6 +2369,10 @@ static void click(short mx, short my)
 	case U_PAGES: case U_PHOTOS: case U_ON:
 		if (!working)
 			choose(o);
+		break;
+	case U_TR:
+		if (!working)
+			choose_language();
 		break;
 	default:
 		if (o >= M0 && o < M0 + LROWS)
@@ -2098,8 +2429,15 @@ static void key(short kstate, short k)
 static void add_args(const char *s)
 {
 	char f[256];
+	const char *a = s;
 	int n = 0;
 
+	/* (all of them or none: counted first) */
+	while ((a = av_arg(a, f, sizeof f)) != NULL)
+		n += !listed(f) && file_size(f) >= 0;
+	if (too_many(n))
+		return;
+	n = 0;
 	while ((s = av_arg(s, f, sizeof f)) != NULL)
 		n += add_file(f);
 	if (n && win >= 0) {
@@ -2199,6 +2537,10 @@ static void crash_quit(const char *what)
 	appl_exit();
 }
 
+/* main to the compiler (its code as before), app_main to the linker: common's
+   cpucheck.c (cpucheck_cf.S in the FireBee's edition) is the program's main
+   and calls this after its check (fbalert.c's alerts) */
+int main(void) __asm__("app_main");
 int main(void)
 {
 	short work_out[57], msg[8], d, x, y, w, h;
@@ -2236,7 +2578,11 @@ int main(void)
 	   converter is built for the 68030: Makefile, build/m68030cv), and so
 	   does a FireBee (_CF_: FireTOS says _CPU 60 for a ColdFire, which
 	   runs no 68030 code; as EPDF's rdraw_machine, 15 Nov 2026) */
+#ifdef __mcoldfire__
+	has_030 = 1;		/* the FireBee package's: the converter is ColdFire code too */
+#else
 	has_030 = get_cookie(0x5F435055L) >= 20 && !get_cookie(0x5F43465FL);
+#endif
 	if (!screen_check("EConvert", scr_w)) {
 		v_clsvwk(vdi_h);
 		appl_exit();
@@ -2256,10 +2602,16 @@ int main(void)
 	help_init();
 	av_init("ECONVERT");
 	settings_read();
+	if (log_on) {			/* (LOG=1: the log begun with the run) */
+		log_set(1, start_dir);
+		log_begin();
+	}
 	build();
 	texts();
 	if (mbar_build(&menu, titles, gl_wchar, gl_hchar, scr_w, scr_h) == 0)
 		has_menu = menu_bar(menu.tree, 1) != 0;
+	if (has_menu && log_on)
+		menu_icheck(menu.tree, mbar_object(&menu, CMD_LOG), 1);
 	wind_calc(0, icon_kind(NAME | CLOSER | MOVER), 0, 0, tree[BOX].ob_width, tree[BOX].ob_height, &d, &d, &w, &h);
 	x = (short)(desk_x + (desk_w - w) / 2);
 	y = (short)(desk_y + (desk_h - h) / 2);
@@ -2340,7 +2692,7 @@ int main(void)
 			}
 			if (fresh == 3) {
 				/* the batch's end in three steps, a turn each: the button,
-				   the progress, then the list (Erez, 14 Nov 2026: in place
+				   the progress, then the list (decided 14 Nov 2026: in place
 				   of one piece, 170 ms on a Falcon, each under 50) */
 				fresh = 4;
 				finish_button();
@@ -2401,5 +2753,6 @@ int main(void)
 	log_event("quit", "the VDI given back", NULL);
 	appl_exit();
 	log_event("quit", "out of the AES", NULL);
+	conn_log_flush();
 	return 0;
 }

@@ -256,8 +256,8 @@ static void row_in(void *u, long y, const unsigned short *px)
 }
 
 /* the picture made a row at a time (pdf_image_rows): only its w x h in
-   memory, never its decoded stream (EDOS_01.PDF's 1368 x 815 CMYK
-   screenshot was 4.4 MB of samples, refused on a 4 MB Falcon, the file
+   memory, never its decoded stream (a big CMYK
+   picture was 4.4 MB of samples, refused on a 4 MB Falcon, the file
    lost); 1 made, 0 not (why), -1 a kind it doesn't make */
 static int by_rows(PDOC *d, long obj, int w, int h, PIC **out, int *why)
 {

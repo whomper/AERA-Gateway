@@ -4,7 +4,7 @@
  * trpara.h - a page's text as EPDF stores it (Atari characters, a soft
  * break CR, a line's end LF, a picture's line "\x7F..."), cut into the
  * paragraphs a translation is asked for, and the translation put back
- * (Erez, 8 Nov 2026; docs/CONVERTED-PDF.md, "The translation"). The
+ * (decided 8 Nov 2026; docs/CONVERTED-PDF.md, "The translation"). The
  * same for EConvert's aerapdf on the Gateway and EPDF's own requests.
  */
 #ifndef TRPARA_H

@@ -20,7 +20,7 @@
 /* the text to look for, in text (what was looked for last shows in the
    field; text changes only when Find is chosen); 1 when Find was chosen
    with some. Common's builder (dlgbuild.h): a black band " Find", the
-   field framed, Cancel then Find, 10 wide (Erez, 9 Nov 2026: D22, D26) */
+   field framed, Cancel then Find, 10 wide (decided 9 Nov 2026: D22, D26) */
 int find_dialog(char *text)
 {
 	static char edit[CAP + 1];

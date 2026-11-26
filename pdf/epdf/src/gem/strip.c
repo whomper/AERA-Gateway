@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
  * Copyright (C) 2026 AERA | Erez Yaary */
 /*
- * The page strip (Erez, 15 Nov 2026: "start the page strip ... and complete
- * the functionality"; his #95: a column of page miniatures at the window's
+ * The page strip (decided 15 Nov 2026; his #95: a column of page miniatures at the window's
  * left, View > Page strip, kept in the INF): a cell a page, the page's own
  * preview where it has one (its /Thumb: EConvert's and the Gateway's
  * converted copies carry one for every page, #97; on a Falcon or TT with
@@ -38,6 +37,7 @@
 #include "docview.h"
 #include "epdf.h"
 #include "strip.h"
+#include "bidi.h"
 
 #define PIC_W 96			/* a preview's width (#97: EConvert's /Thumb) */
 #define PAD 6				/* the box's place in its cell, across */
@@ -281,12 +281,25 @@ static void say(short x, short y, const char *s)
 }
 
 /* the box's words: the page's first line, a word to a line where it
-   doesn't fit (the small font); its number is under the box */
+   doesn't fit (the small font); its number is under the box. Hebrew as
+   the text view shows it (decided 24 Nov 2026): a line whose first
+   strong letter is Hebrew is broken from its start as read, each piece
+   shown right to left (common's bidi) and set at the box's right */
 static void box_words(long page, short x, short y, short w, short h, short fw, short fh)
 {
 	const char *s = doc_page_first(page);
-	int per = (w - 4) / fw, lines = (h - 4) / (fh + 1), k = 0;
+	int per = (w - 4) / fw, lines = (h - 4) / (fh + 1), k = 0, heb = 0, rtl = 0;
 	short ty = (short)(y + 3);
+
+	{
+		size_t n = strlen(s);
+		short m = (short)(n < BIDI_MAX ? n : BIDI_MAX);
+
+		if (m > 0 && bidi_has_rtl(s, m)) {
+			heb = 1;
+			rtl = bidi_is_rtl(s, m);
+		}
+	}
 
 	col_more = 0;
 	while (*s && k < lines && per > 0) {
@@ -303,8 +316,19 @@ static void box_words(long page, short x, short y, short w, short h, short fw, s
 			cut = (int)sizeof ln - 1;
 		memcpy(ln, s, (size_t)cut);
 		ln[cut] = '\0';
-		if (col_line < 0 || k == col_line)
-			say((short)(x + 3), (short)(ty + k * (fh + 1)), ln);
+		if (col_line < 0 || k == col_line) {
+			short lx = (short)(x + 3);
+
+			if (heb && cut > 0) {
+				char vis[32];
+
+				bidi_visual(ln, (short)cut, (short)rtl, vis);
+				memcpy(ln, vis, (size_t)cut);
+				if (rtl)	/* (trailing spaces aren't drawn: the words end at the right) */
+					lx = (short)(x + w - 3 - cut * fw);
+			}
+			say(lx, (short)(ty + k * (fh + 1)), ln);
+		}
 		s += cut;
 		while (*s == ' ')
 			s++;

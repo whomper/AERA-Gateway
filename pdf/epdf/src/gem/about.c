@@ -42,6 +42,17 @@ void about_box(void)
 	about_show(&a);
 }
 
+/* the 256-colour icon's map made ahead, a turn of its own at the first
+   timer event (common's about_prepare): the About box's first opening
+   finds it (nothing on fewer colours) */
+void about_ready(void)
+{
+	ABOUT a = { "EPDF", app_version, "", { 0, 0, 0 }, { 0, 0, 0 }, icon_bits, icon16_px, icon16_rgb,
+		    icon256_px, icon256_rgb };
+
+	about_prepare(&a);
+}
+
 /* an iconified window: the icon (common/ui/iconify.c), the page under it */
 void app_icon_redraw(short h, const GRECT *area, const char *status)
 {

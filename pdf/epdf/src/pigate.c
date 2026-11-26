@@ -14,11 +14,28 @@
 #include "pdf.h"
 #include "conv/cvio.h"
 #include "pigate.h"
+#include "plat.h"
+#include "pgshare.c"	/* (in this object: the programs' layout) */
 
 #define PIECE 8192
 /* the Pi converts for up to 600 s (pdfgate's --time) and says how far it
    is when it moves on: this long with no word from it is too long */
 #define WORK_MS 660000L
+
+/* how far the exchange is by time */
+static PGSHARE share_s;
+
+long pg_share(void)
+{
+	return pgs_now(&share_s, pf_ms());
+}
+
+/* the progress call, the share brought up to date first */
+static int tell(pg_progress progress, void *u, int phase, long done, long total)
+{
+	pgs_share(&share_s, phase, done, total, pf_ms());
+	return progress && progress(u, phase, done, total);
+}
 
 static void say(char *err, int errlen, const char *what)
 {
@@ -126,6 +143,104 @@ static int head(CONN *c, SBUF *b, long *length, long *done, long *total)
 	}
 }
 
+/* the copy's last bytes as they come (TAIL of them), for the update that
+   adds the original's path */
+#define TAIL 4096
+
+static void keep_tail(char *tail, long *kept, const char *p, long n)
+{
+	if (n >= TAIL) {
+		memcpy(tail, p + n - TAIL, TAIL);
+		*kept = TAIL;
+		return;
+	}
+	if (*kept + n > TAIL) {
+		long drop = *kept + n - TAIL;
+
+		memmove(tail, tail + drop, (size_t)(*kept - drop));
+		*kept -= drop;
+	}
+	memcpy(tail + *kept, p, (size_t)n);
+	*kept += n;
+}
+
+/* the update after the copy's length bytes: its catalog (object 1, the
+   last object conv.c writes) again with /Path in its /Source, a one-entry
+   xref and a trailer with /Prev (EPDF's reader and any other follow it).
+   Into out (outlen); its length, or 0 when the tail isn't the converter's
+   (the copy is left as it came) */
+static long path_update(const char *tail, long kept, long length, const char *path, char *out, long outlen)
+{
+	const char *cat = NULL, *end, *src, *sx, *p;
+	long prev, k = 0, size, xref;
+	const char *w;
+
+	for (p = tail; p + 8 <= tail + kept; p++)	/* (the last "1 0 obj" at a line's start) */
+		if (!memcmp(p, "1 0 obj\n", 8) && (p == tail || p[-1] == '\n'))
+			cat = p;
+	if (!cat)
+		return 0;
+	end = NULL;
+	for (p = cat; p + 7 <= tail + kept; p++)
+		if (!memcmp(p, "\nendobj", 7)) {
+			end = p;
+			break;
+		}
+	src = NULL;
+	for (p = cat; end && p + 18 <= end; p++)
+		if (!memcmp(p, "/Source << /Name (", 18)) {
+			src = p;
+			break;
+		}
+	sx = NULL;
+	for (p = end ? end : tail; p + 10 <= tail + kept; p++)
+		if (!memcmp(p, "startxref\n", 10))
+			sx = p;
+	if (!end || !src || !sx)
+		return 0;
+	prev = atol(sx + 10);
+	size = 0;
+	for (p = end; p + 7 <= sx; p++)		/* (the xref's "0 N": the trailer's /Size) */
+		if (!memcmp(p, "\nxref\n0 ", 8)) {
+			size = atol(p + 8);
+			break;
+		}
+	{
+		/* the catalog to the end of /Source's /Name string, then /Path */
+		const char *q = src + 18;
+		int depth = 1;
+
+		while (q < end && depth) {
+			if (*q == '\\')
+				q++;
+			else if (*q == '(')
+				depth++;
+			else if (*q == ')')
+				depth--;
+			q++;
+		}
+		if (depth || prev <= 0 || size <= 1 || (long)(q - cat) + 200 + 2 * (long)strlen(path) > outlen)
+			return 0;
+		memcpy(out, cat, (size_t)(q - cat));
+		k = (long)(q - cat);
+		k += snprintf(out + k, (size_t)(outlen - k), " /Path (");
+		for (w = path; *w; w++) {
+			if (*w == '\\' || *w == '(' || *w == ')')
+				out[k++] = '\\';
+			out[k++] = *w;
+		}
+		out[k++] = ')';
+		memcpy(out + k, q, (size_t)(end - q));
+		k += (long)(end - q);
+	}
+	k += snprintf(out + k, (size_t)(outlen - k), "\nendobj\n");
+	xref = length + k;	/* (the update's xref, where it begins in the file) */
+	k += snprintf(out + k, (size_t)(outlen - k), "xref\n0 1\n0000000000 65535 f \n1 1\n%010ld 00000 n \n"
+		      "trailer\n<< /Size %ld /Root 1 0 R /Info 3 0 R /Prev %ld >>\nstartxref\n%ld\n%%%%EOF\n",
+		      length, size, prev, xref);
+	return k;
+}
+
 static int convert(const char *host, unsigned short port, const PGOPT *o, const char *in, const char *out,
 		   pg_progress progress, void *u, char *err, int errlen)
 {
@@ -133,7 +248,8 @@ static int convert(const char *host, unsigned short port, const PGOPT *o, const 
 	   the pens' 1,536 hex digits are too many for the job's stack, and
 	   3.8 KB held all the time a 1 MB ST's pictures miss) */
 	enum { QLEN = 1800, LLEN = 2000 };
-	char *q = NULL, *line = NULL, *piece = NULL;
+	char *q = NULL, *line = NULL, *piece = NULL, *tail = NULL;
+	long kept = 0;
 	long size = 0, off, length, done = 0, total = 0;
 	void *src = NULL, *dst = NULL;
 	CONN *c = NULL;
@@ -142,6 +258,7 @@ static int convert(const char *host, unsigned short port, const PGOPT *o, const 
 
 	sb_init(&b);
 	err[0] = 0;
+	pgs_start(&share_s, pf_ms());
 	q = malloc(QLEN);
 	line = malloc(LLEN);
 	if (!q || !line) {
@@ -188,7 +305,7 @@ static int convert(const char *host, unsigned short port, const PGOPT *o, const 
 		}
 		if (!conn_write(c, piece, n))
 			goto lost;
-		if (progress && progress(u, PG_SEND, off + n, size)) {
+		if (tell(progress, u, PG_SEND, off + n, size)) {
 			conn_stop = 1;
 			goto lost;
 		}
@@ -206,7 +323,7 @@ static int convert(const char *host, unsigned short port, const PGOPT *o, const 
 			goto lost;
 		if (status != 102)
 			break;
-		if (progress && progress(u, PG_WORK, done, total)) {
+		if (tell(progress, u, PG_WORK, done, total)) {
 			conn_stop = 1;
 			goto lost;
 		}
@@ -239,6 +356,8 @@ static int convert(const char *host, unsigned short port, const PGOPT *o, const 
 	}
 	if (conn_phase)
 		conn_phase(GATE_RECEIVE, length);
+	if (o && o->source_path && o->source_path[0] && strlen(o->source_path) < 1000)
+		tail = malloc(TAIL);	/* (none: the copy as it comes) */
 	dst = cv_create(out);
 	if (!dst) {
 		say(err, errlen, "cannot write the converted file");
@@ -254,9 +373,20 @@ static int convert(const char *host, unsigned short port, const PGOPT *o, const 
 			goto done;
 		}
 		off += k;
-		if (progress && progress(u, PG_RECV, off, length)) {
+		if (tail)
+			keep_tail(tail, &kept, piece, k);
+		if (tell(progress, u, PG_RECV, off, length)) {
 			conn_stop = 1;
 			goto lost;
+		}
+	}
+	if (tail) {
+		/* the original's path, for EPDF (its piece buffer holds the update) */
+		long n = path_update(tail, kept, length, o->source_path, piece, PIECE);
+
+		if (n > 0 && cv_write(dst, piece, n) != n) {
+			say(err, errlen, "the disk is full");
+			goto done;
 		}
 	}
 	if (cv_close(dst)) {
@@ -287,6 +417,7 @@ done:
 		cv_remove(out);
 	}
 	free(piece);
+	free(tail);
 	free(q);
 	free(line);
 	sb_free(&b);

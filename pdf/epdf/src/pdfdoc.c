@@ -115,9 +115,20 @@ ok:
 			POBJ *t = pd_get(d, a, "Translate");
 			const char *nm = t && t->t == PO_DICT ? pd_name(d, t, "To") : NULL;
 
+			POBJ *so = pd_get(d, a, "Source"), *sn, *sp;
+
 			d->prepared = 1;
 			if (nm && strlen(nm) < sizeof d->tr_to)
 				strcpy(d->tr_to, nm);
+			if (so && so->t == PO_DICT) {
+				sn = pd_get(d, so, "Name");
+				sp = pd_get(d, so, "Path");
+				if (sn && sn->t == PO_STR && sn->a > 0 && sn->a < (int32_t)sizeof d->src_name)
+					memcpy(d->src_name, sn->u.p, (size_t)sn->a + 1);
+				if (sp && sp->t == PO_STR && sp->a > 0 && sp->a < (int32_t)sizeof d->src_path)
+					memcpy(d->src_path, sp->u.p, (size_t)sp->a + 1);
+				d->src_bytes = pd_int(d, so, "Bytes", -1);
+			}
 		}
 	}
 	d->cur = &d->a;

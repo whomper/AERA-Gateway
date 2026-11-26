@@ -16,6 +16,14 @@ typedef struct {
 
 void coro_switch(CORO *from, CORO *to);
 
+/* the longs coro_switch keeps on a stack: d2-d7 and a2-a6, and on the
+   FireBee's edition fp2-fp7 too (six doubles) */
+#if defined(__mcoldfire__) && defined(__mcffpu__)
+#define CORO_WORDS (11 + 12)
+#else
+#define CORO_WORDS 11
+#endif
+
 /* the stack (size bytes at mem) set up so that the first switch to c
    calls fn, which must never return: it switches away for good */
 static inline void coro_start(CORO *c, void *mem, long size, void (*fn)(void))
@@ -29,7 +37,7 @@ static inline void coro_start(CORO *c, void *mem, long size, void (*fn)(void))
 		m[k] = 0xA5;			/* to see how much of it was used (coro_used) */
 	*--sp = 0;				/* fn's return address: never used */
 	*--sp = (unsigned long)fn;		/* where coro_switch's rts goes */
-	for (i = 0; i < 11; i++)
+	for (i = 0; i < CORO_WORDS; i++)
 		*--sp = 0;			/* d2-d7, a2-a6 */
 	c->sp = sp;
 }
@@ -48,7 +56,7 @@ static inline void coro_start_long(CORO *c, void *mem, long size, void (*fn)(voi
 		m[k] = 0xA5A5A5A5UL;
 	*--sp = 0;
 	*--sp = (unsigned long)fn;
-	for (i = 0; i < 11; i++)
+	for (i = 0; i < CORO_WORDS; i++)
 		*--sp = 0;
 	c->sp = sp;
 }

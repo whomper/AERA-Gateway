@@ -164,6 +164,11 @@ typedef struct pdoc {
 	int page_prog;
 	int prepared;			/* a converted PDF (EConvert's, docs/CONVERTED-PDF.md): its version, 0 none */
 	char tr_to[8];			/* a translated one's catalog /AERA /Translate /To ("" none) */
+	/* a converted one's original (/AERA /Source): its file name, its path
+	   where the converter wrote one (EConvert on the Atari: /Path), its size;
+	   "" and -1 when not given */
+	char src_name[64], src_path[160];
+	long src_bytes;
 	char err[96];
 } PDOC;
 

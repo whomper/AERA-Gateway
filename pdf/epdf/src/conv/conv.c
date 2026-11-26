@@ -302,7 +302,7 @@ static int __attribute__((noinline)) grey_test(const uint16_t *px, long n, long 
 	VPAD(VPAD_G);
 	for (i0 = 0; i0 < n && all; i0 += GREY_PX) {
 		long e = n - i0 > GREY_PX ? i0 + GREY_PX : n;
-#if defined(__m68k__) || defined(__mc68000__)
+#if (defined(__m68k__) || defined(__mc68000__)) && !defined(__mcoldfire__)
 		/* 2.33's loop as its compiler made it, instruction for
 		   instruction (its store to the stack included): on a 68030
 		   it stays in the instruction cache where every loop compiled
@@ -426,7 +426,7 @@ static int w_pens(PW *w, long num, const uint16_t *px, int pw, int ph, const CVO
 		return -1;
 	}
 	if (o->pen_n <= 16) {
-		/* Sharp (EPDF's, Erez 5 Nov 2026): a picture of 128 colours or
+		/* Sharp (EPDF's, decided 5 Nov 2026): a picture of 128 colours or
 		   fewer on 16 pens or fewer takes each pixel's nearest pen */
 		unsigned char *seen = calloc(8192, 1);
 		long n = (long)pw * ph, i, nc = 0;
@@ -1192,7 +1192,7 @@ static int convert_page(CV *c, long n)
 			if (c->o->pic_size == CV_PIC_SCREEN && wpt > 0 && hpt > 0) {
 				/* more pixels than its size on the page has, up to the
 				   screen's (EPDF shows it at its size on the page, and
-				   whole when it is clicked: Erez, 5 Nov): a picture its
+				   whole when it is clicked: decided 5 Nov): a picture its
 				   own, a drawing what the page drawn gives it */
 				long sw = 0;
 
@@ -1302,7 +1302,7 @@ static int convert_page(CV *c, long n)
 			return -1;
 		}
 	}
-	/* the page's own preview, its /Thumb (ISO 32000 12.3.4; Erez's #97, 15
+	/* the page's own preview, its /Thumb (ISO 32000 12.3.4; #97, 15
 	   Nov 2026: every page carries one for EPDF's page strip), made from
 	   the page as drawn: the canvas whole here, else as the whole page's
 	   loops below walk its bands (a page in bands with no whole page asked
@@ -1395,7 +1395,7 @@ static int convert_page(CV *c, long n)
 		}
 		{
 			/* the mono page again at twice the width, where the machine
-			   has room to draw it in one piece (Erez, 5 Nov 2026: View >
+			   has room to draw it in one piece (decided 5 Nov 2026: View >
 			   Pages, a click on the page shows it at double size, its text
 			   twice as high); the page as wide as the window stays what
 			   View > Pages shows (a 1-bit page halved spoilt its shading) */
@@ -1483,9 +1483,7 @@ whole_done:
 	return w->bad ? -1 : 0;
 }
 
-/* the original's information kept (Erez, 5 Nov 2026: "the converted file
-   should hold the meta data of the original, for example creation date,
-   last update"): its title, author, subject, keywords, the program that
+/* the original's information kept (decided 5 Nov 2026): its title, author, subject, keywords, the program that
    made it and its dates, each string as it was (hex: UTF-16 and any
    bytes as they came); the Producer is EConvert's, which made this one */
 static void w_info(CV *c)
@@ -1607,7 +1605,7 @@ int cv_convert(const char *in, const char *out, const CVOPT *o, CVSTAT *st, char
 			/* the page's bytes held till it is done: one refused memory
 			   with the canvas whole (the fast way) is made again with it
 			   in bands, and so is the rest of the file (a 4 MB Falcon's
-			   2.2 MB free: EDOS_01.PDF) */
+			   2.2 MB free: a Calamus SL PDF) */
 			SBUF hb;
 			WMARK m;
 			long npm = c->npm, pics = st->pictures, draws = st->drawings;
@@ -1688,6 +1686,10 @@ int cv_convert(const char *in, const char *out, const CVOPT *o, CVSTAT *st, char
 		w_printf(&c->w, "/Translate << /To /%s >>\n", o->translate_to);
 	w_printf(&c->w, "/Source << /Name ");
 	w_str(&c->w, base_name(in));
+	if (o->source_path && o->source_path[0]) {
+		w_printf(&c->w, " /Path ");
+		w_str(&c->w, o->source_path);
+	}
 	w_printf(&c->w, " /Bytes %ld /Pages %ld >> >> >>\nendobj\n", c->d.size, c->npages);
 	xref = c->w.pos;
 	w_printf(&c->w, "xref\n0 %ld\n0000000000 65535 f \n", c->w.next);

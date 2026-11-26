@@ -17,7 +17,9 @@ static const MBAR_ITEM desk_items[] = {
 
 static const MBAR_ITEM file_items[] = {
 	{ "Open...", "^O", CMD_OPEN },
-	{ "Save Optimised...", NULL, CMD_SAVEOPT },	/* greyed but for a converted PDF (Erez, 8 Nov 2026) */
+	{ "Save Optimised...", NULL, CMD_SAVEOPT },	/* greyed but for a converted PDF (decided 8 Nov 2026) */
+	{ "-", NULL, CMD_NONE },
+	{ "Print...", "^P", CMD_PRINT },	/* through NVDI (decided 21 Nov 2026); ^P the family's */
 	{ "-", NULL, CMD_NONE },
 	{ "Quit", "^Q", CMD_QUIT },
 	{ NULL, NULL, CMD_NONE }
@@ -39,11 +41,10 @@ static const MBAR_ITEM edit_items[] = {
 static const MBAR_ITEM view_items[] = {
 	{ "The page's lines", NULL, CMD_LINES },
 	{ "Pages", NULL, CMD_PAGES },
-	{ "Page strip", NULL, CMD_STRIP },	/* a tick: the pages' column at the left (Erez, 15 Nov 2026) */
-	{ "Translate", NULL, CMD_TRANSLATE },	/* a tick: the text view translated (Erez, 8 Nov 2026) */
+	{ "Page strip", NULL, CMD_STRIP },	/* a tick: the pages' column at the left (decided 15 Nov 2026) */
+	{ "Translate", NULL, CMD_TRANSLATE },	/* a tick: the text view translated (decided 8 Nov 2026) */
 	/* a tick while View > Pages' page is zoomed: two sizes, Normal and
-	   Zoom (Erez, 14 Nov 2026: "just one menu option called Zoom In with a
-	   check mark"); ^+ and the keypad's + zoom in, ^-, the keypad's - and
+	   Zoom (decided 14 Nov 2026); ^+ and the keypad's + zoom in, ^-, the keypad's - and
 	   ^0 back (EWeb's keys, 9 Nov 2026) */
 	{ "Zoom In", "^+", CMD_ZOOMTOGGLE },
 	{ NULL, NULL, CMD_NONE }
@@ -60,9 +61,10 @@ static const MBAR_ITEM page_items[] = {
 
 static const MBAR_ITEM options_items[] = {
 	{ "Settings...", "^,", CMD_SETTINGS },
-	{ "Font...", NULL, CMD_FONT },		/* no key (Erez, 9 Nov 2026, D6) */
+	{ "Font...", NULL, CMD_FONT },		/* no key (decided 9 Nov 2026, D6) */
 	{ "-", NULL, CMD_NONE },
-	{ "Open on the Gateway", NULL, CMD_GATEWAY },	/* a tick: on (Erez, 7 Nov 2026) */
+	{ "Open on the Gateway", NULL, CMD_GATEWAY },	/* a tick: on (decided 7 Nov 2026) */
+	{ "Write a log", NULL, CMD_LOG },	/* a tick, last (6.5, D8): epdf.log beside EPDF.PRG (decided 22 Nov 2026) */
 	{ NULL, NULL, CMD_NONE }
 };
 

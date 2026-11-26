@@ -181,6 +181,8 @@ int main(int argc, char **argv)
 				  !strcmp(argv[i], "colouronly") ? CV_PAGES_COLOUR_ONLY : CV_PAGES_MONO;
 		} else if (!strcmp(argv[i], "--font-kb") && i + 1 < argc) {
 			o.font_budget = atol(argv[++i]) * 1024L;	/* (as EConvert's quarter of what is free) */
+		} else if (!strcmp(argv[i], "--source-path") && i + 1 < argc) {
+			o.source_path = argv[++i];	/* (/Source's /Path, as EConvert writes the original's: the rigs) */
 		} else if (!strcmp(argv[i], "--thumbs")) {
 			o.thumbs = 1;	/* each page's /Thumb (EPDF's page strip; pdfgate's thumbs=1) */
 		} else if (!strcmp(argv[i], "--jpeg-pic")) {

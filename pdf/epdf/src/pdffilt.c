@@ -914,7 +914,7 @@ PCSRC *pdf_stream_open_coded(PDOC *d, POBJ *o, long onum)
  * A piece is 32 KB (or what the caller will take, less), with the
  * reader's stop hook after each 1 KB of it (inflate_piece's turn): each
  * piece moves the 32 KB window down first, and pieces the size of the
- * reader's 2 KB refills did that 16 times as often (an EDOS_01.PDF page 3 s
+ * reader's 2 KB refills did that 16 times as often (a Calamus SL PDF's page 3 s
  * longer on an ST).
  */
 static PDOC *turn_doc;			/* the document whose stream is being unpacked */

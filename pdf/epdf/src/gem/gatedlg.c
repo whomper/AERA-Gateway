@@ -12,6 +12,8 @@
  *            (pictures also made for this screen's pens, the default);
  *            Page previews: each converted page carries a small picture
  *            of itself, for EPDF's page strip
+ *   Gateway  (EPDF) how Open on the Gateway has a PDF converted: Whole
+ *            pages, Photos, Optimise for, Page previews (EConvert's)
  *   Secure   the Gateway's address and port, in EWeb's words (6.1, 7.4)
  *
  * The address holds more than it shows (5.4). Cancel, Esc and Undo put
@@ -68,6 +70,15 @@ static void langs_act(SETTINGS *s, void *user)
 		tr_languages();
 }
 
+/* the log's tick, last on General (the guidelines' 6.5, D8: "Write a
+   log" in Options and in Settings; decided 22 Nov 2026): the program sets
+   it before Settings and takes it after OK */
+short settings_log;
+/* "Use the system file selector" (guidelines 5.12, decided 25 Nov 2026; off
+   by default): File > Save Optimised... through the AES's selector, not the
+   family's save dialog; EPDF's General only (EConvert saves nothing) */
+short settings_fsel;
+
 static void page_general(SETTINGS *s, short x, short y, void *user)
 {
 	short n = set_y(s, 5);
@@ -79,10 +90,14 @@ static void page_general(SETTINGS *s, short x, short y, void *user)
 	set_text(s, x, n, "The languages are the Gateway's. On it:");
 	set_text(s, x + 2, (short)(n + 1), "aera-gateway install translate");
 	set_text(s, x, (short)(n + 2), "Translations are kept in memory only.");
+	/* (the ticks after a blank row, in the page: set_y(s, 9) put the log's
+	   under the dialog's foot, 2.44 and 2.45) */
+	set_tick(s, x, (short)(n + 4), "Write a log", &settings_log);
+	set_tick(s, x, (short)(n + 5), "Use the system file selector", &settings_fsel);
 }
 
-/* EConvert's General: Optimise for (Faster display the default: Erez, 17
-   Nov 2026) and the pages' previews (off by default: Erez, 15 Nov 2026) */
+/* EConvert's General: Optimise for (Faster display the default: decided 17
+   Nov 2026) and the pages' previews (off by default: decided 15 Nov 2026) */
 static short previews_edit, optimise_edit;
 
 static void page_conv(SETTINGS *s, short x, short y, void *user)
@@ -99,6 +114,37 @@ static void page_conv(SETTINGS *s, short x, short y, void *user)
 	set_text(s, x, m, "Each page carries a small picture of");
 	set_text(s, x, (short)(m + 1), "itself, for EPDF's page strip. On a");
 	set_text(s, x, (short)(m + 2), "Falcon, 2 seconds more a page.");
+	set_tick(s, x, (short)(m + 4), "Write a log", &settings_log);	/* (set_y(s, 8) lay on the buttons) */
+}
+
+/* EPDF's Gateway page: how Open on the Gateway has a PDF converted (decided
+   20 Nov 2026: EConvert's choices; by default as before: Automatic, 256
+   colours, Faster display, previews with the page strip) */
+static GWCONV gw_edit;
+
+static void page_gateway(SETTINGS *s, short x, short y, void *user)
+{
+	static const char *const pages[] = { "Automatic", "None", "Mono", "Colour", "Mono and colour" };
+	static const char *const photos[] = { "256 colours (fast)", "JPEG (small)" };
+	static const char *const optimise[] = { "Smaller files", "Faster display" };
+	static const char *const previews[] = { "With the page strip", "Always", "Never" };
+
+	(void)user;
+	set_text(s, x, y, "Whole pages");
+	set_popup(s, x + 15, y, 23, pages, 5, &gw_edit.pages);
+	set_text(s, x, set_y(s, 1), "Photos");
+	set_popup(s, x + 15, set_y(s, 1), 23, photos, 2, &gw_edit.photos);
+	set_text(s, x, set_y(s, 2), "Optimise for");
+	set_popup(s, x + 15, set_y(s, 2), 23, optimise, 2, &gw_edit.optimise);
+	set_text(s, x, set_y(s, 3), "Page previews");
+	set_popup(s, x + 15, set_y(s, 3), 23, previews, 3, &gw_edit.previews);
+	{
+		short n = set_y(s, 5);
+
+		set_text(s, x, n, "How a PDF opened on the Gateway is");
+		set_text(s, x, (short)(n + 1), "converted. Automatic: in colour on 16");
+		set_text(s, x, (short)(n + 2), "colours or more, else in mono.");
+	}
 }
 
 static void page_secure(SETTINGS *s, short x, short y, void *user)
@@ -138,7 +184,7 @@ static void drawn(OBJECT *tree, short band)
 }
 
 /* OK: a port outside 1 to 65535 is refused with what to type, the field
-   kept as typed and the text cursor in it (D30, Erez 9 Nov 2026: nothing
+   kept as typed and the text cursor in it (D30, decided 9 Nov 2026: nothing
    changed silently) */
 static int check(SETTINGS *s, void *user)
 {
@@ -157,7 +203,7 @@ static int check(SETTINGS *s, void *user)
 
 static int run(int with_tr, char *host, int hostcap, unsigned short *port)
 {
-	static const SET_PAGE both[] = { { "General", page_general }, { "Secure", page_secure } };
+	static const SET_PAGE both[] = { { "General", page_general }, { "Gateway", page_gateway }, { "Secure", page_secure } };
 	static const SET_PAGE conv[] = { { "General", page_conv }, { "Secure", page_secure } };
 	static const SET_PAGE secure[] = { { "Secure", page_secure } };
 	long p;
@@ -176,8 +222,8 @@ static int run(int with_tr, char *host, int hostcap, unsigned short *port)
 		memset(&d, 0, sizeof d);
 		d.title = "Settings";
 		d.pages = with_tr == 1 ? both : with_tr == 2 ? conv : secure;
-		d.npages = with_tr ? 2 : 1;
-		d.height = with_tr == 1 ? 17 : 16;
+		d.npages = with_tr == 1 ? 3 : with_tr ? 2 : 1;
+		d.height = with_tr == 1 ? 20 : with_tr ? 17 : 16;	/* (General's ticks: 2.46) */
 		d.user = with_tr == 1 ? (void *)1 : NULL;
 		d.check = check;
 		port_obj = -1;
@@ -220,11 +266,12 @@ int gate_dialog_conv(char *host, int hostcap, unsigned short *port, short *previ
 
 int gate_dialog_tr(char *host, int hostcap, unsigned short *port, char *to, int tocap, const char *to_name,
 		   int (*pick)(char *to, int tocap, char *name, int namecap, short x, short y),
-		   void (*languages)(void))
+		   void (*languages)(void), GWCONV *gw)
 {
 	char was[16];
 	int ok;
 
+	gw_edit = *gw;
 	snprintf(was, sizeof was, "%s", to);
 	tr_to_buf = to;
 	tr_to_cap = tocap;
@@ -234,6 +281,8 @@ int gate_dialog_tr(char *host, int hostcap, unsigned short *port, char *to, int 
 	ok = run(1, host, hostcap, port);
 	if (!ok)
 		snprintf(to, (size_t)tocap, "%s", was);	/* (the language chosen meanwhile: back too) */
+	else
+		*gw = gw_edit;
 	return ok;
 }
 
@@ -242,6 +291,7 @@ void keys_dialog(void)
 {
 	static const char *const lines[] = {
 		"^O  open a PDF          ^Q  quit",
+		"^P  print",
 		"^C  copy                ^A  select all",
 		"^F  find                ^G  find next",
 		"\x01^G find previous      ^,  settings",

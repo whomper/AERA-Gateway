@@ -1870,7 +1870,7 @@ static void do_xobject(IX *x, const char *name)
 				im->dh = fxabs(c[2]) + fxabs(c[3]);
 				/* the image's first row is at the unit square's top: a
 				   placing that turns the square over shows it upside
-				   down or mirrored (EDOS_01.PDF's menu, 2 Nov 2026); a
+				   down or mirrored (a Calamus SL PDF's menu, 2 Nov 2026); a
 				   quarter turn isn't followed */
 				im->flip = 0;
 				if (!c[1] && !c[2]) {
@@ -2324,7 +2324,7 @@ static void ccls_init(void)
    a 68000, where the C's loop with its bound test was some 48 */
 static inline const unsigned char *run_of(const unsigned char *q, const unsigned char *tab)
 {
-#if defined(__mc68000__) || defined(__m68k__)
+#if (defined(__mc68000__) || defined(__m68k__)) && !defined(__mcoldfire__)
 	__asm__("moveq #0,%%d0\n"
 		"1:\tmove.b (%0)+,%%d0\n\t"
 		"tst.b 0(%1,%%d0.w)\n\t"
@@ -2896,7 +2896,7 @@ void ptext_free(PTEXT *t)
 
 /* Chunks come in nearly the order they are read: an insertion sort takes
    them in a pass, and gives up for a merge sort of their numbers when the
-   order is far from it (a page of two columns, glyph by glyph: EDOS_01.PDF's
+   order is far from it (a page of two columns, glyph by glyph: a Calamus SL PDF's
    4,500 chunks). The libc's qsort on an Atari is a heap sort that swaps a
    byte at a time: 11 s of such a page on an ST. Stable, as glibc's is, so
    chunks at one place keep the stream's order on both. */
@@ -3162,7 +3162,7 @@ static void emit_line(IX *x, CH *c, long a, long b, PTEXT *t)
 	   (0.8 em: a tab, a column) as one more: its glyphs may be narrower
 	   than the line sets them (Calamus SL's PDFs, through its Bridge: each
 	   glyph placed alone, the font's widths its ink, "t h e di ffer e n
-	   ce", Erez's EDOS_01.PDF, 1 Nov 2026) */
+	   ce", a Calamus SL PDF, 1 Nov 2026) */
 	for (i = a; i < b; i++) {
 		chars += c[i].len;
 		if (!spaces && memchr(x->txt.s + c[i].off, ' ', (size_t)c[i].len))
@@ -3177,7 +3177,7 @@ static void emit_line(IX *x, CH *c, long a, long b, PTEXT *t)
 
 		if (!rtl) {
 			/* the same piece again where it stood (printed twice, a bold
-			   made by a small offset: EDOS_01.PDF's running title) once */
+			   made by a small offset: a Calamus SL PDF's running title) once */
 			if (i > a && c[i].len == c[i - 1].len && fxabs(c[i].x - c[i - 1].x) < (c[i].fs >> 3) &&
 			    fxabs(c[i].y - c[i - 1].y) < (c[i].fs >> 3) &&
 			    !memcmp(x->txt.s + c[i].off, x->txt.s + c[i - 1].off, (size_t)c[i].len)) {
@@ -3343,7 +3343,7 @@ typedef struct {
 /*
  * The gutter where too few lines have a gap in it for the vote (lines
  * wholly in their column: the columns' baselines apart, so one isn't set
- * beside the other; Calamus SL's EDOS_01.PDF, 1 Nov 2026): a strip near
+ * beside the other; a Calamus SL PDF, 1 Nov 2026): a strip near
  * the middle of the text where at most a tenth of the lines in the body's
  * size have ink (a gap of 1.5 em is none: a line's two parts, one in each
  * column), with at least a fifth of them having text on each side of it,
@@ -3351,7 +3351,7 @@ typedef struct {
  * (columns of text: a contents page's page numbers or a listing's
  * comments make none, The ST Internals), and most of the left's lines
  * without text beside them (a table's rows have it). Headings, in a bigger
- * size, may cross it: they are above the columns (EDOS_01.PDF's title,
+ * size, may cross it: they are above the columns (a Calamus SL PDF's title,
  * page 1). Its middle, or 0.
  */
 static fx clear_strip(IX *x, const LN *ln, long nl, fx lo0, fx width, long nb)
@@ -3503,13 +3503,13 @@ static long columns(IX *x, LN *ln, long nl)
 		for (c = ln[k].a + 1; c < ln[k].b; c++) {
 			fx end = x->ch[c - 1].x + x->ch[c - 1].dx, gap = x->ch[c].x - end;
 			/* the smaller of the two sides' sizes: a heading beside the
-			   other column's text (EDOS_01.PDF's "Next time") */
+			   other column's text (a page set glyph by glyph) */
 			fx fs = x->ch[c].fs < x->ch[c - 1].fs ? x->ch[c].fs : x->ch[c - 1].fs;
 
 			if (gap > fs + (fs >> 1)) {
 				/* each bin whose middle the gap covers (a ragged column's
 				   lines end anywhere: their gaps' middles spread over
-				   several bins, EDOS_01.PDF), else the one at its middle;
+				   several bins, a Calamus SL PDF), else the one at its middle;
 				   a gap over 8 em (a map's open sea) its middle alone */
 				long b0 = (end - lo + GBIN / 2 + GBIN - 1) / GBIN, b1 = (x->ch[c].x - lo - GBIN / 2) / GBIN, b;
 
@@ -3539,7 +3539,7 @@ static long columns(IX *x, LN *ln, long nl)
 	left = ln + nl;			/* the room after the lines: the left column, then the right */
 	/* out: the lines and those cut in two, 2 x nl at most; right after it
 	   (where out ran on into right before: a page with lines cut at the
-	   gutter lost lines and doubled others, EDOS_01.PDF page 1) */
+	   gutter lost lines and doubled others, a Calamus SL PDF page 1) */
 	out = pdf_malloc(x->d, 3 * nl * (long)sizeof(LN));
 	if (!out)
 		return nl;
@@ -3631,8 +3631,8 @@ static void assemble(IX *x, PTEXT *t)
 		t->nimg = j;
 	}
 	/* a space the stream puts before a glyph that stands a little left of
-	   it (a heading set tight: "The" space "EDOS", the space at 107.9, the
-	   E at 105.0, EDOS_01.PDF) sorted just before that glyph */
+	   it (a heading set tight, its space a few points right of the next
+	   letter's start) sorted just before that glyph */
 	for (i = 1; i + 1 < x->nch; i++) {
 		CH *p = &x->ch[i - 1], *s = &x->ch[i], *n = &x->ch[i + 1];
 
@@ -3642,8 +3642,8 @@ static void assemble(IX *x, PTEXT *t)
 		    n->x > s->x - (s->fs >> 1) && fxabs(p->y - s->y) < (s->fs >> 1) && p->x < n->x)
 			s->x = n->x - 1;
 	}
-	/* text set up or down the page (a running title along its edge,
-	   EDOS_01.PDF's "SOFTWARE") would be cut into a letter a line and
+	/* text set up or down the page (a running title along its edge)
+	   would be cut into a letter a line and
 	   glued to the ends of the lines beside it: turned to lie along a line
 	   of its own after the page's text, one for each place it stands */
 	{
@@ -3676,9 +3676,8 @@ static void assemble(IX *x, PTEXT *t)
 				vfs = 0;
 		}
 	}
-	/* a big initial letter (a drop cap: EDOS_01.PDF's "I started", the I
-	   at 14.7 points beside lines of 7.2, its baseline a line below the
-	   first's): taken into the line the text after it starts, as its first
+	/* a big initial letter (a drop cap about twice the
+	   lines' size, its baseline a line below the first's): taken into the line the text after it starts, as its first
 	   letter, not into the line its baseline is on */
 	for (i = 0; i + 1 < x->nch; i++) {
 		CH *s = &x->ch[i], *n = &x->ch[i + 1];
@@ -3703,7 +3702,7 @@ static void assemble(IX *x, PTEXT *t)
 	ch_sort(x->d, x->ch, x->nch, ch_cmp_y);
 	/* the lines' table grown as they are found, then to twice them (split
 	   at a gutter: two at most): twice the glyphs, as it was, was 217 KB of
-	   EDOS_01.PDF's page 3, a page set a glyph at a time; no pass of its
+	   a Calamus SL PDF's page 3, a page set a glyph at a time; no pass of its
 	   own to count them (a line is tens of glyphs: few grow steps) */
 	nln = x->nch / 32 + 16;
 	ln = pdf_malloc(x->d, nln * (long)sizeof(LN));
@@ -3722,7 +3721,7 @@ static void assemble(IX *x, PTEXT *t)
 			ch_sort(x->d, x->ch + i, j - i, ch_cmp_x);
 		if (j - turn >= 256) {
 			/* a line's glyphs sorted left to right take a while, a page's
-			   lines more: EDOS_01.PDF's glyph by glyph */
+			   lines more: a Calamus SL PDF's glyph by glyph */
 			pause_point(x->d);
 			turn = j;
 		}

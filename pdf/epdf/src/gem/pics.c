@@ -25,8 +25,7 @@
 #include "scrpens.h"
 
 /* pictures kept decoded: 8, or with room (a TT or Falcon with more than
-   the stock memory, Erez 10 Nov 2026: "hold both Pages and Text views in
-   memory so its faster to switch between them") 24: the text view's and
+   the stock memory, decided 10 Nov 2026) 24: the text view's and
    View > Pages' both stay (a refusal of memory still gives them back) */
 #define MAXPICS 24
 static int npics = 8;
@@ -35,6 +34,20 @@ static PICE cache[MAXPICS];
 static PIC_PAL *pal;			/* taken at the first picture (not resident) */
 static int pal_planes = -1;
 static unsigned long tick;
+
+/* softer picture colours (decided 22 Nov 2026, as EWeb's): the dither
+   passes on part of each pixel's error (common's pic_pal_soft: 12
+   sixteenths on 16 pens or fewer, 8 on more) on a FireBee or a 68040 or
+   more; a 68000 and a 68030 (the ST, TT and Falcon) keep the whole, the
+   soft rows costing a 68030 about twice the dither's time */
+int pics_soft_machine(void)
+{
+#ifdef __mcoldfire__
+	return 1;
+#endif
+	return get_cookie(0x5F43465FL) != 0	/* _CF_: a FireBee */
+	       || get_cookie(0x5F435055L) >= 40;	/* _CPU: a 68040, 68060, 68080 */
+}
 
 /* the registers' colours, for the dither */
 PIC_PAL *pics_palette(void)
@@ -50,6 +63,8 @@ PIC_PAL *pics_palette(void)
 		return NULL;
 	n = scr_pens(vdi_h, planes, rgb);	/* (scrpens.c: by register, as the bitmaps hold them) */
 	pic_pal_init(pal, n, (const unsigned char (*)[3])rgb);
+	if (pics_soft_machine())
+		pic_pal_soft(pal, n <= 16 ? 12 : 8);
 	pal_planes = planes;
 	return pal;
 }
@@ -127,7 +142,7 @@ unsigned char *pics_standard(PIC *p, int nplanes, PIC_PAL *pl, int flip, long *b
 }
 
 /* ---- a picture a row at a time, shown from the top down as its rows
-   come (0.3: a scan on a 1 MB ST; 0.4: Erez's "rows top to bottom") ---- */
+   come (0.3: a scan on a 1 MB ST; 0.4: rows from the top down) ---- */
 
 #define BAND 16				/* colour rows turned to the screen's format together */
 
@@ -156,7 +171,7 @@ typedef struct {
 	unsigned char *mid, *cv, cn[16];
 	/* its ink kept: a column or a row not shown goes into the next one
 	   shown (the ink wins), or a 10-pixel page's letters lost strokes
-	   (Erez, 4 Nov 2026); racc: the rows passed over, ink0: 0 is ink */
+	   (decided 4 Nov 2026); racc: the rows passed over, ink0: 0 is ink */
 	unsigned char *racc;
 	int ink0, dark0;		/* dark0: colour 0 the darker of the two */
 	unsigned char *mrow;		/* colour: a 1-bit row, spread to the band's planes */
@@ -651,7 +666,7 @@ int pics_rows(PDOC *d, PICE *e, int nplanes, PIC_PAL *pl, int *why)
 		}
 	again:
 		ok = pdf_image_palette(d, shown >= 0 ? shown : e->obj, ip, &n);
-		/* Sharp (Erez, 5 Nov 2026): a picture of few colours (a
+		/* Sharp (decided 5 Nov 2026): a picture of few colours (a
 		   screenshot, a diagram), more than the pens near them hold, on 16
 		   colours or fewer: each pixel its nearest pen, no dither (a dither
 		   made its letters dots); photos (EConvert's have 256) keep it */
@@ -707,14 +722,14 @@ int pics_rows(PDOC *d, PICE *e, int nplanes, PIC_PAL *pl, int *why)
 		   left (in bands where it must). Taken at the first row, it came
 		   after the canvas: on a 4 MB Falcon in 256 colours it was refused
 		   once the page was drawn, the page drawn again from 0 % and
-		   refused again (Erez's sharper page, 50 % to 80 % to 0 %,
+		   refused again (a sharper page that went 50 % to 80 % to 0 %,
 		   13 Nov 2026); without it the page isn't drawn at all */
 		if (!bm_first(&k)) {
 			*why = PIC_MEMORY;	/* (doc.c gives the text store's memory back and tries once more) */
 			how = 0;
 		} else
 			how = pics_page_rows ? pics_page_rows(e->obj - PICS_PAGE, e->w, e->h, sink_row, sink_planes,
-							      nplanes <= 8 && !e->flip ? pl : NULL, nplanes, &k, why) : -1;	/* (render.ovl's pens: 256 colours too, Erez's) */
+							      nplanes <= 8 && !e->flip ? pl : NULL, nplanes, &k, why) : -1;	/* (render.ovl's pens: 256 colours too) */
 		if (how < 0) {
 			*why = PIC_UNSUPPORTED;
 			how = 0;
@@ -785,7 +800,7 @@ static void let_go(PICE *e)
 
 /* the picture obj at w x h: its slot (ready, wanted, decoding or failed) */
 /* the largest block of ST RAM free: where the pictures' bitmaps go
-   (bm_alloc). Malloc(-1) gives TT RAM's on a machine that has it (Erez's
+   (bm_alloc). Malloc(-1) gives TT RAM's on a machine that has it (a
    Falcon, 128 MB): 24 pictures were kept and more taken while his 14 MB
    of ST RAM ran out, and the sharper page's bitmap was refused
    (13 Nov 2026) */
@@ -866,8 +881,7 @@ PICE *pics_next(void)
 {
 	int i, pass;
 
-	/* the page in focus's first (Erez, 8 Nov 2026: "always prioritize the
-	   current page"), then the others the window shows, then one ahead */
+	/* the page in focus's first (decided 8 Nov 2026), then the others the window shows, then one ahead */
 	/* (and of those a stored page before the page drawn sharp over it: it
 	   is shown in a moment, the sharp one takes seconds) */
 	for (pass = 0; pass < 2; pass++)
@@ -915,7 +929,7 @@ void pics_release(PICE *e)
 
 /*
  * A picture ahead of the view, decoded quietly in the turns nothing else
- * wants (Erez, 4 Nov 2026): only into a free slot, at most AHEAD of them
+ * wants (decided 4 Nov 2026): only into a free slot, at most AHEAD of them
  * waiting or decoding, and only while the memory has room to spare (its
  * bitmap twice and AHEAD_SPARE more: a 1 MB ST seldom has, and never goes
  * short for it). One shown always comes first (pics_next), and stops one
@@ -1095,8 +1109,7 @@ void pics_done(PICE *e, unsigned char *std, long bytes, int why)
 }
 
 /* src's bitmap made w x h, each pixel the nearest of src's (a picture
-   enlarged at once, while a sharp one is made: Erez, 8 Nov 2026, "tens of
-   seconds of wait time"); out a bitmap the screen copies from, device
+   enlarged at once, while a sharp one is made: decided 8 Nov 2026); out a bitmap the screen copies from, device
    format; *heap as bm_alloc's. 0, or -1 (memory) */
 int pics_enlarge(const PICE *src, int w, int h, MFDB *out, int *heap)
 {

@@ -370,7 +370,7 @@ static int nearest(const unsigned char (*pal)[3], int n, int r, int g, int b)
 
 /* c near one of pal's pens: that pen, else -1 (render.ovl's snap_pen, 2.5:
    the 16 colours' page took a pattern over every grey, its text's edges
-   too, Erez's photos of 10 Nov 2026); kept by colour in snap (-2 unknown) */
+   too, a report of 10 Nov 2026); kept by colour in snap (-2 unknown) */
 #define SNAP_D (9L * 28 * 28)
 
 static int snap_of(signed char *snap, const unsigned char (*pal)[3], int n, unsigned c)

@@ -14,7 +14,7 @@
  * A colour near one of the pens (a flat fill, a grey text's ink, a glyph's
  * edge) is that pen, its error dropped, as white and black are: diffused, the
  * few pens of 16 colours broke a dark red band into red, black and green dots
- * and a grey text into specks (Erez's photos of EDOS_01.PDF, 9 Nov 2026). Only
+ * and a grey text into specks (a report of 9 Nov 2026). Only
  * the colours between the pens (a photo, a gradient) are dithered.
  */
 #include <stdint.h>
@@ -114,6 +114,11 @@ static __attribute__((noinline)) void fs_run(const unsigned short *s, const shor
 			er = r - pal[k][0];
 			eg = g - pal[k][1];
 			eb = b - pal[k][2];
+#ifdef PENS_SHARE
+			er = er * pens_soft / 16;	/* (penssoft.c's: a share of it) */
+			eg = eg * pens_soft / 16;
+			eb = eb * pens_soft / 16;
+#endif
 		}
 		/* 7/16 right, 3/16 down-left, 5/16 down, 1/16 down-right */
 		t.cr = er * 7;

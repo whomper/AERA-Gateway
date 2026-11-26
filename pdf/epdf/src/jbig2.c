@@ -346,7 +346,7 @@ static int at_is_default(int t, const int8_t *at)
    that's x-2 .. x+2 in 15-11), shifted along a pixel at a time with the
    two pixels coming in from the rows above, read two bytes at a time;
    the coder inline on its registers. A 68030's inner loop */
-#if defined(__m68k__) && !defined(JB2_NO_ASM)
+#if defined(__m68k__) && !defined(JB2_NO_ASM) && !defined(__mcoldfire__)
 /* jb2t0.S: a row's whole bytes, the same as the C below */
 unsigned jb2_t0_bytes(MQ *m, uint8_t *cx, uint8_t *out, const uint8_t *r1, const uint8_t *r2, long n, unsigned ctx);
 #define T0_ASM 1

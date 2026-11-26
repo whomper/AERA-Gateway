@@ -103,7 +103,7 @@ static char (*firsts)[FIRST_LINE];
 static SBUF rtrans;			/* and its /Translation, when it has one (rprep.trans) */
 static int rtrans_ok;
 
-/* View > Translate (Erez, 8 Nov 2026; AERA-Atari standards/TRANSLATION-
+/* View > Translate (decided 8 Nov 2026; AERA-Atari standards/TRANSLATION-
    SERVICE.md): each page's translation in a store of its own, in memory
    only (never on the Atari's disk), over the pages as read (trstore.under:
    a page not translated yet shows as it is). The view shows it while
@@ -146,7 +146,7 @@ static struct {
 } *pdbl;
 
 /* a converted copy's pages drawn sharp on a Falcon or TT in colour, from
-   its original by render.ovl, over the stored page (Erez, 10 Nov 2026: the
+   its original by render.ovl, over the stored page (decided 10 Nov 2026: the
    Pages view's stored 16 colours looked worse than the text view's
    pictures): -1 not known yet for this document */
 static int sharp = -1;
@@ -315,7 +315,7 @@ static void pages_drawn_note(long n)
 		   so a page reached by the reader keeps its height (most do) and
 		   what is below it stays where it was. Before, an unread page was
 		   its head alone and grew when read: a held key scrolling the
-		   pages saw them jump (Erez's EDOS_01.PDF, 14 Nov 2026) */
+		   pages saw them jump (a Calamus SL PDF, 14 Nov 2026) */
 		long m;
 
 		drawn = 2;
@@ -405,6 +405,7 @@ int doc_prepared(void)
 
 static void page_pic_stop(void);
 static int pics_held;		/* Esc: no picture begun till the view moves (doc_pic_hold) */
+static int pics_paused;		/* printing: render.ovl is the print job's (doc_pics_pause) */
 
 /* the view on the pages' text or on their pictures: laid out again from
    the page at the top (the caller lays the window out and draws it) */
@@ -620,15 +621,32 @@ static int pic_turn(void)
 	return !slice_up(NULL);
 }
 
+/* is obj a page render.ovl draws, or the stored page shown for one till
+   it is drawn sharp (doc_stand_in's other way round)? */
+static int stands_in(long obj)
+{
+	long n;
+
+	if (obj >= PICS_PAGE)
+		return 1;
+	for (n = 0; pdbl && obj > 0 && n < onpages; n++)
+		if (pdbl[n].stand == obj)
+			return 1;
+	return 0;
+}
+
 /* the text store's memory given back for a page or a picture refused it:
    1 when there is enough to try again, 2 when that was render.ovl's room
-   (the store's still to give, if it's refused again) */
-static int give_back(const char *what)
+   (the store's still to give, if it's refused again). A page render.ovl
+   draws, or the stored page standing in for it, never takes render.ovl's
+   room: with it neither would be drawn (2.46 on a 4 MB Falcon under NVDI, drawn.py) */
+static int give_back(const char *what, long obj)
 {
-	long b, r = rdraw_reserved();
+	long b, r = stands_in(obj) ? 0 : rdraw_reserved();
 	char a[24];
 
-	rdraw_unreserve();	/* render.ovl's room first, when it isn't in it (rdraw.c) */
+	if (r)
+		rdraw_unreserve();	/* render.ovl's room first, when it isn't in it (rdraw.c) */
 	if (r && !rdraw_reserved()) {
 		snprintf(a, sizeof a, "%ld", r);
 		log_event("ovl-unreserve", what, a);
@@ -807,7 +825,7 @@ static int page_rows(long n, int w, int h, void (*row)(void *u, long y, const un
 		/* its canvas a page whole where it can (bands read the page again
 		   for each: 4 to 15 times slower) */
 		/* a converted copy's pages drawn bigger from its original
-		   (Erez, 8 Nov 2026: zoomed in colour), where it is still there;
+		   (decided 8 Nov 2026: zoomed in colour), where it is still there;
 		   else from the copy itself */
 		const char *from = orig[0] && pf_size(orig) > 0 ? orig : opath;
 
@@ -928,9 +946,7 @@ static void page_pic_stop(void)
 }
 
 /* a page being drawn that isn't obj at w x h stopped at once, its slot let
-   go: a zoom wants its own page now (Erez, 9 Nov 2026: "as soon as the
-   user zooms in, the current image viewing process need to stop and the
-   zoomed in image viewing must start"); it is drawn again when it is
+   go: a zoom wants its own page now (decided 9 Nov 2026); it is drawn again when it is
    wanted again */
 void doc_pic_stop_page_unless(long obj, int w, int h)
 {
@@ -1104,7 +1120,7 @@ static int pz_begin(PICE *e)
 	   main heap as in 2.38 (a zone there would only cut the reading's room:
 	   scan-gfabasic on ST-1 read 19 pages with zones against 55) */
 	room = heap_room();
-	if (room < need && give_back("picture"))
+	if (room < need && give_back("picture", e->obj))
 		room = heap_room();
 	snprintf(a, sizeof a, "%ld %ld room %ld", e->obj, need, room);
 	if (room >= 2 * need) {
@@ -1133,7 +1149,7 @@ int doc_pic_start(void)
 {
 	PICE *e;
 
-	if (!doc || rpic || pics_held || !doc_view_resting() || !(e = pics_next()))
+	if (!doc || rpic || pics_held || pics_paused || !doc_view_resting() || !(e = pics_next()))
 		return 0;
 	{
 		/* its stack: 12 KB, 64 KB once pages are drawn (render.ovl's);
@@ -1141,7 +1157,7 @@ int doc_pic_start(void)
 		   starts again on a bigger one */
 		/* (any document whose pages render.ovl draws: a converted
 		   copy's zoomed page too, since 1.10. That one ran on the
-		   pictures' 12 KB and overran it: Erez's EDOS copy, a page
+		   pictures' 12 KB and overran it: a big converted copy, a page
 		   clicked in View > Pages, 4 bombs past the stack's top, 8 Nov) */
 		long need = drawn || (e->obj >= PICS_PAGE) || doc_page_drawable() ? DRAW_STACK : PIC_STACK;
 
@@ -1233,7 +1249,7 @@ int doc_pic_slice(unsigned long ms, long *obj)
 	pics_band();			/* a band of colour rows to the screen's format */
 	if (!pdone)
 		return 0;
-	if ((rpic_rows ? !rpic_ok : !rpic_std) && rpic_why == PIC_MEMORY && retried_obj != rpic->obj && (g = give_back("picture"))) {
+	if ((rpic_rows ? !rpic_ok : !rpic_std) && rpic_why == PIC_MEMORY && retried_obj != rpic->obj && (g = give_back("picture", rpic->obj))) {
 		if (g == 1)
 			retried_obj = rpic->obj;
 		if (rpic_rows)
@@ -1337,12 +1353,43 @@ int doc_pic_hold(void)
 	return 1;
 }
 
+/* File > Print... (prjob.c): the picture or page being made stopped
+   (render.ovl may not be in the middle of a page of this document while
+   the job draws its own), none begun till it ends */
+void doc_pics_pause(int on)
+{
+	if (on && rpic) {
+		if (rpic->obj >= PICS_PAGE)
+			page_pic_stop();
+		else
+			pic_give_way("print");
+	}
+	pics_paused = on;
+}
+
+/* File > Print... on a short machine (a 4 MB Falcon under NVDI keeps about
+   10 KB once the printer's driver holds its page): the decoded pictures
+   (made again when shown) and the store's spare blocks back to the heap
+   render.ovl draws the printed page from */
+void doc_print_room(void)
+{
+	long b;
+	char a[24];
+
+	pics_forget();
+	b = doc ? ts_shrink(&store, STORE_KEEP) : 0;
+	if (b > 0)
+		cache_kb = store.budget / 1024;
+	snprintf(a, sizeof a, "%ld", b);
+	log_event("memory-back", "print", a);
+}
+
 /* the picture being made is one ahead of the view and one shown waits:
    the one ahead stopped, its slot let go (made again later, if room) */
 void doc_pic_drop_ahead(void)
 {
 	/* one ahead of the view gives way to one it shows; one the window
-	   shows but not on the page in focus gives way to that page's (Erez,
+	   shows but not on the page in focus gives way to that page's (decided
 	   8 Nov 2026: the page in focus first) */
 	if (!rpic || !((rpic->ahead && pics_shown_waiting()) ||
 		       (!rpic->ahead && pics_focus >= 0 && rpic->page != pics_focus && pics_focus_busy())))
@@ -1350,7 +1397,7 @@ void doc_pic_drop_ahead(void)
 	pic_give_way("ahead-stopped");
 }
 
-/* the progress row's (Erez, 2 Nov 2026) */
+/* the progress row's (decided 2 Nov 2026) */
 long doc_reading(int *prog)
 {
 	if (!doc || done >= npages)
@@ -1423,6 +1470,50 @@ const char *doc_path(void)
 const char *doc_name(void)
 {
 	return name;
+}
+
+/* a converted copy's original (decided 20 Nov 2026: a copy EConvert made was
+   zoomed from its own stored page, never sharp): where /Source's /Path says
+   (EConvert on this Atari), else by its /Name in the copy's folder's parent
+   (EConvert's "Write to" a folder inside the PDFs' own); taken only when
+   its size is /Bytes.
+   The name the window shows stays the copy's (doc_set_original's is for
+   EPDF's own Gateway copies) */
+static int original_is(const char *p)
+{
+	long n;
+
+	if (!p[0] || !strcmp(p, opath))
+		return 0;
+	n = pf_size(p);
+	return n > 0 && n == doc->src_bytes;
+}
+
+static void find_original(void)
+{
+	char d[256], p[256], *b;
+	const char *how = NULL;
+
+	if (doc->src_bytes <= 0)
+		return;
+	if (original_is(doc->src_path)) {
+		snprintf(orig, sizeof orig, "%s", doc->src_path);
+		how = "path";
+	} else if (doc->src_name[0] && !strchr(doc->src_name, '\\') && !strchr(doc->src_name, ':')) {
+		snprintf(d, sizeof d, "%s", opath);
+		if ((b = strrchr(d, '\\')) != NULL) {
+			*b = '\0';
+			if ((b = strrchr(d, '\\')) != NULL) {
+				b[1] = '\0';	/* (the parent, with its backslash) */
+				snprintf(p, sizeof p, "%s%s", d, doc->src_name);
+				if (original_is(p)) {
+					snprintf(orig, sizeof orig, "%s", p);
+					how = "parent";
+				}
+			}
+		}
+	}
+	log_event("original", how ? how : "none", how ? orig : doc->src_name);
 }
 
 void doc_set_original(const char *path)
@@ -1602,6 +1693,8 @@ static long open_done(void)
 	doc = odoc;
 	odoc = NULL;
 	npages = onpages;
+	if (doc->prepared && !orig[0] && rdraw_machine())
+		find_original();
 	/* any other PDF drawn as printed where render.ovl can be (stage 2) */
 	drawn = !doc->prepared && rdraw_machine() && pf_size(rdraw_path) > 0;
 	if (!doc->prepared && rdraw_machine())
@@ -1668,7 +1761,7 @@ long doc_slice(unsigned long ms)
 	if (!rdone)
 		return -1;
 	n = rpage;
-	if (rt->failed && doc->st.oom != rpage_oom && retried_page != n && (g = give_back("page"))) {
+	if (rt->failed && doc->st.oom != rpage_oom && retried_page != n && (g = give_back("page", -1))) {
 		if (g == 1)
 			retried_page = n;
 		ptext_free(rt);
@@ -1774,7 +1867,7 @@ const char *doc_status(void)
 	return s;
 }
 
-/* the window scrolled (Erez, 14 Nov 2026: a page
+/* the window scrolled (decided 14 Nov 2026: a page
    only passed over is no work for the machine). A move that follows another
    within 400 ms (a held key, the arrows held, a page key pressed again and
    again) holds the pictures till the view has been still 400 ms; one on its

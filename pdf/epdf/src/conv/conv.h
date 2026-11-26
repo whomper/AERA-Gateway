@@ -8,9 +8,8 @@
 #ifndef CONV_H
 #define CONV_H
 
-/* whole pages: none, mono, mono and colour, colour only (Erez, 10 Nov
-   2026: "What if I just want color pages, why would I spend time on
-   mono?": a page with colour then has no mono one, a page without colour
+/* whole pages: none, mono, mono and colour, colour only (decided 10 Nov
+   2026: a page with colour then has no mono one, a page without colour
    its mono one) */
 enum { CV_PAGES_NONE, CV_PAGES_MONO, CV_PAGES_COLOUR, CV_PAGES_COLOUR_ONLY };
 #define CV_THUMB_W 96			/* a page's /Thumb, its pixels across */
@@ -31,10 +30,9 @@ typedef struct {
 	   one piece (EPDF shows it at page_w, and whole when clicked); 1 */
 	int page_double;
 	/* 1: each page carries a /Thumb (its preview, CV_THUMB_W wide, 16
-	   colours: EPDF's page strip); 0, the default, none (Erez, 15 Nov 2026:
-	   "a setting flag, off by default": 1.9 s a page on a 4 MB Falcon) */
+	   colours: EPDF's page strip); 0, the default, none (decided 15 Nov 2026: 1.9 s a page on a 4 MB Falcon) */
 	int thumbs;
-	/* Faster display (Erez, 17 Nov 2026: the default): the screen's pens,
+	/* Faster display (decided 17 Nov 2026: the default): the screen's pens,
 	   by hardware register as EPDF's bitmaps hold them (2 .. 256; 0:
 	   Smaller files). A picture is dithered once to them (common's dither,
 	   EPDF's own, with its Sharp rule) and kept Indexed with their colours
@@ -62,7 +60,7 @@ typedef struct {
 	   symbols): it may hand the machine back for a while (EConvert's
 	   window: the work on a stack of its own); 1 stops the conversion */
 	int (*turn)(void *u);
-	/* the Gateway's translation (Erez, 8 Nov 2026; docs/CONVERTED-PDF.md,
+	/* the Gateway's translation (decided 8 Nov 2026; docs/CONVERTED-PDF.md,
 	   "The translation"): with translate_to (an ISO 639-1 code) set, each
 	   page's paragraphs (UTF-8, an empty line between) go to translate,
 	   which gives the same paragraphs in that language (*out, malloc's)
@@ -71,6 +69,11 @@ typedef struct {
 	   3 busy, 4 too long, other failed: the conversion stops (CVSTAT's
 	   tr_fail) */
 	const char *translate_to;
+	/* the original's path as this machine names it, written as /Source's
+	   /Path (EConvert on the Atari: EPDF finds the original by it to draw a
+	   page sharp and zoomed); NULL none (the Gateway, econvert on the host:
+	   their files the same byte for byte wherever the original was) */
+	const char *source_path;
 	int (*translate)(void *u, const char *to, const char *utf8, long len, char **out, long *outlen, char from[8]);
 } CVOPT;
 

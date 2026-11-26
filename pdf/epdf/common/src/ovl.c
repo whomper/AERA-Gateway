@@ -120,30 +120,42 @@ long ovl_need(const char *path)
 }
 
 /* the one loader: into the block given (mem, size), else into one from
-   malloc */
+   malloc; align: that block 256 + 4 bytes longer, the image at its first
+   256-byte boundary after a long that holds what malloc gave (ovl_free) */
 static void *load(const char *path, void *mem, long size, long *taken, char *err, int errlen, OVL_TAIL tail, void *ud,
-		  int *later);
+		  int *later, int align);
 
 void *ovl_load(const char *path, long *taken, char *err, int errlen)
 {
-	return load(path, 0, 0, taken, err, errlen, 0, 0, 0);
+	return load(path, 0, 0, taken, err, errlen, 0, 0, 0, 0);
+}
+
+void *ovl_load_aligned(const char *path, long *taken, char *err, int errlen)
+{
+	return load(path, 0, 0, taken, err, errlen, 0, 0, 0, 1);
+}
+
+void ovl_free(void *image)
+{
+	if (image)
+		free(((void **)image)[-1]);
 }
 
 void *ovl_load_tail(const char *path, long *taken, char *err, int errlen, OVL_TAIL tail, void *ud, int *later)
 {
-	return load(path, 0, 0, taken, err, errlen, tail, ud, later);
+	return load(path, 0, 0, taken, err, errlen, tail, ud, later, 0);
 }
 
 void *ovl_load_into(const char *path, void *mem, long size, long *taken, char *err, int errlen)
 {
-	return load(path, mem, size, taken, err, errlen, 0, 0, 0);
+	return load(path, mem, size, taken, err, errlen, 0, 0, 0, 0);
 }
 
 static void *load(const char *path, void *mem, long size, long *taken, char *err, int errlen, OVL_TAIL tail, void *ud,
-		  int *later)
+		  int *later, int align)
 {
 	unsigned char fx[512];
-	unsigned char *m = 0;
+	unsigned char *m = 0, *raw = 0;
 	long tsize, dsize, bsize, ssize, done, n;
 	OVL_FIX f;
 	int h, r = 1;
@@ -158,7 +170,14 @@ static void *load(const char *path, void *mem, long size, long *taken, char *err
 	}
 	if (!header(h, &tsize, &dsize, &bsize, &ssize))
 		goto bad;
-	if (!(m = mem ? (tsize + dsize + bsize <= size ? mem : 0) : malloc(tsize + dsize + bsize))) {
+	if (align) {
+		if ((raw = malloc(tsize + dsize + bsize + 256 + sizeof(void *))) != 0) {
+			m = (unsigned char *)(((unsigned long)raw + sizeof(void *) + 255) & ~255UL);
+			((void **)m)[-1] = raw;
+		}
+	} else
+		m = mem ? (tsize + dsize + bsize <= size ? mem : 0) : malloc(tsize + dsize + bsize);
+	if (!m) {
 		pf_close(h);
 		snprintf(err, errlen, "no memory for %s (%ld KB)", name, (tsize + dsize + bsize + 1023) / 1024);
 		if (later)
@@ -197,7 +216,9 @@ static void *load(const char *path, void *mem, long size, long *taken, char *err
 	return m;
 bad:
 	pf_close(h);
-	if (!mem)
+	if (align)
+		free(raw);
+	else if (!mem)
 		free(m);
 	snprintf(err, errlen, "%s is damaged: copy it again from the release", name);
 	return 0;
@@ -216,9 +237,16 @@ static long flush_super(void)
 		unsigned long set, way;
 		(void)jar;
 		(void)cpu;
+		/* nop first: the ColdFire's store buffer drained, so the
+		   relocations just written are in the cache when its lines are
+		   pushed (EmuTOS's flush does the same; a FireBee crash with
+		   HypView resident, 21 Nov 2026, is suspected of it); and after,
+		   the pipeline synchronised before the new code runs */
+		__asm__ volatile("nop" ::: "memory");
 		for (set = 0; set < 512; set++)
 			for (way = 0; way < 4; way++)
 				__asm__ volatile("cpushl %%bc,(%0)" : : "a"(set << 4 | way) : "memory");
+		__asm__ volatile("nop" ::: "memory");
 		return 0;
 	}
 #endif
@@ -227,13 +255,15 @@ static long flush_super(void)
 			/* FireTOS says _CPU 60, but a ColdFire has neither cpusha
 			   nor a CACR to read: its own push of each line, as the
 			   ColdFire build above (cpushl %bc,(%a0) as words). TLSFB.OVL
-			   is loaded so (Erez, 15 Nov 2026) */
+			   is loaded so (decided 15 Nov 2026) */
 			unsigned long set, way;
+			__asm__ volatile(".short 0x4e71" ::: "memory");	/* nop: the store buffer drained */
 			for (set = 0; set < 512; set++)
 				for (way = 0; way < 4; way++) {
 					register unsigned long a __asm__("a0") = set << 4 | way;
 					__asm__ volatile(".short 0xf4e8" : : "a"(a) : "memory");
 				}
+			__asm__ volatile(".short 0x4e71" ::: "memory");	/* nop */
 			return 0;
 		} else if (jar[0] == 0x5F435055L)	/* _CPU: 0, 10, 20, 30, 40, 60 */
 			cpu = jar[1];

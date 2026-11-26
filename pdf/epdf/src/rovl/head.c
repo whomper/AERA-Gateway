@@ -117,7 +117,7 @@ static int rv_page(void *doc, long n, int width, int y0, ROVL_PAGE *out)
 	pic_dsp = dsp_on && dspjpeg_present() ? &dspjpeg_port_jpeg : NULL;
 	x->r.mono_glyphs = H->size >= (long)sizeof(ROVL_HOST) && H->crisp ? 2 : 0;
 	rc = render_page_from(&x->r, n, width, y0);
-	/* no room for its canvas (a page drawn bigger: View > Zoom in, Erez
+	/* no room for its canvas (a page drawn bigger: View > Zoom in, decided
 	   8 Nov 2026): in smaller bands, each reading the page again, down to
 	   16 rows; slower, but drawn */
 	while (rc && !x->r.c.px && !stopped && !x->d.stopping && (long)width * 2 * 16 < (x->r.canvas_max > 0 ?
@@ -157,6 +157,7 @@ static void rv_close(void *doc)
 	pdf_close(&x->d);
 	free(x);
 	pens_free();
+	pens_free_soft();
 	cv_turn = NULL;
 }
 
@@ -171,7 +172,8 @@ static int rv_pens(void *doc, const unsigned char (*pal)[3], int n, int planes, 
 
 	if (y < 0 || rows <= 0 || y + rows > c->rows || !c->px || planes < 1 || planes > 8)
 		return -1;
-	return pens_planes(c->px + (long)y * c->w, c->w, rows, c->y0 + y, pal, n, planes, out);
+	pens_soft = H->size >= (long)sizeof(ROVL_HOST) && H->soft ? (n <= 16 ? 12 : 8) : 16;
+	return pens_planes_share(c->px + (long)y * c->w, c->w, rows, c->y0 + y, pal, n, planes, out);
 }
 
 static void use_dsp(int on)

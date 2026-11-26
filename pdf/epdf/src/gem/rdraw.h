@@ -10,8 +10,12 @@
 
 #include "rovl.h"
 
-/* where render.ovl is (set by the program: beside it) */
+/* where render.ovl is (set by the program: beside it); in the FireBee's
+   package (decided 22 Nov 2026: the same names) it is the ColdFire's build */
 extern char rdraw_path[200];
+#define RDRAW_FILE "render.ovl"
+#define RDRAW_NAME "RENDER.OVL"
+#define RDRAW_PRG "EPDF.PRG"
 
 /* this machine can draw pages: a 68020 or better (an ST never loads it) */
 int rdraw_machine(void);

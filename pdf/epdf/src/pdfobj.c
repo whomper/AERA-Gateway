@@ -151,7 +151,7 @@ static void pa_back(PDOC *d, PARENA *a, ACH *head, long used)
    in turn (PWIN, or twice that on a 68020 and up), and the objects', a few
    at a time (POWIN). With one, each object read between two pieces of a
    page's content read 16 KB at the object and 16 KB at the content again:
-   EDOS_01.PDF read 768 KB from the disk for a page of 220 KB. */
+   a Calamus SL PDF read 768 KB from the disk for a page of 220 KB. */
 static long rd_win(PDOC *d, unsigned char *w, long *base, long *len, long cap, long off, void *buf, long n)
 {
 	long got = 0, k;
@@ -937,7 +937,7 @@ static POBJ *parse_indirect(PDOC *d, const unsigned char *buf, long n, int final
 static POBJ *load_file_obj(PDOC *d, long num, long off, long gen)
 {
 	/* 2 KB first: a font with its widths is just over 1 KB, and parsed
-	   twice from a first read of 1 KB took 270 ms on an ST (EDOS_01.PDF) */
+	   twice from a first read of 1 KB took 270 ms on an ST (a Calamus SL PDF) */
 	long want = 2048, got, a0 = 0;
 	unsigned char *buf = NULL;
 	POBJ *o = NULL;

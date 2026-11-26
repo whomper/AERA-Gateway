@@ -49,6 +49,9 @@
 #include "langs.h"
 #include "popup.h"
 #include "gatedlg.h"
+#include "filepick.h"
+#include "conn.h"
+#include "prjob.h"
 
 short ap_id;
 short pix_aspect = 16;
@@ -62,12 +65,14 @@ static char start_dir[160];		/* EPDF.PRG's folder: EPDF.INF, CRASH.LOG, EPDF.TXC
 static char inf_path[180], cache_path[180];
 static INF inf;
 static int lines_mode;
-/* Options > Open on the Gateway (Erez, 7 Nov 2026): a PDF that isn't
+/* Options > Open on the Gateway (decided 7 Nov 2026): a PDF that isn't
    converted is converted by the Gateway while it is shown (gwopen.c) */
 static int gw_on;
 static unsigned short tr_port = TR_PORT;	/* translategate's */
 static char gate_host[64];
 static unsigned short gate_port = GATE_PORT;
+/* Settings' Gateway page (decided 20 Nov 2026: by default as before it) */
+static GWCONV gwc = { GWP_AUTO, 0, 1, GWV_STRIP };
 static char open_dir[160] = "";		/* where Open looks first (FOLDER=) */
 static int find_dir;			/* a search runs: 1 forwards, -1 back; 0 none */
 static void menu_states(void);
@@ -80,12 +85,47 @@ static int job_running(void);	/* a copy, a search or the Gateway's conversion (D
 #define END_MCTRL 2
 #endif
 
+/* the log (the guidelines' 6.5, D8: Options > Write a log and Settings'
+   tick, LOG= off at first; decided 22 Nov 2026): epdf.log beside EPDF.PRG,
+   through common's conn.c (each line written at once, the file closed a
+   second after, 256 KB rolling to epdf.old) */
+static int log_on;
+
 void log_event(const char *what, const char *a, const char *b)
 {
 	char line[200];
+	int n = snprintf(line, sizeof line, "EPDF %s %s %s\n", what, a ? a : "", b ? b : "");
 
-	snprintf(line, sizeof line, "EPDF %s %s %s\n", what, a ? a : "", b ? b : "");
 	nf_debug(line);
+	if (log_on && n > 0) {
+		/* "what -- a b": the time and the name are conn.c's; the tag,
+		   the trailing blanks and the newline off */
+		char *s = line + 5 + strlen(what) + 1, *e = line + (n < (int)sizeof line ? n : (int)sizeof line - 1);
+
+		while (e > s && (e[-1] == '\n' || e[-1] == ' '))
+			e--;
+		conn_log(what, " -- ", s, (long)(e - s));
+	}
+}
+
+/* the log's first line: "start -- EPDF 2.44, 2026-11-22 14:05:31" */
+static void log_begin(void)
+{
+	char v[32];
+
+	snprintf(v, sizeof v, "EPDF %s", app_version);
+	conn_log_start(v);
+}
+
+static void log_set(int on, const char *dir)
+{
+	log_on = on;
+	if (on && !conn_logfile[0])
+		path_join(conn_logfile, sizeof conn_logfile, dir, "epdf.log");
+	else if (!on) {
+		conn_log_flush();
+		conn_logfile[0] = '\0';
+	}
 }
 
 int settings_lines(void)
@@ -116,8 +156,7 @@ static void settings_read(void)
 	/* NatFeats (the emulator's console, the rigs' log) only where the INF
 	   asks: NATFEATS=1, which only the test rigs write; not in Settings.
 	   Read before the first log_event: a probe made with nf_on 0 is
-	   never made again (Erez, 15 Nov 2026: "make it a .INF setting so
-	   that it can be added in our testing but have no bearing outside";
+	   never made again (decided 15 Nov 2026;
 	   a Vampire V4SA hung on the probe's illegal instruction) */
 	if ((v = inf_get(&inf, "NATFEATS")) != NULL && v[0] == '1')
 		nf_on = 1;
@@ -129,15 +168,41 @@ static void settings_read(void)
 		strcpy(open_dir, v);
 	if ((v = inf_get(&inf, "GATEWAY")) != NULL)
 		gw_on = v[0] == '1';
+	if ((v = inf_get(&inf, "LOG")) != NULL)
+		log_on = v[0] == '1';
+	if ((v = inf_get(&inf, "SYSFSEL")) != NULL)
+		filepick_system = v[0] == '1';	/* (the file named at the start: log_set) */
 	if ((v = inf_get(&inf, "GATE")) != NULL && strlen(v) < sizeof gate_host)
 		strcpy(gate_host, v);
 	if ((v = inf_get(&inf, "GATEPORT")) != NULL && atol(v) > 0 && atol(v) < 65536)
 		gate_port = (unsigned short)atol(v);
+	/* Settings' Gateway page (decided 20 Nov 2026) */
+	if ((v = inf_get(&inf, "GWPAGES")) != NULL)
+		gwc.pages = !strcmp(v, "none") ? GWP_NONE : !strcmp(v, "mono") ? GWP_MONO : !strcmp(v, "colour") ? GWP_COLOUR :
+			    !strcmp(v, "both") ? GWP_BOTH : GWP_AUTO;
+	if ((v = inf_get(&inf, "GWPHOTOS")) != NULL)
+		gwc.photos = !strcmp(v, "jpeg");
+	if ((v = inf_get(&inf, "GWOPTIMISE")) != NULL)
+		gwc.optimise = strcmp(v, "size") != 0;
+	if ((v = inf_get(&inf, "GWPREVIEWS")) != NULL)
+		gwc.previews = !strcmp(v, "on") ? GWV_ON : !strcmp(v, "off") ? GWV_OFF : GWV_STRIP;
 	{
-		/* View > Translate and the language (Erez, 8 Nov 2026) */
+		/* View > Translate and the language (decided 8 Nov 2026) */
 		int t = (v = inf_get(&inf, "TRANSLATE")) != NULL && v[0] == '1';
 		const char *to = inf_get(&inf, "TRANSLATETO");
 
+		/* the rigs' printer (NVDI's picture driver to a file) and range:
+		   not in Settings */
+		if ((v = inf_get(&inf, "PRINTTO")) != NULL && v[0]) {
+			static char dev[96];
+
+			snprintf(dev, sizeof dev, "%s", v);
+			prjob_device = dev;
+		}
+		if ((v = inf_get(&inf, "PRINTRANGE")) != NULL && v[0]) {
+			prjob_first = atol(v);
+			prjob_last = strchr(v, ' ') ? atol(strchr(v, ' ') + 1) : prjob_first;
+		}
 		if ((v = inf_get(&inf, "TRPORT")) != NULL && atol(v) > 0 && atol(v) < 65536)
 			tr_port = (unsigned short)atol(v);	/* (translategate's elsewhere: the rigs) */
 		tr_setup(gate_host, tr_port);
@@ -166,6 +231,21 @@ static void setting(const char *name, const char *value, const char *note)
 		return;
 	inf_set(&inf, name, value, note);
 	settings_write();
+}
+
+/* Options > Write a log, or Settings' tick: on or off, kept in LOG= */
+static void log_tick(int on)
+{
+	if (on) {
+		log_set(1, start_dir);
+		log_begin();
+	} else {
+		log_event("log", "off", NULL);
+		log_set(0, start_dir);
+	}
+	setting("LOG", on ? "1" : "0", "1: epdf.log written beside EPDF.PRG (Options > Write a log)");
+	if (has_menu)
+		menu_icheck(menu.tree, mbar_object(&menu, CMD_LOG), on);
 }
 
 static void window_place_save(void)
@@ -229,6 +309,7 @@ static void gateway_begin(void)
 		return;
 	gw_set_translate(tr_on() ? tr_to() : "");	/* (Translate on: the Gateway translates with the conversion) */
 	gw_set_thumbs(strip_on());	/* (the page strip on: the pages' previews come with it) */
+	gw_set_conv(gwc.pages, gwc.photos, gwc.optimise, gwc.previews);
 	r = gw_start(doc_path(), doc_path(), gate_host, gate_port);
 	if (r == GW_NO_ADDRESS && settings_dialog())
 		r = gw_start(doc_path(), doc_path(), gate_host, gate_port);
@@ -303,7 +384,7 @@ static void open_dialog(void)
 	open_doc(full);
 }
 
-/* File > Save Optimised... (Erez, 8 Nov 2026): the converted PDF open (an
+/* File > Save Optimised... (decided 8 Nov 2026): the converted PDF open (an
    "Optimised" one: the Gateway's copy, or EConvert's file) written where
    the user says, as it is: nothing converted again. Under the PDF's own
    name by default, in its folder; written to a temporary name and renamed
@@ -312,35 +393,40 @@ int pf_wopen(const char *path);
 long pf_wwrite(int h, const void *data, long len);
 int pf_wclose(int h, const char *path, int keep);
 
+/* the family's save dialog (guidelines 5.12, decided 25 Nov 2026), or the
+   AES's selector with Settings' "Use the system file selector" */
+static const DL_TYPE save_types[] = { { "PDF files", "PDF" }, { "All files", "" } };
+static const FP_SPEC save_spec = { "Save the optimised PDF", "Save", "No folder saved to yet", "EPDF", save_types, 2 };
+
 static void save_optimised(void)
 {
-	static char name[16];
-	char dir[200], full[256], *s;
+	static char name[FP_NAMEW];
+	char dir[FP_PATH], full[256], *s, (*recent)[FP_PATH];
 	const char *o = doc_original();
-	short button;
-	int in, out, ok = 1;
+	int in, out, ok = 1, r;
 	char *buf;
 	long n;
 
 	if (!doc_is_open() || !doc_prepared())
 		return;
-	snprintf(name, sizeof name, "%.12s", doc_name());
+	snprintf(name, sizeof name, "%s", doc_name());
 	s = strrchr(o, '\\');
-	if (s)
-		snprintf(dir, sizeof dir, "%.*s\\*.PDF", (int)(s - o), o);
+	if (s && s - o < FP_PATH - 1)
+		snprintf(dir, sizeof dir, "%.*s", (int)(s - o + 1), o);
 	else
-		snprintf(dir, sizeof dir, "%c:\\*.PDF", (char)('A' + Dgetdrv()));
-	if (!fsel_exinput(dir, name, &button, "Save the optimised PDF") || !button || !name[0])
+		dir[0] = 0;
+	/* (the dialog's last folders, 1.3 KB, only while it is open) */
+	if (!(recent = calloc(FP_RECENT, FP_PATH))) {
+		alert(1, "[1][Not enough memory for the dialog.][ OK ]");
 		return;
-	strcpy(full, dir);
-	s = strrchr(full, '\\');
-	if (!s)
+	}
+	r = filepick_save(&save_spec, dir, recent, name, (int)sizeof name, full, (int)sizeof full, NULL);
+	free(recent);
+	log_event("save-dialog", r ? "ok" : "cancel", filepick_system ? "system" : "family");
+	if (!r)
 		return;
-	strcpy(s + 1, name);
 	if (!strcasecmp(full, doc_path()))
 		return;			/* (itself) */
-	if (pf_size(full) >= 0 && alert(2, "[2][%.30s is there already.|Replace it?][Replace|Cancel]", name) != 1)
-		return;
 	if ((in = pf_open(doc_path(), PF_READ)) < 0) {
 		alert(1, "[1][EPDF can't read the optimised PDF.][ OK ]");
 		return;
@@ -364,7 +450,7 @@ static void save_optimised(void)
 	if (pf_wclose(out, full, ok) != 0)
 		ok = 0;
 	graf_mouse(ARROW, NULL);
-	log_event("save-optimised", ok ? "ok" : "failed", NULL);
+	log_event("save-optimised", ok ? "ok" : "failed", full);
 	if (!ok)
 		alert(1, "[1][%.30s couldn't be written: the disk may be full.][ OK ]", name);
 }
@@ -380,15 +466,15 @@ static long find_left;			/* pages it may still look at */
    every step of a selection dragged) */
 static void menu_states(void)
 {
-	static const short cmd[9] = { CMD_COPY, CMD_SELALL, CMD_FIND, CMD_FINDNEXT, CMD_FINDPREV, CMD_PAGES,
-				      CMD_SAVEOPT, CMD_ZOOMTOGGLE, CMD_OPEN };
-	static signed char was[9] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+	static const short cmd[10] = { CMD_COPY, CMD_SELALL, CMD_FIND, CMD_FINDNEXT, CMD_FINDPREV, CMD_PAGES,
+				       CMD_SAVEOPT, CMD_ZOOMTOGGLE, CMD_OPEN, CMD_PRINT };
+	static signed char was[10] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
 	static signed char tick = -1, ztick = -1;
 	DOCVIEW *v = doc_view();
-	signed char now[9], z;
+	signed char now[10], z;
 	/* a job the user started (a copy, a search, the Gateway's conversion):
 	   the commands that would start another are greyed till it ends (D19,
-	   Erez 9 Nov 2026) */
+	   decided 9 Nov 2026) */
 	int job = job_running();
 	int i;
 
@@ -404,7 +490,8 @@ static void menu_states(void)
 	z = (signed char)(v && doc_pages_mode() && win_zoom_can(-1));	/* (a page zoomed) */
 	now[7] = z || (v && doc_pages_mode() && win_zoom_can(1));
 	now[8] = !job;
-	for (i = 0; i < 9; i++)
+	now[9] = v && !job;			/* Print...: a document open, no job (D19) */
+	for (i = 0; i < 10; i++)
 		if (now[i] != was[i]) {
 			menu_ienable(menu.tree, mbar_object(&menu, cmd[i]), now[i]);
 			was[i] = now[i];
@@ -412,6 +499,7 @@ static void menu_states(void)
 	if (doc_pages_mode() != tick) {
 		tick = (signed char)doc_pages_mode();
 		menu_icheck(menu.tree, mbar_object(&menu, CMD_PAGES), tick);
+		log_event("pages-tick", tick ? "1" : "0", NULL);	/* (the rigs: prepared.py) */
 	}
 	if (z != ztick) {
 		ztick = z;
@@ -547,7 +635,7 @@ static struct {
 /* a job the user started runs: a copy, a search, the Gateway's conversion */
 static int job_running(void)
 {
-	return cp.on || find_dir || gw_busy();
+	return cp.on || find_dir || gw_busy() || prjob_on();
 }
 
 static void copy_end(const char *say)
@@ -718,7 +806,7 @@ static void click(short mx, short my, short kstate, int dbl)
 			return;		/* (its bar, or a press let go elsewhere) */
 	}
 	if (win_zoomed()) {
-		/* held and moved: the page dragged under the mouse (Erez, 8 Nov
+		/* held and moved: the page dragged under the mouse (decided 8 Nov
 		   2026); a click alone gives the text back */
 		if (press_track(&anywhere, mx, my, 0, held_msg, 0, 0) != PRESS_DRAG) {
 			win_zoom_end();
@@ -815,7 +903,7 @@ static void select_word(short mx, short my)
  * the selection. Only the menu bar's commands, with their keys; Copy
  * first, as a double-click is a selection's.
  */
-/* the right-click menu's Translate... (Erez, 8 Nov 2026): the words
+/* the right-click menu's Translate... (decided 8 Nov 2026): the words
    selected (their first 2 KB) sent to translategate as one short request,
    the answer shown in a box over the window, which nothing else changes */
 static void translate_selection(void)
@@ -960,7 +1048,7 @@ static void command(int c)
 	/* a job running: its keys do what the greyed menu says, nothing (D19) */
 	if (job_running() &&
 	    (c == CMD_COPY || c == CMD_FIND || c == CMD_FINDNEXT || c == CMD_FINDPREV || c == CMD_OPEN ||
-	     c == CMD_SAVEOPT))
+	     c == CMD_SAVEOPT || c == CMD_PRINT))
 		return;
 	if (c != CMD_ABOUT && c != CMD_ZOOMIN && c != CMD_ZOOMOUT && c != CMD_ZOOMACTUAL && c != CMD_ZOOMTOGGLE)
 		win_zoom_end();		/* (a picture shown whole: the text back first) */
@@ -973,6 +1061,10 @@ static void command(int c)
 		break;
 	case CMD_SAVEOPT:
 		save_optimised();
+		break;
+	case CMD_PRINT:				/* File > Print... (decided 21 Nov 2026) */
+		if (prjob_begin())
+			menus_due = 1;
 		break;
 	case CMD_ZOOMTOGGLE:			/* View > Zoom In: zoomed, or back */
 		if (win_zoom_can(-1))
@@ -1015,6 +1107,9 @@ static void command(int c)
 			gateway_begin();
 		else
 			gw_stop();
+		break;
+	case CMD_LOG:
+		log_tick(!log_on);
 		break;
 	case CMD_SETTINGS:
 		settings_dialog();
@@ -1074,15 +1169,17 @@ static void command(int c)
 		if (!doc_has_pages())
 			break;
 		doc_set_pages(!doc_pages_mode());
-		if (has_menu)
-			menu_icheck(menu.tree, mbar_object(&menu, CMD_PAGES), doc_pages_mode());
+		/* (the tick by menu_states alone, which knows what it shows: set
+		   here as well, it was left ticked when the next document opened
+		   in its text, 2.45 and before) */
+		menu_states();
 		log_event("pages", doc_pages_mode() ? "1" : "0", NULL);
 		win_layout();
 		win_draw_all();
 		strip_refresh();	/* (the cells' pages drawn, or their first lines again) */
 		break;
 	case CMD_STRIP:
-		/* the pages' column at the window's left (Erez, 15 Nov 2026) */
+		/* the pages' column at the window's left (decided 15 Nov 2026) */
 		strip_set(!strip_on());
 		if (has_menu)
 			menu_icheck(menu.tree, mbar_object(&menu, CMD_STRIP), strip_on());
@@ -1293,9 +1390,32 @@ static int settings_dialog(void)
 	tr_stop();
 
 	snprintf(to, sizeof to, "%s", tr_to());
+	settings_log = (short)log_on;
+	settings_fsel = filepick_system;
 	if (!gate_dialog_tr(gate_host, (int)sizeof gate_host, &gate_port, to, (int)sizeof to, lang_name(to),
-			    pick_language, languages_dialog))
+			    pick_language, languages_dialog, &gwc))
 		return 0;
+	{
+		static const char *const pg[] = { "auto", "none", "mono", "colour", "both" };
+		static const char *const pv[] = { "strip", "on", "off" };
+
+		/* (a key only once it is changed from the default: the INF as it was
+		   when OK changes nothing, 6.1) */
+#define GW_SET(k, v, d, note) do { if (inf_get(&inf, k) || strcmp(v, d)) setting(k, v, note); } while (0)
+		GW_SET("GWPAGES", pg[gwc.pages], "auto", "Open on the Gateway's whole pages: auto (colour on 16 colours or more, "
+			"else mono), none, mono, colour, both");
+		GW_SET("GWPHOTOS", gwc.photos ? "jpeg" : "indexed", "indexed", "Open on the Gateway's photos: indexed (256 colours) or jpeg");
+		GW_SET("GWOPTIMISE", gwc.optimise ? "display" : "size", "display", "Open on the Gateway: display (pictures made for this "
+			"screen) or size");
+		GW_SET("GWPREVIEWS", pv[gwc.previews], "strip", "Open on the Gateway's page previews: strip (with the page strip), on, off");
+#undef GW_SET
+	}
+	if (settings_log != log_on)
+		log_tick(settings_log);
+	if (settings_fsel != filepick_system) {	/* (a key once it is changed, 6.1) */
+		filepick_system = settings_fsel;
+		setting("SYSFSEL", filepick_system ? "1" : "0", "1: File > Save Optimised... through the system's file selector");
+	}
 	setting("GATE", gate_host, "the Gateway's address (Through the Gateway)");
 	snprintf(port, sizeof port, "%u", (unsigned)gate_port);
 	setting("GATEPORT", port, "the Gateway's port for PDFs (8380)");
@@ -1335,6 +1455,11 @@ static void key(short kstate, short k)
 		log_event("gateway-stopped", NULL, NULL);
 		return;
 	}
+	if (prjob_on() && (scan == 0x01 || scan == 0x61)) {
+		prjob_stop();		/* Esc or Undo: the printing stopped at the next band */
+		log_event("print-stop", NULL, NULL);
+		return;
+	}
 	if (cp.on && (scan == 0x01 || scan == 0x61)) {
 		copy_end("copy stopped");	/* Esc or Undo: the copy given up */
 		log_event("copy-stopped", NULL, NULL);
@@ -1367,18 +1492,19 @@ static void key(short kstate, short k)
 	if (key_ctrl(kstate, k)) {
 		switch (scan) {
 		case 0x18: command(CMD_OPEN); return;		/* ^O */
+		case 0x19: command(CMD_PRINT); return;		/* ^P */
 		case 0x33: command(CMD_SETTINGS); return;	/* ^, */
 		case 0x16: command(CMD_CLOSE); return;		/* ^U: one window, so quit (3.2) */
 		case 0x11: return;				/* ^W: one window, so nothing */
 		case 0x10: command(CMD_QUIT); return;		/* ^Q */
 		case 0x2e: command(CMD_COPY); return;		/* ^C */
 		case 0x1e: command(CMD_SELALL); return;		/* ^A */
-		case 0x21:			/* ^F (Font... has no key: Erez, 9 Nov 2026) */
+		case 0x21:			/* ^F (Font... has no key: decided 9 Nov 2026) */
 			if (!shift(kstate))
 				command(CMD_FIND);
 			return;
 		/* View > Pages' zoom, EWeb's keys: ^+ (^= and the keypad's), ^-,
-		   ^0 (Erez, 9 Nov 2026) */
+		   ^0 (decided 9 Nov 2026) */
 		case 0x0d: case 0x4e: if (doc_pages_mode()) command(CMD_ZOOMIN); return;
 		case 0x0c: case 0x4a: if (doc_pages_mode()) command(CMD_ZOOMOUT); return;
 		case 0x0b: case 0x70: if (doc_pages_mode()) command(CMD_ZOOMACTUAL); return;
@@ -1462,7 +1588,7 @@ static void message(const short *msg)
 	}
 }
 
-/* the progress row's job (Erez, 2 Nov 2026: the one the user waits on):
+/* the progress row's job (decided 2 Nov 2026: the one the user waits on):
    a copy, a search, the document being opened, a page in the window being
    read (within a slow page too), a picture being made, the rest of the
    pages being read */
@@ -1475,7 +1601,12 @@ static void progress(void)
 	rp = doc_reading(&pm);
 	win_pages_shown(&p0, &p1);
 	pic = doc_pic_progress(&pg, &made, &of);
-	if (cp.on) {
+	if (prjob_on()) {
+		long d, t;
+
+		prjob_progress(w, (int)sizeof w, &d, &t);	/* "Printing page 3 of 12" (decided 21 Nov 2026) */
+		win_progress(9, w, d, t);
+	} else if (cp.on) {
 		snprintf(w, sizeof w, "Copying page %ld of %ld", cp.p - cp.p0 + 1 > cp.p1 - cp.p0 + 1 ? cp.p1 - cp.p0 + 1 : cp.p - cp.p0 + 1,
 			 cp.p1 - cp.p0 + 1);
 		win_progress(4, w, cp.p - cp.p0, cp.p1 - cp.p0 + 1);
@@ -1552,6 +1683,10 @@ static int read_on(void)
 	return 1;
 }
 
+/* main to the compiler (its code as before), app_main to the linker: common's
+   cpucheck.c (cpucheck_cf.S in the FireBee's edition) is the program's main
+   and calls this after its check (fbalert.c's alerts) */
+int main(void) __asm__("app_main");
 int main(void)
 {
 	short work_out[57], msg[8], d, x = 0, y = 0, w = 0, h = 0;
@@ -1610,7 +1745,7 @@ int main(void)
 	gw_set_temp_dir(start_dir);
 	has_menu_states = menu_states;
 	/* stage 2: render.ovl and the standard fonts beside the program */
-	path_join(rdraw_path, sizeof rdraw_path, start_dir, "render.ovl");
+	path_join(rdraw_path, sizeof rdraw_path, start_dir, RDRAW_FILE);
 	path_join(doc_font_dir, sizeof doc_font_dir, start_dir, "fonts");
 	if (rdraw_machine()) {
 		/* (else EConvert's, as the release's zip carries them:
@@ -1632,6 +1767,10 @@ int main(void)
 	av_init("EPDF");
 	bg_init(BG_NOW);
 	settings_read();
+	if (log_on) {			/* (LOG=1: the log begun with the run) */
+		log_set(1, start_dir);
+		log_begin();
+	}
 	font_init(inf_get(&inf, "FONT"), start_dir);
 	if ((v = inf_get(&inf, "WINDOW")) != NULL) {
 		short *f[4];
@@ -1672,11 +1811,13 @@ int main(void)
 				menu_icheck(menu.tree, mbar_object(&menu, CMD_STRIP), 1);
 			menu_icheck(menu.tree, mbar_object(&menu, CMD_GATEWAY), gw_on);
 			menu_icheck(menu.tree, mbar_object(&menu, CMD_TRANSLATE), tr_on());
+			if (log_on)
+				menu_icheck(menu.tree, mbar_object(&menu, CMD_LOG), 1);
 		}
 		menu_states();
 	}
 	/* the arrow: the desktop leaves the busy bee it showed while EPDF
-	   loaded (Erez's TOS, 2 Nov 2026: the bee stayed the whole time) */
+	   loaded (TOS 4.04, 2 Nov 2026: the bee stayed the whole time) */
 	graf_mouse(ARROW, 0);
 	if (win_open(x, y, w, h) != 0) {
 		alert(1, "[3][No window is free.|Close one and start EPDF again.][ OK ]");
@@ -1701,13 +1842,20 @@ int main(void)
 		snprintf(m, sizeof m, "%ld %ld %ld", (long)Malloc(-1L) / 1024, (heap_st + heap_tt) / 1024, heap_use / 1024);
 		log_event("free-kb", m, NULL);
 	}
+	/* about_ready: once, at the first timer event, and only where it has
+	   work (the 256-colour icon's pens): no turn of its own elsewhere */
+	static int about_due = 1;
+
+	if (planes < 8)
+		about_due = 0;
+
 	while (!quit_now) {
 		short which, flags = MU_MESAG | MU_KEYBD | MU_BUTTON;
 		unsigned long t;
 		pics_focus = doc_view() ? dv_page_at_top(doc_view()) : -1;
 		int strip_now;
 		int pending = doc_pending() || find_dir || doc_pic_busy() || pics_waiting() || cp.on || gw_busy() ||
-			      tr_busy() || ljob_on;
+			      tr_busy() || ljob_on || prjob_on();
 
 		progress();
 
@@ -1715,7 +1863,7 @@ int main(void)
 		   on while nothing else does */
 		strip_now = strip_turn_due() && !win_iconified();	/* the page strip's cells, a turn each */
 		if (win_sliders_due() || menus_due || pending || arrived >= 0 || arrived_pic >= 0 || rows_pic >= 0 ||
-		    win_progress_due() || win_ahead_due() || strip_now)
+		    win_progress_due() || win_ahead_due() || strip_now || about_due)
 			flags |= MU_TIMER;
 		/* no pace while the picture on the page in view is made: the
 		   user waits for it, as for its rows (a scan's row is 30 ms on
@@ -1768,6 +1916,18 @@ int main(void)
 				menu_states();
 			} else if (strip_now) {
 				strip_turn();
+			} else if (about_due) {
+				about_due = 0;
+				about_ready();
+			} else if (prjob_on()) {
+				/* File > Print...: a band (or some lines) a turn, the
+				   turn's whole; its end closes the printer's job */
+				int was = prjob_on();
+
+				bg_begin();
+				prjob_slice(bg_room(BG_SLICE_030 + 10) ? BG_SLICE_000 : BG_SLICE_030);
+				if (was && !prjob_on())
+					menus_due = 1;	/* (D19: the commands back) */
 			} else if (cp.on) {
 				/* a copy the user asked for: before the reading and the
 				   pictures; a step starts only if one as long as the last
@@ -1786,7 +1946,7 @@ int main(void)
 				   !(doc_pending() && doc_pic_ahead_only()) &&
 				   ((pic_turn ^= 1) || !doc_pending() || pics_focus_busy())) {
 				/* (the page in focus's picture: every turn, the reading
-				   and the rest after it: Erez, 8 Nov 2026) */
+				   and the rest after it: decided 8 Nov 2026) */
 				long obj = -1;
 
 				doc_pic_drop_ahead();	/* (one shown waits: the one ahead gives way) */
@@ -1887,5 +2047,6 @@ int main(void)
 	log_event("quit", "the VDI given back", NULL);
 	appl_exit();
 	log_event("quit", "out of the AES", NULL);
+	conn_log_flush();
 	return 0;
 }

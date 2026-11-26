@@ -18,6 +18,9 @@
 |   (r2's pair in the high word, r1's in the low)   d5 the byte so far
 |   (from 1: its top bit says it is done)   d6 d7 the decision's own
 |   a0 cx   a1 mq_tab   a2 m   a3 its next byte   a4 out   a5 r1   a6 r2
+#ifndef __mcoldfire__
+| (the FireBee's edition takes jbig2.c's C: a ColdFire lacks this code's
+| byte arithmetic, dbra and word indices)
 	.text
 	.globl	jb2_t0_bytes
 jb2_t0_bytes:
@@ -170,3 +173,4 @@ jb2_t0_bytes:
 .Lbiret:
 	movem.l	(%sp)+,%d6/%a1
 	rts
+#endif

@@ -40,7 +40,7 @@ static int add(TV *v, unsigned long off)
  */
 static const char *scan(const char *p, long n, const char **brk)
 {
-#if defined(__m68k__)
+#if defined(__m68k__) && !defined(__mcoldfire__)
 	const char *b = 0;
 
 	__asm__("subq.w #1,%2\n"
@@ -79,7 +79,7 @@ long tv_find(const char *p, long n, char c)
 		long k = n > 32768 ? 32768 : n;
 
 		n -= k;
-#if defined(__m68k__)
+#if defined(__m68k__) && !defined(__mcoldfire__)
 		{
 			short f = 0;
 
