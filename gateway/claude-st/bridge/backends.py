@@ -998,7 +998,9 @@ class ClaudeAiBackend(Backend):
     CODE_SECONDS = 25
     CODE_LONG = 3600
     CODE_SHOWN = 200        # events kept from a read out of time, for the next to show
-    _code_tail, code_partial, code_progress = None, False, None
+    # code_stop (the bridge's: whether the Atari sent a line or connected
+    # again) ends a read at once, its place kept; code_stopped then says so
+    _code_tail, code_partial, code_progress, code_stop, code_stopped = None, False, None, None, False
 
     def _marks(self):
         if not hasattr(self, "marks"):
@@ -1008,7 +1010,7 @@ class ClaudeAiBackend(Backend):
     def _code_recent(self, session_id, cap, want):
         path = "/sessions/%s/events" % session_id
         deadline = time.time() + (self.CODE_LONG if self.code_progress else self.CODE_SECONDS)
-        self.code_partial = False
+        self.code_partial = self.code_stopped = False
         page = self._code("get", path, limit=200)
         events = self._data(page)
         tail = (isinstance(page, dict) and page.get("last_id")) or (events and event_id(events[-1])) or None
@@ -1035,7 +1037,8 @@ class ClaudeAiBackend(Backend):
                 events = older + events
                 first = (isinstance(page, dict) and page.get("first_id")) or event_id(older[0])
                 if (not first or not (isinstance(page, dict) and page.get("has_more"))
-                        or len(code_messages(events)) >= want or time.time() >= deadline):
+                        or len(code_messages(events)) >= want or time.time() >= deadline
+                        or self._stopped()):
                     break
                 page = self._code("get", path, limit=200, before_id=first)
                 older = [e for e in self._data(page) if event_id(e) not in seen]
@@ -1065,6 +1068,8 @@ class ClaudeAiBackend(Backend):
                     return got
             except RuntimeError:
                 pass
+            if self.code_stopped:
+                return []
             self.code_partial = False           # the mark is gone: from the start
         return self._code_walk(session_id, self._code_tail, events + newer, cap, deadline)
 
@@ -1075,7 +1080,15 @@ class ClaudeAiBackend(Backend):
         out of time, the next read goes on from as far as this one got."""
         mark, read, told = None if events else start, 0, time.time()
         self._code_tail = event_id(events[-1]) if events else start
-        while time.time() < deadline:
+        while True:
+            if time.time() >= deadline or self._stopped():
+                # out of time, or the Atari wants something else: the next
+                # read goes on from here, keeping a page to show (had fewer
+                # than CAP events come, the mark stayed where this read
+                # began, and every open read the same stretch again)
+                self.code_partial = True
+                mark = self._walk_mark(events, mark)
+                break
             more = self._code_events(session_id, after=self._code_tail, cap=cap, deadline=deadline)
             if not more:
                 break
@@ -1088,16 +1101,16 @@ class ClaudeAiBackend(Backend):
                 self.code_progress(read)
                 told = time.time()
                 self._marks().set(session_id, self._walk_mark(events, mark))   # kept if cut off
-        else:
-            self.code_partial = True    # out of time before the end
-            # the next read goes on from here, keeping a page to show: had
-            # fewer than CAP events come, the mark stayed where this read
-            # began, and every open read the same stretch again
-            mark = self._walk_mark(events, mark)
         if mark:
             self._marks().set(session_id, mark)
-        log.debug("Code session: walked %d events%s", read, ", out of time" if self.code_partial else "")
+        log.debug("Code session: walked %d events%s", read,
+                  ", stopped" if self.code_stopped else ", out of time" if self.code_partial else "")
         return events
+
+    def _stopped(self):
+        if self.code_stop and self.code_stop():
+            self.code_stopped = True
+        return self.code_stopped
 
     def _walk_mark(self, events, mark):
         """Where a walk cut short goes on from: CODE_SHOWN events before as
@@ -1122,7 +1135,7 @@ class ClaudeAiBackend(Backend):
         seen = set(map(event_id, got))
         newest = event_id(got[0])
         while (isinstance(page, dict) and page.get("has_more") and time.time() < deadline
-               and len(code_messages(got[::-1])) < want):
+               and len(code_messages(got[::-1])) < want and not self._stopped()):
             try:
                 page = self._code("get", path, limit=200, order="desc",
                                   after_id=page.get("last_id") or event_id(got[-1]))
