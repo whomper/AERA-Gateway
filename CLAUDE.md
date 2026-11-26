@@ -87,16 +87,27 @@ sessions stay as they are.)
   and Actions > Release > Run workflow; the Pi follows the latest one
   (`update-pi.sh`), and ClaudeST's bridge comes from ClaudeST's latest
   release.
-  - **Releases go out without asking the owner** (decided 23 Oct 2026;
-  guidelines 1.2, AERA-Atari a1345ca). Release when work on `main` is
-  ready, as soon as this repo's checks pass (the checks above and CI,
-  `tests/systemd.sh` included); there are no TOS rigs or family GEM
-  checks here. Don't wait for a yes and don't collect work for a later
-  release. Then give the owner the link in one line, with anything they have to
-  do (on the Pi, `./update-pi.sh`), and send the hub the link. Fix a bad
-  release forward the same way. Decisions that are theirs still go to them first.
-A change to the docs alone needs no release of
-  its own: it goes out with the next one.
+  - **Fewer releases, each carrying more** (decided 26 Nov 2026;
+  guidelines 1.2, AERA-Atari 9da7632; it replaces 23 Oct's "release as
+  soon as the work is done"). Changes gather on `main` and go out
+  together when a body of work is complete: the fixes known at the time
+  and what the apps need, as one candidate through the regression gate
+  and the hub's go. An app's protocol change waits for that release,
+  unless an app's release needs it sooner.
+    - The one exception goes out on its own at once, with only that fix
+      and its notes saying why: a fault that loses or damages data, a
+      security fault, or a crash or breakage that stops users working.
+    - A fault a user reports is fixed with its test, and rides the next
+      release unless it is one of those.
+    - The hub's shared fixes ride the next release unless the hub names
+      one as the exception.
+    - Releases go out without asking the owner (decided 23 Oct 2026).
+      Then give the owner the link in one line, with anything they have
+      to do (on the Pi, `./update-pi.sh`), and send the hub the link.
+      Fix a bad release forward the same way. Decisions that are theirs
+      still go to them first.
+  A change to the docs alone needs no release of its own: it goes out
+  with the next one.
   - **The regression gate** (decided 17 Nov 2026: the software has users, so
   every configuration is tested and no performance is lost; guidelines 1.2, AERA-Atari a22574e). Every release,
   before it goes out:
