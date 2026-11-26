@@ -1316,6 +1316,27 @@ class CodeSessions(unittest.TestCase):
         self.assertGreaterEqual(len(msgs), 40)
         self.assertLess(len(gets), 5)           # the newest page and a few back: no walk
 
+    def test_a_slow_long_session_read_on_at_each_open(self):
+        """decided 26 Nov 2026: a long session served oldest first, on reads
+        slow enough that one open got fewer events than it keeps, said "too
+        long to read" at every open: the place to go on from stayed where
+        the read began. Each open now goes on, and one reaches the end."""
+        be, gets = self.long_session(False, n=20000)
+        self.clocked(be, secs_a_read=30.0)      # 8 reads an open
+        be.code_progress = lambda n: None
+        be._code_last = {}
+        last, opens = -1, 0
+        while True:
+            opens += 1
+            title, msgs = be.get_code_session("session_l")
+            got = int(msgs[-1][1][1:])
+            self.assertGreater(got, last)       # every open goes further
+            last = got
+            if not be.code_partial:
+                break
+            self.assertLess(opens, 40)
+        self.assertEqual(msgs[-1], ("A", "a19999"))
+
     def test_a_long_session_whose_events_carry_uuids(self):
         """claude.ai's events have no "id", only the message's "uuid": 1.54
         then read the session over and over, and the bridge went deaf"""
