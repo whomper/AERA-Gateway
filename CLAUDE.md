@@ -101,6 +101,14 @@ sessions stay as they are.)
       release unless it is one of those.
     - The hub's shared fixes ride the next release unless the hub names
       one as the exception.
+    - **Nothing known is left in a queue behind a release** (decided 26
+      Nov 2026; guidelines 1.2, AERA-Atari bf0b8d5, c8429a7). Before a
+      release, fold in every known fault and pending item of this
+      repository's that can be done within a few days; the candidate's
+      message to the hub lists what was left out and why, and the hub
+      checks it before its go. A reported fault that is waiting goes into
+      the release then being prepared, not the one after. In maintenance
+      mode this decides what a release carries, not whether there is one.
     - Releases go out without asking the owner (decided 23 Oct 2026).
       Then give the owner the link in one line, with anything they have
       to do (on the Pi, `./update-pi.sh`), and send the hub the link.
