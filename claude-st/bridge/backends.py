@@ -992,9 +992,11 @@ class ClaudeAiBackend(Backend):
     # first: the bridge answers nothing else meanwhile, and the Atari pings
     # after 30 quiet seconds. With code_progress (a function of the events
     # read, which the bridge shows on the Atari: any line keeps it waiting)
-    # it may take CODE_LONG
+    # an open reads on until it reaches the session's latest messages
+    # (decided 26 Nov 2026), saving its place as it goes; CODE_LONG only
+    # stops a read that would never end, and the next open goes on from there
     CODE_SECONDS = 25
-    CODE_LONG = 240
+    CODE_LONG = 3600
     CODE_SHOWN = 200        # events kept from a read out of time, for the next to show
     _code_tail, code_partial, code_progress = None, False, None
 
@@ -1080,17 +1082,24 @@ class ClaudeAiBackend(Backend):
             if self.code_progress and time.time() - told >= 5:
                 self.code_progress(read)
                 told = time.time()
+                self._marks().set(session_id, self._walk_mark(events, mark))   # kept if cut off
         else:
             self.code_partial = True    # out of time before the end
             # the next read goes on from here, keeping a page to show: had
             # fewer than CAP events come, the mark stayed where this read
             # began, and every open read the same stretch again
-            if events:
-                keep = events[-self.CODE_SHOWN - 1] if len(events) > self.CODE_SHOWN else events[0]
-                mark = event_id(keep) or mark
+            mark = self._walk_mark(events, mark)
         if mark:
             self._marks().set(session_id, mark)
         return events
+
+    def _walk_mark(self, events, mark):
+        """Where a walk cut short goes on from: CODE_SHOWN events before as
+        far as it got, so the next read has a page to show"""
+        if not events:
+            return mark
+        keep = events[-self.CODE_SHOWN - 1] if len(events) > self.CODE_SHOWN else events[0]
+        return event_id(keep) or mark
 
     def _code_newest(self, session_id, path, read, want, deadline):
         """The session's latest events with order=desc, oldest first; None
