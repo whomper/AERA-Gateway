@@ -963,7 +963,7 @@ class ClaudeAiBackend(Backend):
                  s.get("updated_at") or s.get("created_at"), bool(s.get("unread")),
                  code_state(s)) for s in sessions]
 
-    def _code_events(self, session_id, after=None, cap=2000, want=60, deadline=None):
+    def _code_events(self, session_id, after=None, cap=700, want=20, deadline=None):
         """The events after AFTER; with no AFTER, the session's latest
         events, enough for WANT messages. A long session holds tens of
         thousands of events (most of them tool calls), so it is read from
@@ -995,6 +995,7 @@ class ClaudeAiBackend(Backend):
     # it may take CODE_LONG
     CODE_SECONDS = 25
     CODE_LONG = 240
+    CODE_SHOWN = 200        # events kept from a read out of time, for the next to show
     _code_tail, code_partial, code_progress = None, False, None
 
     def _marks(self):
@@ -1081,6 +1082,12 @@ class ClaudeAiBackend(Backend):
                 told = time.time()
         else:
             self.code_partial = True    # out of time before the end
+            # the next read goes on from here, keeping a page to show: had
+            # fewer than CAP events come, the mark stayed where this read
+            # began, and every open read the same stretch again
+            if events:
+                keep = events[-self.CODE_SHOWN - 1] if len(events) > self.CODE_SHOWN else events[0]
+                mark = event_id(keep) or mark
         if mark:
             self._marks().set(session_id, mark)
         return events

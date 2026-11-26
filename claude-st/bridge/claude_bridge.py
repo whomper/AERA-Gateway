@@ -38,7 +38,8 @@ MAX_ID = 39              # ClaudeST keeps item ids up to this many characters
 MOVED_CHAT = ("claude.ai has moved this chat to its new chat system, and ClaudeST "
               "could not open its new part. It shows what it can, but can't add to it: "
               "to keep going, start a new chat, or continue this one on claude.ai.")
-HISTORY_MESSAGES = 40    # how much of a long chat to send to the Atari
+HISTORY_MESSAGES = 14    # how much of a long chat to send to the Atari (a third
+                         # of 40, decided 26 Nov 2026: no one scrolls back further)
 
 
 # ---------------------------------------------------------------------------
