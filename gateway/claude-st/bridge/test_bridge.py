@@ -1316,14 +1316,30 @@ class CodeSessions(unittest.TestCase):
         self.assertGreaterEqual(len(msgs), 40)
         self.assertLess(len(gets), 5)           # the newest page and a few back: no walk
 
-    def test_a_slow_long_session_read_on_at_each_open(self):
-        """decided 26 Nov 2026: a long session served oldest first, on reads
-        slow enough that one open got fewer events than it keeps, said "too
-        long to read" at every open: the place to go on from stayed where
-        the read began. Each open now goes on, and one reaches the end."""
+    def test_a_slow_long_session_read_to_its_end_in_one_open(self):
+        """decided 26 Nov 2026: a long session served oldest first, on slow
+        reads, said "too long to read" at every open. An open now reads on
+        to the latest messages, telling the Atari how far it has got, and
+        the place is remembered: the next open reads only what came since."""
         be, gets = self.long_session(False, n=20000)
-        self.clocked(be, secs_a_read=30.0)      # 8 reads an open
-        be.code_progress = lambda n: None
+        self.clocked(be, secs_a_read=30.0)      # an hour's reads: 120
+        told = []
+        be.code_progress = told.append
+        title, msgs = be.get_code_session("session_l")
+        self.assertFalse(be.code_partial)
+        self.assertEqual(msgs[-1], ("A", "a19999"))
+        self.assertGreater(len(told), 10)       # the Atari kept waiting
+        del gets[:]
+        title, msgs = be.get_code_session("session_l")
+        self.assertEqual(msgs[-1], ("A", "a19999"))
+        self.assertLess(len(gets), 10)          # from the mark, not the start
+
+    def test_a_walk_cut_short_goes_on_at_the_next_open(self):
+        """a read out of time (CODE_LONG, or no progress shown: CODE_SECONDS)
+        left the mark where it began when it had got fewer events than it
+        keeps, and every open read the same stretch again"""
+        be, gets = self.long_session(False, n=20000)
+        self.clocked(be, secs_a_read=3.0)       # 8 reads in CODE_SECONDS
         be._code_last = {}
         last, opens = -1, 0
         while True:
