@@ -1782,22 +1782,58 @@ class RecordedCodeSession(unittest.TestCase):
                     return Response(404, {"type": "error"})
                 p = dict(params)
                 skip = {v for k, v in params if k == "exclude_types"}
-                rows = [e for e in ev if not any(k in skip for k in e)]
+                rows = [e for e in at_latest if e["event_type"] not in skip]
                 assert p["sort_order"] == "desc"
                 hi = int(p.get("cursor", len(rows)))
                 lo = max(hi - int(p["limit"]), 0)
-                return Response(200, {"data": [served(e, lo + n) for n, e in enumerate(rows[lo:hi])][::-1],
+                return Response(200, {"data": rows[lo:hi][::-1],
                                       "next_cursor": str(lo) if lo else None, "resume_cursor": str(lo)})
 
+        # the session as claude.ai's Code page's address serves it. Its shape
+        # is the one recorded on 27 Nov 2026 from a real answer (field names
+        # and types only, no content): every event in one envelope, the kind
+        # in event_type, what it carries in payload; and, between the
+        # messages, events that are none (the context's use asked and
+        # answered, background tasks, a turn's result, notifications, the
+        # rate limit, the environment's log)
+        OTHERS = [
+            ("control_request", {"request": {"subtype": "get_context_usage"}, "request_id": "r"}),
+            ("control_response", {"response": {"request_id": "r", "subtype": "success",
+                                               "response": {"totalTokens": 1, "maxTokens": 2, "percentage": 50}}}),
+            ("system", {"subtype": "background_tasks_changed", "session_id": "s",
+                        "tasks": [{"description": "x", "run_id": "r", "task_id": "t", "task_type": "shell"}]}),
+            ("result", {"subtype": "success", "is_error": False, "result": "x", "num_turns": 1, "session_id": "s",
+                        "usage": {"input_tokens": 1, "output_tokens": 1}, "origin": {"kind": "human"}}),
+            ("queued_notification", {"notification": {"content": "x", "notification_id": "n", "origin": "o",
+                                                      "priority": "next", "queued_at": "t"}}),
+            ("rate_limit_event", {"session_id": "s", "rate_limit_info": {"status": "allowed", "utilization": 0.5}}),
+            ("env_manager_log", {"data": {"category": "x", "content": "x", "level": "info", "timestamp": "t"}}),
+        ]
+
+        def envelope(kind, payload, seq):
+            payload = dict(payload, type=kind, uuid=payload.get("uuid") or "x%d" % seq)
+            return {"created_at": "t", "device_attestation_status": "x", "event_id": "e%d" % seq,
+                    "event_type": kind, "payload": payload, "sent_by_account_id": None,
+                    "sequence_num": str(seq), "source": "x"}
+
         def served(e, seq):
-            """an event as claude.ai's Code page's address serves it: the
-            kind in event_type, the message in payload (its shape there,
-            seen 27 Nov 2026)"""
             kind, inner = _event_payload(e)
             msg = inner.get("message") if isinstance(inner, dict) else None
-            return {"created_at": "t", "device_attestation_status": "x", "event_id": "e%d" % seq,
-                    "event_type": kind, "sequence_num": str(seq), "source": "x", "sent_by_account_id": None,
-                    "payload": {"type": kind, "uuid": event_id(e), "message": msg, "session_id": "s"}}
+            if kind == "stream_event" or msg is None:
+                return envelope("stream_event", {"uuid": event_id(e)}, seq)
+            if kind == "assistant":
+                msg = dict(msg, type="message", id="msg", model="m", container=None, context_management=None,
+                           diagnostics=None, input_transformations=[], stop_details=None, stop_reason=None,
+                           stop_sequence=None, usage={"input_tokens": 1, "output_tokens": 1})
+            return envelope(kind, {"uuid": event_id(e), "message": msg, "session_id": "s", "timestamp": "t",
+                                   "parent_tool_use_id": None}, seq)
+
+        at_latest = []
+        for e in ev:
+            if len(at_latest) % 13 == 12:
+                kind, payload = OTHERS[len(at_latest) % len(OTHERS)]
+                at_latest.append(envelope(kind, payload, len(at_latest)))
+            at_latest.append(served(e, len(at_latest)))
 
         be = ClaudeAiBackend.__new__(ClaudeAiBackend)
         be.http, be.org = Http(), "org"
