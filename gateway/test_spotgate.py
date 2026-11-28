@@ -13,7 +13,6 @@ kind, a second listener, no player). Needs ffmpeg: SKIPPED where none.
 """
 import json
 import os
-import re
 import socket
 import struct
 import sys
