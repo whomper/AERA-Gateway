@@ -1436,7 +1436,11 @@ MAIL = Mail()
 PLAYER_VERSION = "0.10.7"
 PLAYER_URL = "https://github.com/devgianlu/go-librespot/releases/download/v%s/go-librespot_linux_%s.tar.gz"
 PLAYER_ARCH = {"aarch64": "arm64", "x86_64": "x86_64", "armv7l": "armv6_rpi", "armv6l": "armv6_rpi"}
-PLAYER_SHA256 = {}                      # variant -> sha256 of its tarball
+PLAYER_SHA256 = {                       # variant -> sha256 of its tarball (v0.10.7)
+    "arm64": "1959a87033c5d8ff012e6f8acd1ca1994234104455d9796b688c8d2193e7f28b",
+    "armv6_rpi": "b70abd694a897f4d8ffd3e9c1c44ff238fbf62c11b6b1a3215a0cb64bfcc2dfe",
+    "x86_64": "0712061edc269e935492c109c215c83d2998a240775789cb77d2a803f05fd816",
+}
 
 
 class Radio(Gateway):
