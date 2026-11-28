@@ -1522,7 +1522,7 @@ class Spotify(Gateway):
     comes through a pipe in /run/aera. The Spotify sign-in (state.json in
     /var/lib/spotgate) stays through an update, a reinstall and a remove."""
     key, name, script = "spotify", "spotgate", "spotgate.py"
-    title = "Spotify for EPlay on the Atari (as MP3)"
+    title = "The Spotify Streamer: Spotify for EPlay on the Atari (as MP3)"
     removed = "spotgate removed (its Spotify sign-in stays in /var/lib/spotgate)."
     packages = ("ffmpeg", "libasound2")
     DIR = "/opt/spotgate"
@@ -1617,11 +1617,12 @@ class Spotify(Gateway):
     def config(self, ns):
         """go-librespot's settings, written again at each install: its API
         on 127.0.0.1 only, its sound into the pipe, the sign-in a code shown
-        on the Atari (device_auth); warnings only in its log, which would
+        on the Atari (device_auth), named the Spotify Streamer; warnings only in its log, which would
         otherwise name what is played (guideline 7.3)"""
         return "\n".join([
             "# spotgate's player (go-librespot %s); aera-gateway writes it at each install" % PLAYER_VERSION,
             "log_level: warn",
+            'device_name: "Spotify Streamer"',          # what Spotify's apps call it (decided 28 Nov 2026)
             "server:",
             "  enabled: true",
             "  address: 127.0.0.1",
@@ -1709,7 +1710,7 @@ class Spotify(Gateway):
     def tell(self, ns, ip):
         return "\n".join([
             "",
-            "spotgate is running. In EPlay on the Atari, Spotify through the Gateway:",
+            "spotgate, the Spotify Streamer, is running. In EPlay on the Atari:",
             "   Gateway:     %s" % ip,
             "   Port:        %s" % ns.port,
             "",

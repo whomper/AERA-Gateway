@@ -973,7 +973,8 @@ class ClaudeTest(Base):
         self.assertEqual(self.pi.read("/opt/spotgate/PINNED"),
                          "%s %s\n" % (ag.PLAYER_VERSION, ag.PLAYER_SHA256["arm64"]))
         conf = self.pi.read("/var/lib/spotgate/config.yml")
-        for want in ("log_level: warn", "  address: 127.0.0.1", "  port: 3678", "audio_backend: pipe",
+        for want in ("log_level: warn", 'device_name: "Spotify Streamer"', "  address: 127.0.0.1", "  port: 3678",
+                     "audio_backend: pipe",
                      "audio_output_pipe: /run/aera/spotify.pcm", "audio_output_pipe_format: s16le",
                      "audio_output_pipe_wait_for_reader: true", "  type: device_auth"):
             self.assertIn(want, conf.splitlines())
