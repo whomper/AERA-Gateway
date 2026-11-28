@@ -46,11 +46,21 @@ class FakePi(ag.Pi):
         self.homedirs = ""          # snapd's homedirs setting
         self.no_modules = set()     # Python modules that aren't there
         self.arch = "aarch64"       # uname -m
+        self.dpkg_arch = None       # dpkg --print-architecture (None: no dpkg)
         self.groups = set()         # groups added
         self.broken_build = False   # make fails (aerapdf's build)
+        self.served = {}            # url -> bytes (download)
+        self.downloads = []
 
     def have(self, prog):
         return prog == "python3" or (prog == "ufw" and self.ufw is not None)
+
+    def download(self, url, limit=64 << 20):
+        """the network's answer, made up: self.served[url]"""
+        self.downloads.append(url)
+        if url not in self.served:
+            raise ag.Failed("can't download %s: HTTP Error 404" % url)
+        return self.served[url]
 
     def which(self, *progs):
         return next((self.paths.get(p, "/usr/bin/" + p) for p in progs if p in self.programs), None)
@@ -138,6 +148,8 @@ class FakePi(ag.Pi):
             self.groups.add(c[-1])
         elif c[:2] == ["uname", "-m"]:
             text = self.arch + "\n"
+        elif c[:2] == ["dpkg", "--print-architecture"]:
+            rc, text = (0, self.dpkg_arch + "\n") if self.dpkg_arch else (127, "")
         elif c[:2] == ["hostname", "-I"]:
             text = "192.168.1.50 fd00::10\n"
         elif c[:3] == ["python3", "-m", "venv"]:
@@ -918,6 +930,150 @@ class ClaudeTest(Base):
         self.assertEqual(self.run_ag("remove", "radio"), 0, self.err)
         self.assertIsNone(self.unit("radiogate"))
 
+    def player_release(self, program=b"\x7fELF\x02\x01\x01\0go-librespot", variant="arm64", pin=True):
+        """a go-librespot release made up for the download, pinned"""
+        import hashlib
+        import tarfile
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as t:
+            for name, data in (("go-librespot", program), ("README.md", b"readme")):
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                t.addfile(info, io.BytesIO(data))
+        data = buf.getvalue()
+        url = ag.PLAYER_URL % (ag.PLAYER_VERSION, variant)
+        self.pi.served[url] = data
+        if pin:
+            patch = unittest.mock.patch.dict(ag.PLAYER_SHA256, {variant: hashlib.sha256(data).hexdigest()})
+            patch.start()
+            self.addCleanup(patch.stop)
+        return url
+
+    def test_spotify(self):
+        self.pi.ufw = True
+        url = self.player_release()
+        self.assertEqual(self.run_ag("install", "spotify", "--allow", "192.168.1.60"), 0, self.err)
+        self.assertEqual(self.execstart("spotgate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/spotgate.py "
+                                                     "--port 8581 --allow 192.168.1.60")
+        unit = self.unit("spotgate")
+        for want in ("User=spotgate", "MemoryMax=512M", "ProtectSystem=strict", "NoNewPrivileges=yes",
+                     "Wants=network-online.target spotgate-player.service", "After=spotgate-player.service"):
+            self.assertIn(want, unit)
+        player = self.unit("spotgate-player")
+        for want in ("User=spotgate", "ExecStart=/opt/spotgate/go-librespot --config_dir /var/lib/spotgate",
+                     "ExecStartPre=/bin/sh -c 'test -p /run/aera/spotify.pcm || mkfifo -m 0600 "
+                     "/run/aera/spotify.pcm'", "StateDirectory=spotgate", "RuntimeDirectory=aera",
+                     "ProtectSystem=strict", "NoNewPrivileges=yes", "ProtectHome=yes"):
+            self.assertIn(want, player)
+        self.assertIn(("systemctl", "enable", "spotgate-player.service"), self.pi.cmds)
+        # the player: the program from the release, and what it is
+        self.assertEqual(self.pi.downloads, [url])
+        self.assertEqual(self.pi.read("/opt/spotgate/go-librespot"), "\x7fELF\x02\x01\x01\0go-librespot")
+        self.assertEqual(os.stat(self.pi.path("/opt/spotgate/go-librespot")).st_mode & 0o777, 0o755)
+        self.assertEqual(self.pi.read("/opt/spotgate/PINNED"),
+                         "%s %s\n" % (ag.PLAYER_VERSION, ag.PLAYER_SHA256["arm64"]))
+        conf = self.pi.read("/var/lib/spotgate/config.yml")
+        for want in ("log_level: warn", "  address: 127.0.0.1", "  port: 3678", "audio_backend: pipe",
+                     "audio_output_pipe: /run/aera/spotify.pcm", "audio_output_pipe_format: s16le",
+                     "audio_output_pipe_wait_for_reader: true", "  type: device_auth"):
+            self.assertIn(want, conf.splitlines())
+        self.assertEqual(os.stat(self.pi.path("/var/lib/spotgate/config.yml")).st_mode & 0o777, 0o600)
+        # the Atari's port only: the player's API stays on 127.0.0.1
+        self.assertEqual(self.pi.rules, [("192.168.1.60", "8581")])
+        self.assertIn(("apt-get", "install", "-y", "-qq", "ffmpeg", "libasound2"), self.pi.cmds)
+        self.assertIn("Port:        8581", self.out)
+        self.assertTrue(self.pi.exists("/opt/aera-gateway/spotgate.py"))
+        # signed in; an update keeps the sign-in and the player, downloading nothing
+        self.pi.write("/var/lib/spotgate/state.json", '{"credentials": {"username": "u", "data": "x"}}', 0o600)
+        self.assertEqual(self.run_ag("install", "spotgate", "-v"), 0, self.err)
+        self.assertEqual(self.execstart("spotgate"), "ExecStart=/usr/bin/python3 /opt/aera-gateway/spotgate.py "
+                                                     "--port 8581 --allow 192.168.1.60 -v")
+        self.assertEqual(self.run_ag("update"), 0, self.err)
+        self.assertEqual(self.pi.downloads, [url])
+        self.assertIn('"data": "x"', self.pi.read("/var/lib/spotgate/state.json"))
+        self.assertIn("spotify", self.run_ag("status") == 0 and self.out)
+        # removed: the player goes, the sign-in stays
+        self.assertEqual(self.run_ag("remove", "spotify"), 0, self.err)
+        self.assertIsNone(self.unit("spotgate"))
+        self.assertIsNone(self.unit("spotgate-player"))
+        self.assertFalse(self.pi.exists("/opt/spotgate"))
+        self.assertIn('"data": "x"', self.pi.read("/var/lib/spotgate/state.json"))
+        self.assertIn("sign-in stays", self.out)
+
+    def test_spotify_a_new_pinned_player(self):
+        self.player_release()
+        self.assertEqual(self.run_ag("install", "spotify"), 0, self.err)
+        self.pi.write("/var/lib/spotgate/state.json", "signed in", 0o600)
+        url = self.player_release(program=b"\x7fELF the next one")       # the next Gateway's pin
+        self.assertEqual(self.run_ag("update"), 0, self.err)
+        self.assertEqual(self.pi.downloads[-1], url)
+        self.assertEqual(self.pi.read("/opt/spotgate/go-librespot"), "\x7fELF the next one")
+        self.assertFalse(self.pi.exists("/opt/spotgate/go-librespot.old"))
+        self.assertEqual(self.pi.read("/var/lib/spotgate/state.json"), "signed in")
+
+    def test_spotify_not_the_release_pinned(self):
+        self.player_release(pin=False)          # its sha256 isn't the pin
+        self.assertEqual(self.run_ag("install", "spotify"), 1)
+        self.assertIn("sha256 differs", self.err)
+        self.assertIsNone(self.unit("spotgate"))
+        self.assertIsNone(self.unit("spotgate-player"))
+        self.assertFalse(self.pi.exists("/opt/spotgate"))
+        self.assertNotIn("spotgate", self.pi.users)
+
+    def test_spotify_no_download(self):
+        self.assertEqual(self.run_ag("install", "spotify"), 1)
+        self.assertIn("can't download", self.err)
+        self.assertIsNone(self.unit("spotgate"))
+
+    def test_spotify_32_bits_and_others(self):
+        self.pi.arch = "armv7l"
+        url = self.player_release(variant="armv6_rpi")
+        self.assertEqual(self.run_ag("install", "spotify"), 0, self.err)
+        self.assertEqual(self.pi.downloads, [url])
+        self.pi.arch = "i686"
+        self.assertEqual(self.run_ag("install", "spotify"), 1)
+        self.assertIn("uname -m says i686", self.err)
+
+    def test_spotify_32_bit_system_on_a_64_bit_kernel(self):
+        """a 32-bit Raspberry Pi OS on a Pi 4 or 5: uname -m says aarch64,
+        the programs are armhf; the armhf player, not the arm64 one"""
+        self.pi.arch, self.pi.dpkg_arch = "aarch64", "armhf"
+        url = self.player_release(variant="armv6_rpi")
+        self.assertEqual(self.run_ag("install", "spotify"), 0, self.err)
+        self.assertEqual(self.pi.downloads, [url])
+        self.pi.dpkg_arch = "riscv64"
+        self.assertEqual(self.run_ag("install", "spotify"), 1)
+        self.assertIn("dpkg --print-architecture says riscv64", self.err)
+
+    def test_spotify_that_doesnt_answer(self):
+        self.player_release()
+        self.pi.write("/var/lib/spotgate/state.json", "signed in before", 0o600)
+        self.pi.broken = True
+        self.assertEqual(self.run_ag("install", "spotify"), 1)
+        self.assertIn("spotgate didn't start", self.err)
+        self.assertIsNone(self.unit("spotgate"))
+        self.assertIsNone(self.unit("spotgate-player"))
+        self.assertFalse(self.pi.exists("/opt/spotgate"))
+        self.assertEqual(self.pi.read("/var/lib/spotgate/state.json"), "signed in before")
+
+    def test_spotify_update_that_doesnt_answer_puts_the_player_back(self):
+        self.player_release()
+        self.assertEqual(self.run_ag("install", "spotify"), 0, self.err)
+        before = self.unit("spotgate-player")
+        self.player_release(program=b"\x7fELF the next one")
+        self.pi.broken = True
+        self.assertEqual(self.run_ag("install", "spotify"), 1)
+        self.assertEqual(self.pi.read("/opt/spotgate/go-librespot"), "\x7fELF\x02\x01\x01\0go-librespot")
+        self.assertEqual(self.unit("spotgate-player"), before)
+        self.assertIn("--port 8581", self.execstart("spotgate"))
+
+    def test_spotify_api_on_this_computer_only(self):
+        self.player_release()
+        self.pi.write(ag.unit_path("spotgate"), "[Service]\nUser=spotgate\nExecStart=/usr/bin/python3 "
+                      "/opt/aera-gateway/spotgate.py --port 8581 --api http://192.168.1.9:3678\n")
+        self.assertEqual(self.run_ag("install", "spotify"), 1)
+        self.assertIn("must be on this computer", self.err)
+
     def test_dash(self):
         self.pi.ufw = True
         self.assertEqual(self.run_ag("install", "dashboard"), 0, self.err)
@@ -952,6 +1108,8 @@ class ClaudeTest(Base):
                                                      "--port 8888")
         self.assertIn("Installed: mail, dav, ftp, web, %stranslate, radio, dash, claude" %
                       ("pdf, " if os.path.isdir(os.path.join(ag.Pdf.PDF_SRC, "epdf")) else ""), self.out)
+        self.assertIn("spotify (on its own: sudo aera-gateway install spotify)", self.out)
+        self.assertIsNone(self.unit("spotgate"))
         # again, without --mail or --allow: everything kept as it is
         self.assertEqual(self.run_ag("install", "all", "--from", self.src), 0, self.err)
         self.assertIn("--allow 192.168.1.60", self.execstart("ecalgate"))

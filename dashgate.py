@@ -67,6 +67,7 @@ SERVICES = [
     ("translate", "translategate", "translategate.py", "EMail · EWeb · EPDF", "translation on this computer",
      [8480]),
     ("radio", "radiogate", "radiogate.py", "EPlay", "web radio as MP3", [8580]),
+    ("spotify", "spotgate", "spotgate.py", "EPlay", "Spotify as MP3", [8581]),
     ("claude", "claude-st", "claude_bridge.py", "ClaudeST", "STinG to claude.ai", [2323]),
 ]
 BY_KEY = {s[0]: s for s in SERVICES}

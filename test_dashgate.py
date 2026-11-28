@@ -247,7 +247,7 @@ class PageTest(unittest.TestCase):
         d = json.loads(body)
         self.assertEqual(sorted(d), ["ataris", "computer", "events", "gateway", "services", "settings"])
         self.assertEqual([s["key"] for s in d["services"]],
-                         ["mail", "dav", "ftp", "web", "pdf", "translate", "radio", "claude"])
+                         ["mail", "dav", "ftp", "web", "pdf", "translate", "radio", "spotify", "claude"])
 
     def test_who_may_see_it(self):
         dashgate.Config.allow = ["192.168.1.40"]
