@@ -5,7 +5,7 @@
 The Gateway is the Raspberry Pi side of the AERA Atari programs: the
 services that give an Atari (ST, STE, TT, Falcon; TOS or MagiC, STinG)
 modern mail, calendars, contacts, file transfer, the web, PDFs,
-translation, web radio and Claude, and one program, `aera-gateway`, that
+translation, web radio, Spotify and Claude, and one program, `aera-gateway`, that
 sets them up, keeps them up to date and says how they are.
 
 | Service     | For                 | Port(s) on the Gateway           | What it does                                       |
@@ -17,6 +17,7 @@ sets them up, keeps them up to date and says how they are.
 | `pdf`       | EConvert and EPDF   | 8380                             | PDFs converted (and translated) on the Gateway     |
 | `translate` | EMail, EWeb, EPDF   | 8480                             | text translated on the Gateway by a local engine   |
 | `radio`     | EPlay               | 8580                             | web radio (MP3, AAC, Ogg, HLS) sent to the Atari as MP3, with titles, covers, logos and a station search |
+| `spotify`   | EPlay               | 8581                             | Spotify (Premium) sent to the Atari as MP3, through go-librespot on the Gateway; installed on its own |
 | `claude`    | ClaudeST            | 2323                             | HTTPS to claude.ai or the Anthropic API            |
 | `dash`      | your Mac or PC      | 8888                             | a dashboard: services, connections, settings       |
 

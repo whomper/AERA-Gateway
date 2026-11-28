@@ -26,6 +26,7 @@ In the examples, `GATEWAY_IP` is the Gateway's address on your home network,
 - [pdf: EConvert and EPDF](#pdf-econvert-and-epdf)
 - [translate: translation for the apps](#translate-translation-for-the-apps)
 - [radio: EPlay](#radio-eplay)
+- [spotify: EPlay](#spotify-eplay)
 - [claude: ClaudeST](#claude-claudest)
 - [dash: the dashboard](#dash-the-dashboard)
 
@@ -38,6 +39,7 @@ In the examples, `GATEWAY_IP` is the Gateway's address on your home network,
 | `pdf`       | EConvert, EPDF            | 8380                             | nothing: converts on the Gateway                |
 | `translate` | EMail, EWeb, EPDF         | 8480; a local socket             | nothing: a local engine translates              |
 | `radio`     | EPlay                     | 8580                             | HTTP and HTTPS to radio stations; radio-browser.info for logos |
+| `spotify`   | EPlay                     | 8581 (and 3678 on 127.0.0.1, its player's) | Spotify, through go-librespot, the player on the Gateway |
 | `claude`    | ClaudeST                  | 2323                             | HTTPS to claude.ai or the Anthropic API         |
 | `dash`      | a browser on the home network | 8888; a local socket         | nothing: it shows the others                    |
 
@@ -98,7 +100,7 @@ sudo aera-gateway set-key                       a new claude.ai session key for 
   why. One that fails doesn't stop the others.
 - Service names: `mail` (also `email`), `dav` (`cal`, `ecal`, `econtact`,
   `contacts`), `ftp` (`eftp`), `web` (`eweb`), `pdf` (`epdf`, `econvert`),
-  `translate` (`translation`), `radio` (`eplay`), `claude` (`claudest`);
+  `translate` (`translation`), `radio` (`eplay`), `spotify` (`spotgate`), `claude` (`claudest`);
   each program's own name works too (`emailgate`, `webgate`...).
 
 ---
@@ -929,6 +931,73 @@ only ends it.
   station's path or the titles.
 - **Needs:** standard Python 3; ffmpeg.
 - **State:** none on disk.
+
+
+---
+
+## spotify: EPlay
+
+Spotify for EPlay (decided 27 and 28 Nov 2026). A Spotify line in EPlay's
+list (a track, an album or a playlist) is played on the Gateway by
+go-librespot, a Spotify player, and sent to the Atari as MP3, as radiogate
+sends a station. EPlay controls it; no phone does. It needs Spotify Premium.
+
+- **Program:** `gateway/spotgate.py`, EPlay's own (its `radio/`), copied by
+  `tools/sync-radio.sh` at the EPlay commit in `gateway/EPLAY`. EPlay owns
+  the protocol; its requests, answers and refusals are in spotgate.py's
+  opening lines.
+- **Port:** 8581. The player's API is on 127.0.0.1:3678, which the
+  firewall never opens.
+- **The player:** go-librespot's release pinned in `gateway/aera-gateway`
+  (`PLAYER_VERSION`, with the sha256 of each architecture's download; CI's
+  player-pin job checks them). It is downloaded from its GitHub release at
+  install and checked, kept in `/opt/spotgate`, and changes only with a
+  Gateway release that pins another. It is chosen by
+  `dpkg --print-architecture`: arm64, armhf (Raspberry Pi OS's 32-bit, on
+  any Pi) or amd64.
+- **Units:** `spotgate-player` (the player) and `spotgate`, both run as
+  the user spotgate. The player's sound reaches spotgate through a pipe,
+  `/run/aera/spotify.pcm` (spotgate's only).
+
+### Install
+
+```
+sudo aera-gateway install spotify [--allow ATARI_IP]
+```
+
+| Option | What it does |
+|---|---|
+| `--port N` | another port (8581 by default) |
+| `-v` / `--no-verbose` | log every request |
+
+It isn't in `install all`: it is installed on its own (decided 28 Nov
+2026). It installs ffmpeg and libasound2 (ALSA's library, the one the
+player needs; `libasound2t64` on Debian trixie) if they are missing.
+spotgate may take 512 MB of memory, the player 256 MB.
+
+Command line: `spotgate.py [--port 8581] [--bind 0.0.0.0] [--allow IP] [--api http://127.0.0.1:3678] [--fifo /run/aera/spotify.pcm] [--ffmpeg PATH] [--memory-mb 256] [-v]`.
+
+### Signing in
+
+The first time, EPlay shows a link and a code (`/login`). Open the link
+on any device and type the code there. The player keeps what Spotify
+gives it in `/var/lib/spotgate/state.json`; the password is never on the
+Gateway. That file stays through an update, a reinstall and
+`remove spotify`. Delete it to sign out.
+
+### The player's settings
+
+`/var/lib/spotgate/config.yml`, written again at each install: the API on
+127.0.0.1 only, the sound into the pipe (s16le), sign-in by a code
+(`device_auth`), the tracks' details on, and warnings only in its log.
+At its usual level it would log what is played.
+
+### Log, needs
+
+- **Log:** who listened and for how long, never which item (spotgate);
+  the player's warnings only.
+- **Needs:** standard Python 3; ffmpeg; go-librespot (GPL-3.0) and
+  libasound2.
 
 ---
 

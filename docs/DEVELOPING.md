@@ -22,7 +22,8 @@ gateway/      what runs on the Gateway; the apps carry a copy of this folder
   translateclient.py translate: translategate's local socket, for webgate and pdfgate (aerapdf's translator)
   translate-languages.tsv the languages that can be installed, with their sizes
   radiogate.py    radio: web radio (MP3, AAC, Ogg, HLS) as MP3 for EPlay (EPlay's radio/, tools/sync-radio.sh; ffmpeg)
-  EPLAY           the EPlay commit radiogate.py is from
+  spotgate.py     spotify: Spotify as MP3 for EPlay through go-librespot (EPlay's radio/, tools/sync-radio.sh)
+  EPLAY           the EPlay commit radiogate.py and spotgate.py are from
   claude-st/      claude: ClaudeST's bridge (bridge/, its unit; CLAUDEST: the ClaudeST commit it came from)
   install.sh      the apps' old way in, handed on to aera-gateway
   test_*.py       their tests
@@ -36,7 +37,7 @@ tools/
   sync-common.sh  pens/common/ from AERA-Atari; never edit pens/common/ here
   sync-jsc.sh     jsc/eweb/ from EWeb; never edit jsc/eweb/ here
   sync-pdf.sh     pdf/epdf/ from EPDF; never edit pdf/epdf/ here
-  sync-radio.sh   gateway/radiogate.py from EPlay; never edit it here
+  sync-radio.sh   gateway/radiogate.py and spotgate.py from EPlay; never edit them here
   translate-check.py translategate's engine on a Gateway: quality, speed and memory
 docs/
   SERVICES.md     the services' reference: requests, answers, refusals, limits, logs

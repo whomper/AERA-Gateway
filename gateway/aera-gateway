@@ -58,7 +58,7 @@ UNITS = "/etc/systemd/system"
 OLD_BIN = "/usr/local/bin"                  # where the apps' own install.sh put them
 FILES = ("aeragate.py", "emailgate.py", "ecalgate.py", "eftpgate.py", "webgate.py", "pdfgate.py",
          "translategate.py", "translatelangs.py", "translateclient.py", "translate-phrases.tsv", "translate-languages.tsv",
-         "radiogate.py", "dashgate.py")
+         "radiogate.py", "spotgate.py", "dashgate.py")
 EXT = "webgate-ext"                         # webgate's browser extension, a folder next to them
 HOME_NETS = ("192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8")
 
@@ -186,6 +186,23 @@ class Pi:
     def ip(self):
         words = self.out("hostname", "-I").split()
         return words[0] if words else ""
+
+    def download(self, url, limit=64 << 20):
+        """url's bytes, over HTTPS with the certificate and name checked
+        (TLS 1.2 or newer); at most limit of them"""
+        import ssl
+        import urllib.request
+        ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx))
+        try:
+            with opener.open(url, timeout=120) as r:
+                data = r.read(limit + 1)
+        except OSError as e:
+            raise Failed("can't download %s: %s" % (url, e))
+        if len(data) > limit:
+            raise Failed("%s is larger than %d MB" % (url, limit >> 20))
+        return data
 
 
 def say(*lines):
@@ -1436,6 +1453,9 @@ MAIL = Mail()
 PLAYER_VERSION = "0.10.7"
 PLAYER_URL = "https://github.com/devgianlu/go-librespot/releases/download/v%s/go-librespot_linux_%s.tar.gz"
 PLAYER_ARCH = {"aarch64": "arm64", "x86_64": "x86_64", "armv7l": "armv6_rpi", "armv6l": "armv6_rpi"}
+# (chosen by the system's own architecture first: a 32-bit Raspberry Pi OS
+# on a Pi 4 or 5 runs a 64-bit kernel, whose uname -m says aarch64)
+PLAYER_DPKG = {"arm64": "arm64", "amd64": "x86_64", "armhf": "armv6_rpi"}
 PLAYER_SHA256 = {                       # variant -> sha256 of its tarball (v0.10.7)
     "arm64": "1959a87033c5d8ff012e6f8acd1ca1994234104455d9796b688c8d2193e7f28b",
     "armv6_rpi": "b70abd694a897f4d8ffd3e9c1c44ff238fbf62c11b6b1a3215a0cb64bfcc2dfe",
@@ -1493,6 +1513,210 @@ class Radio(Gateway):
             "Check it from any browser on your network: http://%s:%s/version" % (ip, ns.port)])
 
 
+class Spotify(Gateway):
+    """spotgate: Spotify for EPlay, as MP3 (EPlay's radio/spotgate.py,
+    tools/sync-radio.sh; decided 27 and 28 Nov 2026: a service of its own on
+    port 8581, not in install all). It plays through go-librespot, the
+    pinned release above in /opt/spotgate, run as spotgate's user by a unit
+    of its own (spotgate-player) with its API on 127.0.0.1 only; its sound
+    comes through a pipe in /run/aera. The Spotify sign-in (state.json in
+    /var/lib/spotgate) stays through an update, a reinstall and a remove."""
+    key, name, script = "spotify", "spotgate", "spotgate.py"
+    title = "Spotify for EPlay on the Atari (as MP3)"
+    removed = "spotgate removed (its Spotify sign-in stays in /var/lib/spotgate)."
+    packages = ("ffmpeg", "libasound2")
+    DIR = "/opt/spotgate"
+    PLAYER = DIR + "/go-librespot"
+    PINNED = DIR + "/PINNED"                # "VERSION SHA256" of the player there
+    STATE = "/var/lib/spotgate"
+    PLAYER_UNIT = "spotgate-player"
+
+    def options(self, ap):
+        super().options(ap)
+        ap.add_argument("--port", type=int, help="the port on the Gateway (8581 is the default)")
+        ap.add_argument("-v", "--verbose", action="store_true", default=None, help="log every request")
+        ap.add_argument("--no-verbose", dest="verbose", action="store_false")
+
+    def apply(self, ns, o):
+        super().apply(ns, o)
+        for k in ("port", "verbose"):
+            if getattr(o, k) is not None:
+                setattr(ns, k, getattr(o, k))
+
+    def args(self, ns):
+        out = ["--port", str(ns.port)] + super().args(ns)
+        out += self.kept(ns, "api", "fifo", "ffmpeg", "memory_mb")
+        out += ["-v"] if ns.verbose else []
+        return out + ns.extra
+
+    def ports(self, ns):
+        return [str(ns.port)]
+
+    def unit(self, ns, keep):
+        # (ffmpeg, one stream at a time); the player started first
+        text = super().unit(ns, keep).replace("Restart=always", "MemoryMax=512M\nRestart=always", 1)
+        return text.replace("Wants=network-online.target", "Wants=network-online.target %s.service\n"
+                            "After=%s.service" % (self.PLAYER_UNIT, self.PLAYER_UNIT), 1)
+
+    def describe(self, ns):
+        return "Spotify through go-librespot %s" % PLAYER_VERSION
+
+    @staticmethod
+    def api_port(ns):
+        m = re.match(r"https?://(?:127\.0\.0\.1|localhost)(?::(\d+))?/?$", ns.api)
+        if not m:
+            raise Failed("spotgate's --api must be on this computer (http://127.0.0.1:PORT), not %s" % ns.api)
+        return int(m.group(1) or 80)
+
+    def check(self, ns):
+        self.api_port(ns)
+
+    def variant(self, pi):
+        dpkg = pi.out("dpkg", "--print-architecture").strip()
+        if dpkg:
+            v, said = PLAYER_DPKG.get(dpkg), "dpkg --print-architecture says %s" % dpkg
+            made = ", ".join(sorted(PLAYER_DPKG))
+        else:
+            arch = pi.out("uname", "-m").strip()
+            v, said = PLAYER_ARCH.get(arch), "uname -m says %s" % arch
+            made = ", ".join(sorted(PLAYER_ARCH))
+        if v is None or v not in PLAYER_SHA256:
+            raise Failed("spotgate's player, go-librespot, is made for %s; %s." % (made, said))
+        return v
+
+    def prepare(self, pi, ns):
+        """the pinned player, downloaded and checked before anything
+        changes, beside the one there (it takes its place in before_start);
+        kept as it is when it's the one pinned"""
+        self.player_ns = ns
+        v = self.variant(pi)
+        self.pinned = "%s %s\n" % (PLAYER_VERSION, PLAYER_SHA256[v])
+        self.new_player = False
+        if pi.read(self.PINNED) == self.pinned and pi.exists(self.PLAYER):
+            return
+        url = PLAYER_URL % (PLAYER_VERSION, v)
+        heading("Downloading spotgate's player, go-librespot %s (%s)" % (PLAYER_VERSION, v))
+        say("   from %s" % url)
+        data = pi.download(url)
+        if hashlib.sha256(data).hexdigest() != PLAYER_SHA256[v]:
+            raise Failed("go-librespot's download isn't the release pinned (its sha256 differs): "
+                         "nothing was changed. %s" % url)
+        import tarfile
+        try:
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as t:
+                m = t.getmember("go-librespot")
+                if not m.isfile():
+                    raise KeyError(m.name)
+                program = t.extractfile(m).read()
+        except (tarfile.TarError, KeyError, OSError) as e:
+            raise Failed("go-librespot's download has no program in it (%s)" % e)
+        pi.makedirs(self.DIR)
+        pi.write(self.PLAYER + ".new", program, 0o755)
+        self.new_player = True
+
+    def config(self, ns):
+        """go-librespot's settings, written again at each install: its API
+        on 127.0.0.1 only, its sound into the pipe, the sign-in a code shown
+        on the Atari (device_auth); warnings only in its log, which would
+        otherwise name what is played (guideline 7.3)"""
+        return "\n".join([
+            "# spotgate's player (go-librespot %s); aera-gateway writes it at each install" % PLAYER_VERSION,
+            "log_level: warn",
+            "server:",
+            "  enabled: true",
+            "  address: 127.0.0.1",
+            "  port: %d" % self.api_port(ns),
+            "audio_backend: pipe",
+            "audio_output_pipe: %s" % ns.fifo,
+            "audio_output_pipe_format: s16le",
+            "audio_output_pipe_wait_for_reader: true",
+            "credentials:",
+            "  type: device_auth",
+            "metadata:",
+            "  enabled: true",
+            ""])
+
+    def player_unit(self, ns):
+        fifo = ns.fifo
+        return "\n".join([
+            "[Unit]",
+            "Description=go-librespot, the Spotify player spotgate plays through (EPlay)",
+            "After=network-online.target",
+            "Wants=network-online.target",
+            "",
+            "[Service]",
+            "User=" + self.name,
+            "ExecStartPre=/bin/sh -c 'test -p %s || mkfifo -m 0600 %s'" % (fifo, fifo),
+            "ExecStart=%s --config_dir %s" % (self.PLAYER, self.STATE),
+            "StateDirectory=spotgate",
+            "StateDirectoryMode=0700",
+            "RuntimeDirectory=aera",
+            "RuntimeDirectoryMode=0750",
+            "RuntimeDirectoryPreserve=yes",
+            "MemoryMax=256M",
+            "Restart=always",
+            "RestartSec=5",
+            "NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes",
+            "", "[Install]", "WantedBy=multi-user.target", ""])
+
+    def before_start(self, pi):
+        """the player in its place (the one before kept aside until spotgate
+        answers), its settings, and its unit started"""
+        ns = self.player_ns
+        if self.new_player:
+            pi.rmtree(self.PLAYER + ".old")
+            if pi.exists(self.PLAYER):
+                pi.rename(self.PLAYER, self.PLAYER + ".old")
+            pi.rename(self.PLAYER + ".new", self.PLAYER)
+            pi.write(self.PINNED, self.pinned)
+        pi.makedirs(self.STATE)
+        pi.run("chown", "%s:%s" % (self.name, self.name), self.STATE)
+        pi.run("chmod", "700", self.STATE)
+        pi.write(self.STATE + "/config.yml", self.config(ns), 0o600, owner=self.name)
+        self.player_before = pi.read(unit_path(self.PLAYER_UNIT))
+        pi.write(unit_path(self.PLAYER_UNIT), self.player_unit(ns))
+        pi.run("systemctl", "daemon-reload")
+        pi.run("systemctl", "enable", self.PLAYER_UNIT + ".service", out="hide")
+        pi.run("systemctl", "restart", self.PLAYER_UNIT + ".service", check=False)
+
+    def started(self, pi, ns):
+        pi.remove(self.PLAYER + ".old")
+
+    def not_started(self, pi):
+        """spotgate didn't answer: the player before comes back, or none"""
+        if self.new_player and pi.exists(self.PLAYER + ".old"):
+            pi.rename(self.PLAYER + ".old", self.PLAYER)
+        if self.player_before is None:
+            self.player_off(pi)
+            if self.new_player:
+                pi.rmtree(self.DIR)
+        else:
+            pi.write(unit_path(self.PLAYER_UNIT), self.player_before)
+            pi.run("systemctl", "daemon-reload")
+            pi.run("systemctl", "restart", self.PLAYER_UNIT + ".service", check=False)
+
+    def player_off(self, pi):
+        pi.run("systemctl", "disable", "--now", self.PLAYER_UNIT + ".service", check=False, out="hide",
+               errors=False)
+        pi.remove(unit_path(self.PLAYER_UNIT))
+        pi.run("systemctl", "daemon-reload")
+
+    def after_remove(self, pi):
+        """the player goes; the sign-in stays, for a later install"""
+        self.player_off(pi)
+        pi.rmtree(self.DIR)
+
+    def tell(self, ns, ip):
+        return "\n".join([
+            "",
+            "spotgate is running. In EPlay on the Atari, Spotify through the Gateway:",
+            "   Gateway:     %s" % ip,
+            "   Port:        %s" % ns.port,
+            "",
+            "EPlay shows a code to sign in to Spotify with, the first time.",
+            "Check it from any browser on your network: http://%s:%s/version" % (ip, ns.port)])
+
+
 class Dash(Gateway):
     """dashgate: the Gateway's dashboard, for a browser on the home network
     (decided 10 Nov 2026): what runs, the connections, the settings. The
@@ -1541,7 +1765,7 @@ class Dash(Gateway):
 
 
 DASH = Dash()
-GATEWAYS = [MAIL, Dav(), Ftp(), Web(), Pdf(), Translate(), Radio(), DASH]
+GATEWAYS = [MAIL, Dav(), Ftp(), Web(), Pdf(), Translate(), Radio(), Spotify(), DASH]
 
 
 def put_files(pi, src):
@@ -1582,9 +1806,14 @@ def need_packages(pi, gw):
             need.append(package)
     if "ffmpeg" in gw.packages and not pi.which("ffmpeg"):
         need.append("ffmpeg")
+    # go-librespot's one library (ALSA's); on Debian trixie it is
+    # libasound2t64, which apt takes for libasound2
+    if "libasound2" in gw.packages and not glob.glob(pi.path("/usr/lib/*/libasound.so.2")):
+        need.append("libasound2")
     if need:
         if "ffmpeg" in need:
-            heading("Installing ffmpeg, for the stations that don't send MP3")
+            heading("Installing ffmpeg, %s" % ("for the stations that don't send MP3" if gw.key == "radio"
+                                                 else "for the MP3 the Atari plays"))
         pi.run("apt-get", "update", "-qq")
         pi.run("apt-get", "install", "-y", "-qq", *need)
 
@@ -1903,7 +2132,8 @@ NAMES = {"email": "mail", "emailgate": "mail", "cal": "dav", "ecal": "dav", "eco
          "claudest": "claude", "claude-st": "claude", "eweb": "web", "webgate": "web",
          "epdf": "pdf", "econvert": "pdf", "pdfgate": "pdf",
          "translation": "translate", "translategate": "translate",
-         "eplay": "radio", "radiogate": "radio", "dashboard": "dash", "dashgate": "dash"}
+         "eplay": "radio", "radiogate": "radio", "spotgate": "spotify", "dashboard": "dash",
+         "dashgate": "dash"}
 
 
 def service(name):
@@ -1978,6 +2208,9 @@ def install_all(pi, o, src=HERE):
             continue
         if svc.key == "pdf" and not os.path.isdir(os.path.join(Pdf.PDF_SRC, "epdf")):
             skipped.append("pdf (EPDF's converter comes only with AERA-Gateway itself, not an app's copy)")
+            continue
+        if svc.key == "spotify" and not svc.installed(pi):
+            skipped.append("spotify (on its own: sudo %s install spotify)" % PROG)
             continue
         if svc.key == "translate" and not svc.installed(pi) and not svc.arch_ok(pi):
             skipped.append("translate (its engine needs the 64-bit Raspberry Pi OS: uname -m says %s)"

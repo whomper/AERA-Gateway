@@ -34,6 +34,7 @@ of them.
 | `pdf`    | EConvert and EPDF   | `pdfgate.py` and aerapdf   | 8380                                     |
 | `translate` | EMail, EWeb, EPDF | `translategate.py`        | 8480                                     |
 | `radio`  | EPlay               | `radiogate.py`             | 8580                                     |
+| `spotify` | EPlay              | `spotgate.py` and go-librespot | 8581                                 |
 | `claude` | ClaudeST            | ClaudeST's bridge          | 2323                                     |
 | `dash`   | a browser at home   | `dashgate.py`              | 8888                                     |
 
@@ -67,13 +68,15 @@ sudo aera-gateway install web --allow ATARI_IP
 sudo aera-gateway install pdf --allow ATARI_IP
 sudo aera-gateway install translate --allow ATARI_IP     (English and German; --languages en,de,he for more)
 sudo aera-gateway install radio --allow ATARI_IP
+sudo aera-gateway install spotify --allow ATARI_IP       (Spotify Premium; on its own, not in install all)
 sudo aera-gateway install claude --network --atari ATARI_IP
 sudo aera-gateway install dash                           (the dashboard, for the home network)
 ```
 
 `install pdf` builds EPDF's converter (a few minutes), `install translate`
 downloads the engine and its languages (about 290 MB; it needs a 64-bit
-system and 4 GB), and `install radio` adds ffmpeg. Before `update-pi.sh`
+system and 4 GB), `install radio` adds ffmpeg, and `install spotify` adds ffmpeg,
+libasound2 and the Spotify player, go-librespot. Before `update-pi.sh`
 has run once, `aera-gateway` is `~/AERA-Gateway/gateway/aera-gateway`.
 
 `install all --allow ATARI_IP --mail IMAP SMTP[:587] [POP3] [--browser]`
@@ -461,6 +464,29 @@ Two stations play at once, and ffmpeg runs on one thread with 256 MB, at
 a low priority; a station on the home network needs `--allow-local`. The
 log says which Atari listened to which station's host, for how long and
 how much, never the station's path or the titles.
+
+## spotify: EPlay's Spotify
+
+```
+sudo aera-gateway install spotify --allow ATARI_IP
+```
+
+EPlay plays a Spotify track, album or playlist through the Gateway, as
+MP3, with the tracks' titles and covers. go-librespot, a Spotify player,
+plays it on the Gateway, and spotgate converts its sound with ffmpeg.
+It needs Spotify Premium. The player is a release pinned by this
+Gateway's own release, downloaded once and checked (sha256). It changes
+only when a Gateway release pins another. Its API is on 127.0.0.1 only.
+`install spotify` installs ffmpeg and libasound2 if they aren't there.
+`install all` leaves it out.
+
+The first time, EPlay shows a link and a code: open the link on any
+device and type the code there. The sign-in is kept in
+`/var/lib/spotgate`, also through `remove spotify`. In EPlay on the
+Atari: the Gateway's IP address, port 8581. Check it from any browser on
+your network: `http://GATEWAY_IP:8581/version`. spotgate is EPlay's own
+(`radio/spotgate.py` there, copied by `tools/sync-radio.sh`). One stream
+plays at a time; the log says who listened and for how long, never what.
 
 ## dash: the dashboard
 

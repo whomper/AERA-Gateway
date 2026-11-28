@@ -20,7 +20,8 @@ installer (`gateway/aera-gateway`), which also sets up ClaudeST's bridge
   review.
 - **A port never moves without the owning app's OK**: the Ataris have
   them in their settings (143/587/110, 8180, 2121 and 30000-30099, 8280,
-  2323; 8281 is webgate's extension's, on 127.0.0.1 only).
+  8580, 8581, 2323; 8281 is webgate's extension's and 3678 spotgate's
+  player's, on 127.0.0.1 only).
 - ClaudeST's bridge stays in ClaudeST; the `claude` recipe sets it up as
   ClaudeST's `pi/install.sh` did, and `tests/systemd.sh` checks that.
   - **The Gateway session owns the gateway as one unit** (decided 7 Nov
@@ -57,8 +58,9 @@ sessions stay as they are.)
   webgate's pictures; `install web --browser` adds Chromium, Xvfb and
   xdotool (decided 20 Oct 2026); `install web` adds gcc and
   make, if missing, to build aerapens from `pens/` (21 Oct 2026) and
-  aerajsc from `jsc/` (26 Oct 2026). No
-  other packages on the Pi.
+  aerajsc from `jsc/` (26 Oct 2026); `install spotify` adds ffmpeg,
+  libasound2 and go-librespot's pinned release, sha256 checked, in
+  /opt/spotgate (28 Nov 2026). No other packages on the Pi.
 - **Security (guideline 7.3):** the home network only, or `--allow`; no
   connection back home without `--allow-local`, and only to the address
   that was checked; TLS 1.2 or newer with certificate and name checks.
@@ -174,7 +176,7 @@ sessions stay as they are.)
 AERA-Gateway is in maintenance mode while EWeb, EPDF and EPlay go to 1.0 (AERA-Atari, ATARI-APP-GUIDELINES.md, section 8). Until the owner ends it:
 - No new features, clean-ups or installer work of its own.
 - Every family rule holds for it as for the focus apps (decided 17 Nov 2026: an app in maintenance is held to the same rules): 7.3, 1.2's release rules, the log rules and every other. The hub notifies this session of each new or changed rule; the session adopts it and reports to the hub, which ticks its row in section 8. Whether that needs a release of its own is reviewed with the owner through the hub; a fault fix always gets one.
-- What EWeb, EPDF or EPlay ask for (webgate, aerapens, aerajsc, pdfgate, radiogate) goes on as before, committed and released by this session.
+- What EWeb, EPDF or EPlay ask for (webgate, aerapens, aerajsc, pdfgate, radiogate, spotgate) goes on as before, committed and released by this session.
 - Otherwise a release only for:
   - a security or data-loss fault;
   - a crash or breakage;

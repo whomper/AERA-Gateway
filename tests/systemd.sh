@@ -486,6 +486,61 @@ running radiogate
 [ ! -e /etc/systemd/system/radiogate.service ] || fail "remove radio left its unit"
 ok "radio"
 
+echo "== spotify: spotgate (EPlay's Spotify) and its player, go-librespot's pinned release"
+"$GW/aera-gateway" install spotify --allow 127.0.0.1 > "$W/spotify.out" 2>&1 || \
+  { cat "$W/spotify.out"; fail "install spotify"; }
+running spotgate
+listens 8581
+unit_has spotgate "^ExecStart=/usr/bin/python3 /opt/aera-gateway/spotgate.py --port 8581 --allow 127.0.0.1$"
+unit_has spotgate "^User=spotgate"
+unit_has spotgate "^After=spotgate-player.service"
+unit_has spotgate-player "^ExecStart=/opt/spotgate/go-librespot --config_dir /var/lib/spotgate$"
+unit_has spotgate-player "^User=spotgate"
+! ldd /opt/spotgate/go-librespot | grep -q "not found" || { ldd /opt/spotgate/go-librespot; fail "the player lacks a library"; }
+[ "$(stat -c '%a %U' /var/lib/spotgate/config.yml)" = "600 spotgate" ] || fail "config.yml isn't spotgate's only"
+[ "$(stat -c '%a %U' /var/lib/spotgate)" = "700 spotgate" ] || fail "/var/lib/spotgate is open to others"
+python3 - <<'PY'
+import json, socket, subprocess, time, urllib.request
+# the player's API: on 127.0.0.1 only (it answers while the sign-in waits;
+# a player that can't reach Spotify starts again, so a minute's tries)
+for _ in range(60):
+    try:
+        r = urllib.request.urlopen("http://127.0.0.1:3678/", timeout=5)
+        assert r.status == 200, r.status
+        break
+    except OSError:
+        time.sleep(1)
+else:
+    print(subprocess.run(["journalctl", "-u", "spotgate-player", "-n", "30", "--no-pager"],
+                         capture_output=True, text=True).stdout)
+    raise SystemExit("FAIL: the player's API doesn't answer on 127.0.0.1:3678")
+ss = subprocess.run(["ss", "-ltnH", "( sport = :3678 )"], capture_output=True, text=True).stdout
+assert ss.strip() and all("127.0.0.1:3678" in line for line in ss.splitlines()), ss
+s = socket.create_connection(("127.0.0.1", 8581), timeout=30)
+s.sendall(b"GET /version HTTP/1.0\r\n\r\n")
+out = b""
+while True:
+    b = s.recv(65536)
+    if not b:
+        break
+    out += b
+assert b"\r\n\r\nspotgate " in out and b", ffmpeg " in out and not out.endswith(b"ffmpeg none\n"), out
+print("ok: the player's API on 127.0.0.1 only, spotgate's /version")
+PY
+[ -p /run/aera/spotify.pcm ] || fail "no pipe at /run/aera/spotify.pcm"
+[ "$(stat -c '%a %U' /run/aera/spotify.pcm)" = "600 spotgate" ] || fail "the pipe isn't spotgate's only"
+echo kept > /var/lib/spotgate/state.test
+"$GW/aera-gateway" update > "$W/update.out" 2>&1 || { cat "$W/update.out"; fail "update with spotify"; }
+grep -q "Downloading spotgate's player" "$W/update.out" && fail "update downloaded the player again"
+running spotgate
+[ "$(cat /var/lib/spotgate/state.test)" = kept ] || fail "update lost the player's state"
+"$GW/aera-gateway" remove spotify
+[ ! -e /etc/systemd/system/spotgate.service ] || fail "remove spotify left its unit"
+[ ! -e /etc/systemd/system/spotgate-player.service ] || fail "remove spotify left its player's unit"
+[ ! -e /opt/spotgate ] || fail "remove spotify left the player"
+[ "$(cat /var/lib/spotgate/state.test)" = kept ] || fail "remove lost the sign-in"
+ok "spotify"
+
 echo "== dash: dashgate, the dashboard; the gateways tell it through aeragate"
 "$GW/aera-gateway" install dash > "$W/dash.out" 2>&1 || { cat "$W/dash.out"; fail "install dash"; }
 running dashgate
