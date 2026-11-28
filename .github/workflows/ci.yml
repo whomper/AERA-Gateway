@@ -55,6 +55,14 @@ jobs:
       - name: tests/systemd.sh in Debian ${{ matrix.debian }} with its own systemd (tests/pios.sh)
         run: tests/pios.sh ${{ matrix.debian }}
 
+  player-pin:
+    name: go-librespot's pinned release (spotgate's player)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Each architecture's tarball downloads and has its pinned sha256
+        run: tests/player-pin.sh
+
   snap:
     name: Ubuntu, its Chromium a snap
     runs-on: ubuntu-24.04

@@ -1428,6 +1428,17 @@ class Translate(Gateway):
 
 
 MAIL = Mail()
+# go-librespot, the Spotify player spotgate plays through (decided 28 Nov
+# 2026: a pinned release for the computer's architecture, its sha256
+# checked, kept in /opt, updated only with the Gateway's own releases).
+# Its releases link ALSA dynamically and everything else statically: the
+# one package it needs is libasound2. CI's player-pin job checks the pins.
+PLAYER_VERSION = "0.10.7"
+PLAYER_URL = "https://github.com/devgianlu/go-librespot/releases/download/v%s/go-librespot_linux_%s.tar.gz"
+PLAYER_ARCH = {"aarch64": "arm64", "x86_64": "x86_64", "armv7l": "armv6_rpi", "armv6l": "armv6_rpi"}
+PLAYER_SHA256 = {}                      # variant -> sha256 of its tarball
+
+
 class Radio(Gateway):
     """radiogate: web radio for EPlay, as MP3 (EPlay's radio/radiogate.py,
     tools/sync-radio.sh); ffmpeg converts what isn't MP3 (decided 8 Nov 2026)"""
