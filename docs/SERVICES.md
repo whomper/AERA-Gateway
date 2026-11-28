@@ -39,7 +39,7 @@ In the examples, `GATEWAY_IP` is the Gateway's address on your home network,
 | `pdf`       | EConvert, EPDF            | 8380                             | nothing: converts on the Gateway                |
 | `translate` | EMail, EWeb, EPDF         | 8480; a local socket             | nothing: a local engine translates              |
 | `radio`     | EPlay                     | 8580                             | HTTP and HTTPS to radio stations; radio-browser.info for logos |
-| `spotify`   | EPlay                     | 8581 (and 3678 on 127.0.0.1, its player's) | Spotify, through go-librespot, the player on the Gateway |
+| `spotify`   | EPlay                     | 8581 (and 3678 on 127.0.0.1, its player's) | the Spotify Streamer: Spotify, through go-librespot, the player on the Gateway |
 | `claude`    | ClaudeST                  | 2323                             | HTTPS to claude.ai or the Anthropic API         |
 | `dash`      | a browser on the home network | 8888; a local socket         | nothing: it shows the others                    |
 
@@ -937,7 +937,7 @@ only ends it.
 
 ## spotify: EPlay
 
-Spotify for EPlay (decided 27 and 28 Nov 2026). A Spotify line in EPlay's
+The Spotify Streamer: Spotify for EPlay (decided 27 and 28 Nov 2026). A Spotify line in EPlay's
 list (a track, an album or a playlist) is played on the Gateway by
 go-librespot, a Spotify player, and sent to the Atari as MP3, as radiogate
 sends a station. EPlay controls it; no phone does. It needs Spotify Premium.
@@ -989,7 +989,8 @@ Gateway. That file stays through an update, a reinstall and
 
 `/var/lib/spotgate/config.yml`, written again at each install: the API on
 127.0.0.1 only, the sound into the pipe (s16le), sign-in by a code
-(`device_auth`), the tracks' details on, and warnings only in its log.
+(`device_auth`), the name Spotify's apps show, "Spotify Streamer"
+(decided 28 Nov 2026), the tracks' details on, and warnings only in its log.
 At its usual level it would log what is played.
 
 ### Log, needs

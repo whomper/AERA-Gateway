@@ -498,6 +498,7 @@ unit_has spotgate-player "^ExecStart=/opt/spotgate/go-librespot --config_dir /va
 unit_has spotgate-player "^User=spotgate"
 ! ldd /opt/spotgate/go-librespot | grep -q "not found" || { ldd /opt/spotgate/go-librespot; fail "the player lacks a library"; }
 [ "$(stat -c '%a %U' /var/lib/spotgate/config.yml)" = "600 spotgate" ] || fail "config.yml isn't spotgate's only"
+grep -qx 'device_name: "Spotify Streamer"' /var/lib/spotgate/config.yml || fail "the player isn't the Spotify Streamer"
 [ "$(stat -c '%a %U' /var/lib/spotgate)" = "700 spotgate" ] || fail "/var/lib/spotgate is open to others"
 python3 - <<'PY'
 import json, socket, subprocess, time, urllib.request

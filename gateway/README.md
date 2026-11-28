@@ -465,16 +465,18 @@ a low priority; a station on the home network needs `--allow-local`. The
 log says which Atari listened to which station's host, for how long and
 how much, never the station's path or the titles.
 
-## spotify: EPlay's Spotify
+## spotify: EPlay's Spotify Streamer
 
 ```
 sudo aera-gateway install spotify --allow ATARI_IP
 ```
 
-EPlay plays a Spotify track, album or playlist through the Gateway, as
+The Spotify Streamer: EPlay plays a Spotify track, album or playlist
+through the Gateway, as
 MP3, with the tracks' titles and covers. go-librespot, a Spotify player,
 plays it on the Gateway, and spotgate converts its sound with ffmpeg.
-It needs Spotify Premium. The player is a release pinned by this
+It needs Spotify Premium. Spotify's apps show the player as "Spotify
+Streamer". The player is a release pinned by this
 Gateway's own release, downloaded once and checked (sha256). It changes
 only when a Gateway release pins another. Its API is on 127.0.0.1 only.
 `install spotify` installs ffmpeg and libasound2 if they aren't there.
